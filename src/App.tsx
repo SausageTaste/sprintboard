@@ -64,8 +64,8 @@ export default function App() {
 
   React.useEffect(() => {
     const lightbox = new PhotoSwipeLightbox({
-      gallery: "#gallery",
-      children: "a",
+      gallery: document.body,
+      children: "a[data-pswp]",
       pswpModule: () => import("photoswipe"),
     });
     lightbox.init();
@@ -76,56 +76,56 @@ export default function App() {
     <div style={{ padding: 16, fontFamily: "system-ui" }}>
       <h2 style={{ margin: "0 0 12px 0" }}>Virtuoso Infinite</h2>
 
-      <div id="gallery" style={{ height: "calc(100vh - 80px)" }}>
-        <VirtuosoGrid
-          style={{ height: "100%" }}
-          data={items}
-          endReached={loadMore}
-          overscan={600}
-          listClassName="grid"
-          itemContent={(_, it) => (
-            <div
-              style={{
-                borderRadius: 10,
-                overflow: "hidden",
-                border: "1px solid rgba(255,255,255,0.10)",
-              }}
+      <VirtuosoGrid
+        useWindowScroll
+        style={{ height: "100%" }}
+        data={items}
+        endReached={loadMore}
+        overscan={600}
+        listClassName="grid"
+        itemContent={(_, it) => (
+          <div
+            style={{
+              borderRadius: 10,
+              overflow: "hidden",
+              border: "1px solid rgba(255,255,255,0.10)",
+            }}
+          >
+            <a
+              href={it.src}
+              data-pswp
+              data-pswp-width={it.w ?? 1600}
+              data-pswp-height={it.h ?? 900}
+              style={{ display: "block", borderRadius: 10, overflow: "hidden" }}
             >
-              <a
-                href={it.src}
-                data-pswp-width={it.w ?? 1600}
-                data-pswp-height={it.h ?? 900}
-                style={{ display: "block", borderRadius: 10, overflow: "hidden" }}
-              >
-                <img
-                  src={it.thumb || it.src}
-                  alt={it.name}
-                  loading="lazy"
-                  decoding="async"
-                  style={{
-                    width: "100%",
-                    aspectRatio: "1 / 1",
-                    objectFit: "cover",
-                    display: "block",
-                  }}
-                />
-              </a>
+              <img
+                src={it.thumb || it.src}
+                alt={it.name}
+                loading="lazy"
+                decoding="async"
+                style={{
+                  width: "100%",
+                  aspectRatio: "3 / 4",
+                  objectFit: "cover",
+                  display: "block",
+                }}
+              />
+            </a>
+          </div>
+        )}
+        components={{
+          Footer: () => (
+            <div style={{ padding: 12, opacity: 0.7 }}>
+              {total === null ? "" : items.length >= total ? "End." : "Loading more…"}
             </div>
-          )}
-          components={{
-            Footer: () => (
-              <div style={{ padding: 12, opacity: 0.7 }}>
-                {total === null ? "" : items.length >= total ? "End." : "Loading more…"}
-              </div>
-            ),
-          }}
-        />
-      </div>
+          ),
+        }}
+      />
 
       <style>{`
         .grid {
           display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+          grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
           gap: 10px;
           padding: 4px;
         }
