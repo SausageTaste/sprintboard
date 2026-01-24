@@ -124,6 +124,7 @@ export default function App() {
   const [items, setItems] = React.useState<Item[]>([]);
   const [total, setTotal] = React.useState<number | null>(null);
 
+  const lightboxRef = React.useRef<PhotoSwipeLightbox | null>(null);
   const loadingRef = React.useRef(false);
 
   const loadMore = React.useCallback(async () => {
@@ -176,14 +177,46 @@ export default function App() {
   }, [curDir]);
 
   React.useEffect(() => {
-    const lightbox = new PhotoSwipeLightbox({
-      gallery: document.body,
-      children: "a[data-pswp]",
-      pswpModule: () => import("photoswipe"),
-    });
-    lightbox.init();
-    return () => lightbox.destroy();
+    if (!lightboxRef.current) {
+      lightboxRef.current = new PhotoSwipeLightbox({
+        loop: false,
+        pswpModule: () => import("photoswipe"),
+      });
+      lightboxRef.current.init();
+    }
+
+    // ✅ dataSource drives the gallery length, NOT the DOM
+    lightboxRef.current.options.dataSource = items.map((it) => ({
+      src: it.src,
+      w: it.w ?? 1600,
+      h: it.h ?? 900,
+      msrc: it.thumb ?? it.src, // thumb used in animation (optional)
+    }));
+
+    return () => {
+      // don't destroy on every items change; destroy only on unmount
+    };
+  }, [items]);
+
+  // destroy on unmount
+  React.useEffect(() => {
+    return () => {
+      lightboxRef.current?.destroy();
+      lightboxRef.current = null;
+    };
   }, []);
+
+  function openAt(index: number) {
+    // loadAndOpen(index, dataSource) is supported in PhotoSwipe 5
+    const ds = items.map((it) => ({
+      src: it.src,
+      w: it.w ?? 1600,
+      h: it.h ?? 900,
+      msrc: it.thumb ?? it.src,
+    }));
+
+    lightboxRef.current?.loadAndOpen(index, ds);
+  }
 
   return (
     <div style={{ padding: 16, fontFamily: "system-ui" }}>
@@ -210,8 +243,12 @@ export default function App() {
         endReached={loadMore}
         overscan={600}
         listClassName="grid"
-        itemContent={(_, it) => (
+        itemContent={(index, it) => (
           <div
+            onClick={(e) => {
+              e.preventDefault();
+              openAt(index); // ✅ open by index
+            }}
             style={{
               borderRadius: 10,
               overflow: "hidden",
@@ -232,7 +269,7 @@ export default function App() {
                 decoding="async"
                 style={{
                   width: "100%",
-                  aspectRatio: "3 / 4",
+                  aspectRatio: "4 / 3",
                   objectFit: "cover",
                   display: "block",
                 }}
