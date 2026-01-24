@@ -9,6 +9,8 @@ export default defineConfig({
     proxy: {
       "/api": "http://localhost:8000",
       "/images": "http://localhost:8000",
+      "/2026-01-25": "http://localhost:8000",
+      "/2026-01-23": "http://localhost:8000",
     },
   },
 })
