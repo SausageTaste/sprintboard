@@ -20,6 +20,19 @@ function joinParts(parts: string[]) {
     return parts.filter(Boolean).join("/");
 }
 
+function lockSelection() {
+    document.documentElement.classList.add("pswp-open-noselect");
+    document.body.classList.add("pswp-open-noselect");
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    window.getSelection?.()?.removeAllRanges?.();
+}
+
+function unlockSelection() {
+    document.documentElement.classList.remove("pswp-open-noselect");
+    document.body.classList.remove("pswp-open-noselect");
+    window.getSelection?.()?.removeAllRanges?.();
+}
+
 function Breadcrumbs({
     dir,
     onNavigate,
@@ -208,9 +221,10 @@ export default function Gallery() {
 
             // When closing → scroll back
             lb.on("close", () => {
-                const i = lastIndexRef.current;
+                unlockSelection();
 
                 // Scroll thumbnail into view
+                const i = lastIndexRef.current;
                 virtuosoRef.current?.scrollToIndex({
                     index: i,
                     align: "center",   // center it nicely
@@ -229,15 +243,27 @@ export default function Gallery() {
                     appendTo: "root",
                     html: "",
                     onInit: (el) => {
+                        el.classList.add("pswp-tapzone");
+
                         el.style.position = "absolute";
                         el.style.left = "0";
                         el.style.top = "80%";
                         el.style.bottom = "0";
                         el.style.width = "50%";          // left tap zone
                         el.style.zIndex = "9999";
-                        el.style.background = "transparent";
                         el.style.touchAction = "manipulation";
                         el.style.pointerEvents = "auto";
+
+                        function flash() {
+                            el.classList.add("active");
+                            requestAnimationFrame(() => {
+                                setTimeout(() => el.classList.remove("active"), 120);
+                            });
+                        }
+
+                        el.addEventListener("pointerdown", (e) => {
+                            flash();
+                        });
 
                         el.addEventListener("click", (e) => {
                             e.preventDefault();
@@ -254,15 +280,27 @@ export default function Gallery() {
                     appendTo: "root",
                     html: "",
                     onInit: (el) => {
+                        el.classList.add("pswp-tapzone");
+
                         el.style.position = "absolute";
                         el.style.right = "0";
                         el.style.top = "80%";
                         el.style.bottom = "0";
-                        el.style.width = "50%";          // right tap zone
+                        el.style.width = "50%";
                         el.style.zIndex = "9999";
-                        el.style.background = "transparent";
                         el.style.touchAction = "manipulation";
                         el.style.pointerEvents = "auto";
+
+                        function flash() {
+                            el.classList.add("active");
+                            requestAnimationFrame(() => {
+                                setTimeout(() => el.classList.remove("active"), 120);
+                            });
+                        }
+
+                        el.addEventListener("pointerdown", (e) => {
+                            flash();
+                        });
 
                         el.addEventListener("click", (e) => {
                             e.preventDefault();
@@ -272,7 +310,6 @@ export default function Gallery() {
                     },
                 });
             });
-
 
             lb.init();
             lightboxRef.current = lb;
@@ -310,6 +347,7 @@ export default function Gallery() {
             msrc: it.thumb ?? it.src,
         }));
 
+        lockSelection();
         lightboxRef.current?.loadAndOpen(index, ds);
     }
 

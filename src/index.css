@@ -72,3 +72,25 @@ html, body, #root {
   width: 100%;
   margin: 0;
 }
+
+html.pswp-open-noselect,
+body.pswp-open-noselect,
+html.pswp-open-noselect *,
+body.pswp-open-noselect * {
+  -webkit-user-select: none !important;
+  user-select: none !important;
+  -webkit-touch-callout: none !important;
+}
+
+/* iOS tap highlight (the gray/blue flash) */
+a, img, .pswp, .pswp * {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.pswp-tapzone {
+  background: rgb(0, 0, 0, 0);
+}
+
+.pswp-tapzone.active {
+  background: rgb(0, 0, 0, 0.1);
+}
