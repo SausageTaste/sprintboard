@@ -184,6 +184,42 @@ export default function Gallery() {
         }
     }, [items.length, total, curDir]);
 
+    const refreshNewFiles = React.useCallback(async () => {
+        if (loadingRef.current) return;
+
+        try {
+            // Ask backend for newest first
+            const res = await fetch(
+                `/api/images/list?dir=${encodeURIComponent(curDir)}&offset=0&limit=50`
+            );
+
+            const data = await res.json();
+
+            const incoming: Item[] = data.files ?? [];
+
+            if (!incoming.length) return;
+
+            setItems(prev => {
+                const seen = new Set(prev.map(x => x.src));
+                const merged = [...prev];
+
+                let added = false;
+
+                for (const it of incoming) {
+                    if (!seen.has(it.src)) {
+                        merged.unshift(it); // newest on top
+                        added = true;
+                    }
+                }
+
+                return added ? merged : prev;
+            });
+
+        } catch (e) {
+            console.warn("refresh failed", e);
+        }
+    }, [curDir]);
+
     React.useEffect(() => {
         setItems([]);
         setTotal(null);
@@ -335,6 +371,15 @@ export default function Gallery() {
             lightboxRef.current = null;
         };
     }, []);
+
+    React.useEffect(() => {
+        const interval = setInterval(() => {
+            refreshNewFiles();
+        }, 5000); // every 5s (tune later)
+
+        return () => clearInterval(interval);
+    }, [curDir, items.length]);
+
 
     function openAt(index: number) {
         lastIndexRef.current = index;
