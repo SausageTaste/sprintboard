@@ -218,6 +218,62 @@ export default function Gallery() {
                 });
             });
 
+            lb.on("uiRegister", () => {
+                const pswp = lb.pswp;
+                if (!pswp) return;
+
+                pswp.ui.registerElement({
+                    name: "tap-prev",
+                    order: 5,
+                    isButton: false,
+                    appendTo: "root",
+                    html: "",
+                    onInit: (el) => {
+                        el.style.position = "absolute";
+                        el.style.left = "0";
+                        el.style.top = "80%";
+                        el.style.bottom = "0";
+                        el.style.width = "50%";          // left tap zone
+                        el.style.zIndex = "9999";
+                        el.style.background = "transparent";
+                        el.style.touchAction = "manipulation";
+                        el.style.pointerEvents = "auto";
+
+                        el.addEventListener("click", (e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            pswp.prev();
+                        });
+                    },
+                });
+
+                pswp.ui.registerElement({
+                    name: "tap-next",
+                    order: 6,
+                    isButton: false,
+                    appendTo: "root",
+                    html: "",
+                    onInit: (el) => {
+                        el.style.position = "absolute";
+                        el.style.right = "0";
+                        el.style.top = "80%";
+                        el.style.bottom = "0";
+                        el.style.width = "50%";          // right tap zone
+                        el.style.zIndex = "9999";
+                        el.style.background = "transparent";
+                        el.style.touchAction = "manipulation";
+                        el.style.pointerEvents = "auto";
+
+                        el.addEventListener("click", (e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            pswp.next();
+                        });
+                    },
+                });
+            });
+
+
             lb.init();
             lightboxRef.current = lb;
         }
