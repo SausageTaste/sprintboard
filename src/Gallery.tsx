@@ -118,6 +118,7 @@ function FolderCard({
 
 export default function Gallery() {
     const [items, setItems] = React.useState<Item[]>([]);
+    const [folders, setFolders] = React.useState<string[]>([]);
     const [total, setTotal] = React.useState<number | null>(null);
 
     const virtuosoRef = React.useRef<any>(null);
@@ -136,19 +137,14 @@ export default function Gallery() {
         loadingRef.current = true;
         try {
             const offset = items.length;
-            const res = await fetch(`/api/list?dir=${encodeURIComponent(curDir)}&offset=${offset}&limit=${PAGE}`);
+            console.log("Cur dir", curDir);
+            const res = await fetch(`/api/images/list?dir=${encodeURIComponent(curDir)}&offset=${offset}&limit=${PAGE}`);
             const data = await res.json();
 
-            console.log("loaded data:", data);
+            setFolders(Array.isArray(data.folders) ? data.folders : []);
 
-            const incoming: Item[] = Array.isArray(data)
-                ? data
-                : Array.isArray(data.items)
-                    ? data.items
-                    : [];
-
-            const incomingTotal =
-                !Array.isArray(data) && typeof data.total === "number" ? data.total : null;
+            const incoming: Item[] = data.files;
+            const incomingTotal = data.files.Length;
 
             if (incomingTotal !== null) setTotal(incomingTotal);
 
@@ -261,16 +257,21 @@ export default function Gallery() {
 
             <Breadcrumbs dir={curDir} onNavigate={p => navigate(p)} />
 
+            <div style={{ height: 12 }} />
+
             <div
                 style={{
                     display: "grid",
-                    gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+                    gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
                     gap: 12,
                 }}
             >
-                <FolderCard key={"shit"} name={"ass"} onClick={() => navigate("2026-01-25")} />
-                <FolderCard key={"shit2"} name={"ass2"} onClick={() => navigate("2026-01-23")} />
+                {folders.map((d) => (
+                    <FolderCard key={d.path} name={d.name} onClick={() => navigate(d.name)} />
+                ))}
             </div>
+
+            <div style={{ height: 12 }} />
 
             <VirtuosoGrid
                 ref={virtuosoRef}

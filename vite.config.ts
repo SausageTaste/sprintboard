@@ -8,6 +8,7 @@ export default defineConfig({
     host: true,        // = 0.0.0.0
     proxy: {
       "/api": "http://localhost:8000",
+      "/img": "http://localhost:8000",
     },
   },
 })
