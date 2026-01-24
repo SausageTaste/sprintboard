@@ -124,6 +124,8 @@ export default function App() {
   const [items, setItems] = React.useState<Item[]>([]);
   const [total, setTotal] = React.useState<number | null>(null);
 
+  const virtuosoRef = React.useRef<any>(null);
+  const lastIndexRef = React.useRef<number>(0);
   const lightboxRef = React.useRef<PhotoSwipeLightbox | null>(null);
   const loadingRef = React.useRef(false);
 
@@ -178,11 +180,44 @@ export default function App() {
 
   React.useEffect(() => {
     if (!lightboxRef.current) {
-      lightboxRef.current = new PhotoSwipeLightbox({
-        loop: false,
+      const lb = new PhotoSwipeLightbox({
         pswpModule: () => import("photoswipe"),
+        loop: false,
       });
-      lightboxRef.current.init();
+
+      // Track current slide
+      lb.on("change", () => {
+        const pswp = lb.pswp;
+        if (!pswp)
+          return;
+
+        const i = pswp.currIndex;
+        lastIndexRef.current = i;
+
+        // ✅ scroll grid to current image
+        /*
+        virtuosoRef.current?.scrollToIndex({
+          index: i,
+          align: "center",
+          behavior: "smooth",
+        });
+        */
+      });
+
+      // When closing → scroll back
+      lb.on("close", () => {
+        const i = lastIndexRef.current;
+
+        // Scroll thumbnail into view
+        virtuosoRef.current?.scrollToIndex({
+          index: i,
+          align: "center",   // center it nicely
+          behavior: "smooth"
+        });
+      });
+
+      lb.init();
+      lightboxRef.current = lb;
     }
 
     // ✅ dataSource drives the gallery length, NOT the DOM
@@ -207,6 +242,8 @@ export default function App() {
   }, []);
 
   function openAt(index: number) {
+    lastIndexRef.current = index;
+
     // loadAndOpen(index, dataSource) is supported in PhotoSwipe 5
     const ds = items.map((it) => ({
       src: it.src,
@@ -236,6 +273,7 @@ export default function App() {
       </div>
 
       <VirtuosoGrid
+        ref={virtuosoRef}
         useWindowScroll
         key={curDir}
         style={{ height: "100%" }}
@@ -269,7 +307,7 @@ export default function App() {
                 decoding="async"
                 style={{
                   width: "100%",
-                  aspectRatio: "4 / 3",
+                  aspectRatio: "3 / 4",
                   objectFit: "cover",
                   display: "block",
                 }}
