@@ -12,6 +12,8 @@ type Item = {
     h?: number;
 };
 
+type Folder = { name: string; path: string };
+
 const PAGE = 200;
 
 function joinParts(parts: string[]) {
@@ -118,8 +120,10 @@ function FolderCard({
 
 export default function Gallery() {
     const [items, setItems] = React.useState<Item[]>([]);
-    const [folders, setFolders] = React.useState<string[]>([]);
+    const [folders, setFolders] = React.useState<Folder[]>([]);
     const [total, setTotal] = React.useState<number | null>(null);
+    const [thumbnailWidth, setThumbnailWidth] = React.useState<number>(3);
+    const [thumbnailHeight, setThumbnailHeight] = React.useState<number>(4);
 
     const virtuosoRef = React.useRef<any>(null);
     const lastIndexRef = React.useRef<number>(0);
@@ -142,6 +146,8 @@ export default function Gallery() {
             const data = await res.json();
 
             setFolders(Array.isArray(data.folders) ? data.folders : []);
+            setThumbnailWidth(data.thumbnail_width || 3);
+            setThumbnailHeight(data.thumbnail_height || 4);
 
             const incoming: Item[] = data.files;
             const incomingTotal = data.files.Length;
@@ -255,7 +261,7 @@ export default function Gallery() {
         <div style={{ padding: 16, fontFamily: "system-ui" }}>
             <h2 style={{ margin: "0 0 12px 0" }}>Virtuoso Infinite</h2>
 
-            <Breadcrumbs dir={curDir} onNavigate={p => navigate(p)} />
+            <Breadcrumbs dir={curDir} onNavigate={p => navigate(`/images/${p}`)} />
 
             <div style={{ height: 12 }} />
 
@@ -267,7 +273,7 @@ export default function Gallery() {
                 }}
             >
                 {folders.map((d) => (
-                    <FolderCard key={d.path} name={d.name} onClick={() => navigate(d.name)} />
+                    <FolderCard key={d.path} name={d.name} onClick={() => navigate(`/images/${d.path}`)} />
                 ))}
             </div>
 
@@ -308,7 +314,7 @@ export default function Gallery() {
                                 decoding="async"
                                 style={{
                                     width: "100%",
-                                    aspectRatio: "3 / 4",
+                                    aspectRatio: `${thumbnailWidth} / ${thumbnailHeight}`,
                                     objectFit: "cover",
                                     display: "block",
                                 }}
@@ -316,13 +322,6 @@ export default function Gallery() {
                         </a>
                     </div>
                 )}
-                components={{
-                    Footer: () => (
-                        <div style={{ padding: 12, opacity: 0.7 }}>
-                            {total === null ? "" : items.length >= total ? "End." : "Loading more…"}
-                        </div>
-                    ),
-                }}
             />
 
             <style>{`
