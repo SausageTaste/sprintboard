@@ -67,7 +67,7 @@ export default function App() {
               loading="lazy"
               style={{
                 width: "100%",
-                height: 140,
+                height: "100%",
                 objectFit: "cover",
                 display: "block",
               }}
