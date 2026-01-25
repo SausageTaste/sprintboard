@@ -140,6 +140,10 @@ export default function Gallery() {
     const [query, setQuery] = React.useState("");
     const [menuOpen, setMenuOpen] = React.useState(false);
 
+    const [settings, setSettings] = React.useState({
+        fillScreen: false,
+    });
+
     const virtuosoRef = React.useRef<any>(null);
     const lastIndexRef = React.useRef<number>(0);
     const lightboxRef = React.useRef<PhotoSwipeLightbox | null>(null);
@@ -236,11 +240,7 @@ export default function Gallery() {
             const lb = new PhotoSwipeLightbox({
                 pswpModule: () => import("photoswipe"),
                 loop: false,
-
-                initialZoomLevel: "fill",
-                secondaryZoomLevel: "fit",
                 maxZoomLevel: 4,
-
                 padding: { top: 0, bottom: 0, left: 0, right: 0 },
                 bgOpacity: 1,
             });
@@ -360,8 +360,14 @@ export default function Gallery() {
             lightboxRef.current = lb;
         }
 
+        const lb = lightboxRef.current;
+        const lbOptions = lb.options;
+
+        lbOptions.initialZoomLevel = settings.fillScreen ? "fill" : "fit";
+        lbOptions.secondaryZoomLevel = settings.fillScreen ? "fit" : "fill";
+
         // ✅ dataSource drives the gallery length, NOT the DOM
-        lightboxRef.current.options.dataSource = items.map((it) => ({
+        lbOptions.dataSource = items.map((it) => ({
             src: it.src,
             w: it.w ?? 1600,
             h: it.h ?? 900,
@@ -371,7 +377,7 @@ export default function Gallery() {
         return () => {
             // don't destroy on every items change; destroy only on unmount
         };
-    }, [items]);
+    }, [items, settings.fillScreen]);
 
     // destroy on unmount
     React.useEffect(() => {
@@ -473,6 +479,37 @@ export default function Gallery() {
                     <div className="drawer-section">
                         <div className="drawer-label">Current folder</div>
                         <div className="drawer-value">{curDir || "root"}</div>
+                    </div>
+
+                    <div className="drawer-section">
+                        <div className="drawer-label">Flags</div>
+
+                        <label
+                            style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                padding: "10px 0",
+                            }}
+                        >
+                            <span>Fill screen</span>
+
+                            <input
+                                type="checkbox"
+                                checked={settings.fillScreen}
+                                onChange={(e) =>
+                                    setSettings(s => ({
+                                        ...s,
+                                        fillScreen: e.target.checked
+                                    }))
+                                }
+                                style={{
+                                    width: 20,
+                                    height: 20,
+                                }}
+                            />
+                        </label>
+
                     </div>
 
                     <div className="drawer-section">
