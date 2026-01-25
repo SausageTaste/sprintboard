@@ -391,6 +391,14 @@ export default function Gallery() {
 
     React.useEffect(() => {
         setMenuOpen(false);
+
+        const lb = lightboxRef.current;
+        const pswp = lb?.pswp;
+
+        // If lightbox is open, close it
+        if (pswp) {
+            pswp.close();
+        }
     }, [curDir]);
 
     React.useEffect(() => {
