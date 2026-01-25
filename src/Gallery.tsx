@@ -178,7 +178,7 @@ export default function Gallery() {
 
             lb.on("uiRegister", () => {
                 const pswp = lb.pswp;
-                if (!pswp) return;
+                if (!pswp || !pswp.ui) return;
 
                 pswp.ui.registerElement({
                     name: "tap-prev",
@@ -205,7 +205,7 @@ export default function Gallery() {
                             });
                         }
 
-                        el.addEventListener("pointerdown", (e) => {
+                        el.addEventListener("pointerdown", (_) => {
                             flash();
                         });
 
@@ -242,7 +242,7 @@ export default function Gallery() {
                             });
                         }
 
-                        el.addEventListener("pointerdown", (e) => {
+                        el.addEventListener("pointerdown", (_) => {
                             flash();
                         });
 
