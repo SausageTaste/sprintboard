@@ -4,6 +4,10 @@ import { VirtuosoGrid } from "react-virtuoso";
 import PhotoSwipeLightbox from "photoswipe/lightbox";
 import "photoswipe/style.css";
 
+import Breadcrumbs from "./widgets/Breadcrumbs";
+import FolderCard from "./widgets/FolderCard";
+
+
 type Item = {
     src: string;
     name: string;
@@ -16,10 +20,6 @@ type Folder = { name: string; path: string };
 
 const PAGE = 200;
 
-function joinParts(parts: string[]) {
-    return parts.filter(Boolean).join("/");
-}
-
 function lockSelection() {
     document.documentElement.classList.add("pswp-open-noselect");
     document.body.classList.add("pswp-open-noselect");
@@ -31,104 +31,6 @@ function unlockSelection() {
     document.documentElement.classList.remove("pswp-open-noselect");
     document.body.classList.remove("pswp-open-noselect");
     window.getSelection?.()?.removeAllRanges?.();
-}
-
-function Breadcrumbs({
-    dir,
-    onNavigate,
-}: {
-    dir: string;
-    onNavigate: (dir: string) => void;
-}) {
-    const parts = dir ? dir.split("/").filter(Boolean) : [];
-    // crumbs: ["", "2026", "2026/01", ...]
-    const crumbs = ["", ...parts.map((_, i) => joinParts(parts.slice(0, i + 1)))];
-
-    return (
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-            {crumbs.map((p, i) => {
-                const label = i === 0 ? "root" : parts[i - 1];
-                const isLast = i === crumbs.length - 1;
-
-                return (
-                    <React.Fragment key={p || "root"}>
-                        <button
-                            onClick={() => onNavigate(p)}
-                            disabled={isLast}
-                            style={{
-                                padding: "6px 10px",
-                                borderRadius: 10,
-                                border: "1px solid rgba(255,255,255,0.12)",
-                                background: isLast ? "rgba(255,255,255,0.10)" : "transparent",
-                                color: "inherit",
-                                cursor: isLast ? "default" : "pointer",
-                            }}
-                        >
-                            {label}
-                        </button>
-                        {!isLast && <span style={{ opacity: 0.6 }}>/</span>}
-                    </React.Fragment>
-                );
-            })}
-        </div>
-    );
-}
-
-function FolderCard({
-    name,
-    onClick,
-}: {
-    name: string;
-    onClick: () => void;
-}) {
-    return (
-        <button
-            onClick={onClick}
-            style={{
-                textAlign: "left",
-                borderRadius: 16,
-                border: "1px solid rgba(255,255,255,0.10)",
-                background: "rgba(255,255,255,0.04)",
-                padding: 14,
-                cursor: "pointer",
-                display: "flex",
-                gap: 12,
-                alignItems: "center",
-                minHeight: 64,
-            }}
-        >
-            {/* simple folder icon */}
-            <div
-                style={{
-                    width: 40,
-                    height: 32,
-                    borderRadius: 10,
-                    background: "rgba(255,255,255,0.10)",
-                    position: "relative",
-                    flex: "0 0 auto",
-                }}
-            >
-                <div
-                    style={{
-                        position: "absolute",
-                        left: 6,
-                        top: -6,
-                        width: 18,
-                        height: 10,
-                        borderRadius: 6,
-                        background: "rgba(255,255,255,0.14)",
-                    }}
-                />
-            </div>
-
-            <div style={{ minWidth: 0 }}>
-                <div style={{ fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {name}
-                </div>
-                <div style={{ opacity: 0.65, fontSize: 12 }}>Folder</div>
-            </div>
-        </button>
-    );
 }
 
 type Settings = {
