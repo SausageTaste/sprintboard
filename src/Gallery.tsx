@@ -6,6 +6,7 @@ import "photoswipe/style.css";
 
 import Breadcrumbs from "./widgets/Breadcrumbs";
 import FolderCard from "./widgets/FolderCard";
+import { loadSettings, saveSettings, type ViewerSettings } from "./func/ViewerSetings";
 
 
 type Item = {
@@ -18,7 +19,6 @@ type Item = {
 
 type Folder = { name: string; path: string };
 
-const PAGE = 200;
 
 function lockSelection() {
     document.documentElement.classList.add("pswp-open-noselect");
@@ -33,24 +33,6 @@ function unlockSelection() {
     window.getSelection?.()?.removeAllRanges?.();
 }
 
-type Settings = {
-    fillScreen: boolean;
-};
-
-const DEFAULT_SETTINGS: Settings = {
-    fillScreen: false,
-};
-
-function loadSettings(): Settings {
-    try {
-        const raw = localStorage.getItem("gallery-settings");
-        if (!raw) return DEFAULT_SETTINGS;
-        return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
-    } catch {
-        return DEFAULT_SETTINGS;
-    }
-}
-
 export default function Gallery() {
     const [items, setItems] = React.useState<Item[]>([]);
     const [folders, setFolders] = React.useState<Folder[]>([]);
@@ -59,7 +41,7 @@ export default function Gallery() {
     const [thumbnailHeight, setThumbnailHeight] = React.useState<number>(4);
     const [query, setQuery] = React.useState("");
     const [menuOpen, setMenuOpen] = React.useState(false);
-    const [settings, setSettings] = React.useState<Settings>(() => loadSettings());
+    const [settings, setSettings] = React.useState<ViewerSettings>(() => loadSettings());
 
     const virtuosoRef = React.useRef<any>(null);
     const lastIndexRef = React.useRef<number>(0);
@@ -78,7 +60,7 @@ export default function Gallery() {
         try {
             const offset = items.length;
             console.log("Cur dir", curDir);
-            const res = await fetch(`/api/images/list?dir=${encodeURIComponent(curDir)}&offset=${offset}&limit=${PAGE}`);
+            const res = await fetch(`/api/images/list?dir=${encodeURIComponent(curDir)}&offset=${offset}&`);
             const data = await res.json();
 
             setFolders(Array.isArray(data.folders) ? data.folders : []);
@@ -335,10 +317,7 @@ export default function Gallery() {
     }, [menuOpen]);
 
     React.useEffect(() => {
-        localStorage.setItem(
-            "gallery-settings",
-            JSON.stringify(settings)
-        );
+        saveSettings(settings);
     }, [settings]);
 
     function openAt(index: number) {
