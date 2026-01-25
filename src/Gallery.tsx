@@ -286,6 +286,7 @@ export default function Gallery() {
         };
     }, []);
 
+    /*
     React.useEffect(() => {
         const interval = setInterval(() => {
             refreshNewFiles();
@@ -293,6 +294,7 @@ export default function Gallery() {
 
         return () => clearInterval(interval);
     }, [curDir, items.length]);
+    */
 
     React.useEffect(() => {
         setMenuOpen(false);
