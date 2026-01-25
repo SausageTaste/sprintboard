@@ -77,9 +77,9 @@ html.pswp-open-noselect,
 body.pswp-open-noselect,
 html.pswp-open-noselect *,
 body.pswp-open-noselect * {
-  -webkit-user-select: none !important;
-  user-select: none !important;
-  -webkit-touch-callout: none !important;
+  -webkit-user-select: auto !important;
+  user-select: auto !important;
+  -webkit-touch-callout: auto !important;
 }
 
 /* iOS tap highlight (the gray/blue flash) */
