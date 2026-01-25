@@ -138,6 +138,7 @@ export default function Gallery() {
     const [thumbnailWidth, setThumbnailWidth] = React.useState<number>(3);
     const [thumbnailHeight, setThumbnailHeight] = React.useState<number>(4);
     const [query, setQuery] = React.useState("");
+    const [menuOpen, setMenuOpen] = React.useState(false);
 
     const virtuosoRef = React.useRef<any>(null);
     const lastIndexRef = React.useRef<number>(0);
@@ -388,6 +389,20 @@ export default function Gallery() {
         return () => clearInterval(interval);
     }, [curDir, items.length]);
 
+    React.useEffect(() => {
+        setMenuOpen(false);
+    }, [curDir]);
+
+    React.useEffect(() => {
+        if (!menuOpen) return;
+
+        const prev = document.body.style.overflow;
+        document.body.style.overflow = "hidden";
+        return () => {
+            document.body.style.overflow = prev;
+        };
+    }, [menuOpen]);
+
     function openAt(index: number) {
         lastIndexRef.current = index;
 
@@ -405,7 +420,145 @@ export default function Gallery() {
 
     return (
         <div style={{ padding: 16, fontFamily: "system-ui" }}>
-            <h2 style={{ margin: "0 0 12px 0" }}>Virtuoso Infinite</h2>
+            <div className="headerRow" style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <button
+                    className="menuBtn"
+                    onClick={() => setMenuOpen(true)}
+                    aria-label="Open menu"
+                    style={{
+                        width: 44,
+                        height: 44,
+                        borderRadius: 12,
+                        border: "1px solid rgba(255,255,255,0.12)",
+                        background: "rgba(255,255,255,0.06)",
+                        color: "inherit",
+                        fontSize: 22,
+                        lineHeight: 1,
+                        cursor: "pointer",
+                    }}
+                >
+                    ☰
+                </button>
+
+                <h2 style={{ margin: 0 }}>Virtuoso Infinite</h2>
+            </div>
+
+            <div style={{ height: 12 }} />
+
+            {/* Backdrop */}
+            <div
+                className={`drawer-backdrop ${menuOpen ? "open" : ""}`}
+                onClick={() => setMenuOpen(false)}
+            />
+
+            {/* Drawer */}
+            <aside className={`drawer ${menuOpen ? "open" : ""}`} role="dialog" aria-modal="true">
+                <div className="drawer-header">
+                    <div style={{ fontWeight: 800 }}>Menu</div>
+                    <button className="drawer-close" onClick={() => setMenuOpen(false)} aria-label="Close menu">
+                        ✕
+                    </button>
+                </div>
+
+                <div className="drawer-body">
+                    {/* Put your UI here */}
+                    <div className="drawer-section">
+                        <div className="drawer-label">Current folder</div>
+                        <div className="drawer-value">{curDir || "root"}</div>
+                    </div>
+
+                    <div className="drawer-section">
+                        <div className="drawer-label">Sort</div>
+                        <button
+                            className="drawer-btn"
+                            onClick={() => {
+                                // example action
+                                // setSort("newestFirst")
+                            }}
+                        >
+                            Newest first
+                        </button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                        <button className="drawer-btn">Oldest first</button>
+                    </div>
+
+                    <div className="drawer-section">
+                        <div className="drawer-label">Actions</div>
+                        <button
+                            className="drawer-btn"
+                            onClick={() => {
+                                // example: refresh now
+                                // refreshNewFiles();
+                                setMenuOpen(false);
+                            }}
+                        >
+                            Refresh now
+                        </button>
+                    </div>
+                </div>
+            </aside>
 
             <Breadcrumbs dir={curDir} onNavigate={p => navigate(`/images/${p}`)} />
 

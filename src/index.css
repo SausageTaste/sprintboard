@@ -14,7 +14,9 @@
 }
 
 /* Always do this in web UIs */
-*, *::before, *::after {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
@@ -23,6 +25,7 @@ a {
   color: #646cff;
   text-decoration: inherit;
 }
+
 a:hover {
   color: #535bf2;
 }
@@ -49,9 +52,11 @@ button {
   cursor: pointer;
   transition: border-color 0.25s;
 }
+
 button:hover {
   border-color: #646cff;
 }
+
 button:focus,
 button:focus-visible {
   outline: 4px auto -webkit-focus-ring-color;
@@ -62,15 +67,19 @@ button:focus-visible {
     color: #213547;
     background-color: #ffffff;
   }
+
   a:hover {
     color: #747bff;
   }
+
   button {
     background-color: #f9f9f9;
   }
 }
 
-html, body, #root {
+html,
+body,
+#root {
   height: 100%;
   width: 100%;
   margin: 0;
@@ -86,7 +95,10 @@ body.pswp-open-noselect * {
 }
 
 /* iOS tap highlight (the gray/blue flash) */
-a, img, .pswp, .pswp * {
+a,
+img,
+.pswp,
+.pswp * {
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -96,4 +108,139 @@ a, img, .pswp, .pswp * {
 
 .pswp-tapzone.active {
   background: rgb(0, 0, 0, 0.1);
+}
+
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease;
+  z-index: 9998;
+}
+
+.drawer-backdrop.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.drawer {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: min(320px, 86vw);
+  background: rgba(24, 24, 24, 0.98);
+  border-right: 1px solid rgba(255, 255, 255, 0.12);
+  transform: translateX(-105%);
+  transition: transform 200ms ease;
+  z-index: 9999;
+
+  /* iOS safe area */
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+
+  /* prevent body scroll feeling inside the drawer */
+  overscroll-behavior: contain;
+}
+
+.drawer.open {
+  transform: translateX(0);
+}
+
+.drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 14px 10px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+}
+
+.drawer-close {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  cursor: pointer;
+}
+
+.drawer-body {
+  padding: 12px 14px;
+  overflow: auto;
+  height: calc(100% - 60px);
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.drawer-section {
+  margin-bottom: 16px;
+}
+
+.drawer-label {
+  font-size: 12px;
+  opacity: 0.65;
+  margin-bottom: 8px;
+}
+
+.drawer-value {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drawer-btn {
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+  cursor: pointer;
+  margin-bottom: 8px;
+}
+
+.menuBtn {
+  width: 36px;
+  height: 36px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  border-radius: 10px;
+  border: none;
+
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+
+  font-size: 20px;
+  line-height: 1;
+
+  cursor: pointer;
+
+  transition: background 0.15s ease;
+}
+
+.menuBtn:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.menuBtn:active {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.headerRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
