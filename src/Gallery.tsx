@@ -387,6 +387,33 @@ export default function Gallery() {
                     <div className="drawer-section">
                         <div className="drawer-label">Flags</div>
 
+
+                        <label
+                            style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                padding: "10px 0",
+                            }}
+                        >
+                            <span>Thumbnail size</span>
+                            <input
+                                type="number"
+                                value={settings.thumbnailSize}
+                                onChange={(e) =>
+                                    setSettings(s => ({
+                                        ...s,
+                                        thumbnailSize: Number(e.target.value)
+                                    }))
+                                }
+                                style={{
+                                    width: 60,
+                                    height: 30,
+                                }}
+                            />
+                        </label>
+
+
                         <label
                             style={{
                                 display: "flex",
@@ -396,7 +423,6 @@ export default function Gallery() {
                             }}
                         >
                             <span>Fill screen</span>
-
                             <input
                                 type="checkbox"
                                 checked={settings.fillScreen}
@@ -532,7 +558,7 @@ export default function Gallery() {
             <div
                 style={{
                     display: "grid",
-                    gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
+                    gridTemplateColumns: `repeat(auto-fill, minmax(${settings.thumbnailSize}px, 1fr))`,
                     gap: 12,
                 }}
             >
@@ -591,7 +617,7 @@ export default function Gallery() {
             <style>{`
         .grid {
           display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+          grid-template-columns: repeat(auto-fill, minmax(${settings.thumbnailSize}px, 1fr));
           gap: 10px;
           padding: 4px;
         }

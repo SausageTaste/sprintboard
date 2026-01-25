@@ -1,9 +1,11 @@
 
 type ViewerSettings = {
+    thumbnailSize: number;
     fillScreen: boolean;
 };
 
 const DEFAULT_SETTINGS: ViewerSettings = {
+    thumbnailSize: 200,
     fillScreen: false,
 };
 
