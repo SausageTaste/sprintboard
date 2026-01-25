@@ -234,6 +234,13 @@ export default function Gallery() {
             const lb = new PhotoSwipeLightbox({
                 pswpModule: () => import("photoswipe"),
                 loop: false,
+
+                initialZoomLevel: "fill",
+                secondaryZoomLevel: "fit",
+                maxZoomLevel: 4,
+
+                padding: { top: 0, bottom: 0, left: 0, right: 0 },
+                bgOpacity: 1,
             });
 
             // Track current slide
