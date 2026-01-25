@@ -131,6 +131,24 @@ function FolderCard({
     );
 }
 
+type Settings = {
+    fillScreen: boolean;
+};
+
+const DEFAULT_SETTINGS: Settings = {
+    fillScreen: false,
+};
+
+function loadSettings(): Settings {
+    try {
+        const raw = localStorage.getItem("gallery-settings");
+        if (!raw) return DEFAULT_SETTINGS;
+        return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    } catch {
+        return DEFAULT_SETTINGS;
+    }
+}
+
 export default function Gallery() {
     const [items, setItems] = React.useState<Item[]>([]);
     const [folders, setFolders] = React.useState<Folder[]>([]);
@@ -139,10 +157,7 @@ export default function Gallery() {
     const [thumbnailHeight, setThumbnailHeight] = React.useState<number>(4);
     const [query, setQuery] = React.useState("");
     const [menuOpen, setMenuOpen] = React.useState(false);
-
-    const [settings, setSettings] = React.useState({
-        fillScreen: false,
-    });
+    const [settings, setSettings] = React.useState<Settings>(() => loadSettings());
 
     const virtuosoRef = React.useRef<any>(null);
     const lastIndexRef = React.useRef<number>(0);
@@ -416,6 +431,13 @@ export default function Gallery() {
             document.body.style.overflow = prev;
         };
     }, [menuOpen]);
+
+    React.useEffect(() => {
+        localStorage.setItem(
+            "gallery-settings",
+            JSON.stringify(settings)
+        );
+    }, [settings]);
 
     function openAt(index: number) {
         lastIndexRef.current = index;
