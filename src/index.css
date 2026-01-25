@@ -13,6 +13,11 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Always do this in web UIs */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
 a {
   font-weight: 500;
   color: #646cff;
@@ -24,8 +29,6 @@ a:hover {
 
 body {
   margin: 0;
-  display: flex;
-  place-items: center;
   min-width: 320px;
   min-height: 100vh;
 }
@@ -77,8 +80,8 @@ html.pswp-open-noselect,
 body.pswp-open-noselect,
 html.pswp-open-noselect *,
 body.pswp-open-noselect * {
-  -webkit-user-select: auto !important;
   user-select: auto !important;
+  -webkit-user-select: auto !important;
   -webkit-touch-callout: auto !important;
 }
 

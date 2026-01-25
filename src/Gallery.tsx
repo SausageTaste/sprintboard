@@ -137,6 +137,7 @@ export default function Gallery() {
     const [total, setTotal] = React.useState<number | null>(null);
     const [thumbnailWidth, setThumbnailWidth] = React.useState<number>(3);
     const [thumbnailHeight, setThumbnailHeight] = React.useState<number>(4);
+    const [query, setQuery] = React.useState("");
 
     const virtuosoRef = React.useRef<any>(null);
     const lastIndexRef = React.useRef<number>(0);
@@ -387,7 +388,6 @@ export default function Gallery() {
         return () => clearInterval(interval);
     }, [curDir, items.length]);
 
-
     function openAt(index: number) {
         lastIndexRef.current = index;
 
@@ -408,6 +408,23 @@ export default function Gallery() {
             <h2 style={{ margin: "0 0 12px 0" }}>Virtuoso Infinite</h2>
 
             <Breadcrumbs dir={curDir} onNavigate={p => navigate(`/images/${p}`)} />
+
+            <div style={{ height: 12 }} />
+
+            <input
+                type="text"
+                placeholder="Search..."
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                style={{
+                    width: "100%",
+                    padding: "10px 12px",
+                    borderRadius: 10,
+                    border: "1px solid rgba(255,255,255,0.15)",
+                    background: "rgba(255,255,255,0.05)",
+                    color: "inherit",
+                }}
+            />
 
             <div style={{ height: 12 }} />
 
