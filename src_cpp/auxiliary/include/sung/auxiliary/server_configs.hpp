@@ -6,7 +6,7 @@
 
 #include <nlohmann/json.hpp>
 
-#include "util/path.hpp"
+#include "sung/auxiliary/path.hpp"
 
 
 namespace sung {

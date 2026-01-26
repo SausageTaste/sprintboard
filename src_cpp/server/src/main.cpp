@@ -5,8 +5,8 @@
 
 #include <httplib.h>
 
+#include "sung/auxiliary/server_configs.hpp"
 #include "util/png.hpp"
-#include "util/server_configs.hpp"
 #include "util/simple_img_info.hpp"
 
 

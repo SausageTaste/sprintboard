@@ -1,4 +1,4 @@
-#include "util/server_configs.hpp"
+#include "sung/auxiliary/server_configs.hpp"
 
 #include <fstream>
 

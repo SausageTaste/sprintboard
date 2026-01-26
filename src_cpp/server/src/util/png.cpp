@@ -29,7 +29,7 @@ namespace {
 
 namespace sung {
 
-    PngMeta read_png_metadata_only(const std::filesystem::path& path) {
+    PngMeta read_png_metadata_only(const Path& path) {
         std::ifstream file(path, std::ios::binary);
         if (!file)
             throw std::runtime_error("Failed to open PNG file");

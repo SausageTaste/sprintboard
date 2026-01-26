@@ -1,10 +1,11 @@
 #pragma once
 
-#include <filesystem>
 #include <string>
 #include <vector>
 
 #include <png.h>
+
+#include "sung/auxiliary/path.hpp"
 
 
 namespace sung {
@@ -25,6 +26,6 @@ namespace sung {
     };
 
 
-    PngMeta read_png_metadata_only(const std::filesystem::path& path);
+    PngMeta read_png_metadata_only(const Path& path);
 
 }  // namespace sung

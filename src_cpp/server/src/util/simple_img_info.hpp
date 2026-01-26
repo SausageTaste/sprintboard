@@ -2,7 +2,7 @@
 
 #include <optional>
 
-#include "util/path.hpp"
+#include "sung/auxiliary/path.hpp"
 
 
 namespace sung {
