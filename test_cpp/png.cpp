@@ -2,6 +2,7 @@
 #include <print>
 #include <source_location>
 
+#include "sung/auxiliary/comfyui_data.hpp"
 #include "sung/auxiliary/path.hpp"
 #include "sung/image/png.hpp"
 
@@ -27,6 +28,16 @@ int main() {
             if (!sung::fs::exists(json_path)) {
                 std::ofstream ofs(json_path);
                 ofs << text_kv.value;
+            }
+
+            if (text_kv.key == "workflow") {
+                const auto prompt = sung::find_prompt(
+                    reinterpret_cast<const uint8_t*>(text_kv.value.data()),
+                    text_kv.value.size()
+                );
+                std::println(
+                    "Prompt for {}: {}", sung::tostr(png_path), prompt
+                );
             }
         }
     }
