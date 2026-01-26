@@ -5,6 +5,7 @@
 
 #include <httplib.h>
 
+#include "util/png.hpp"
 #include "util/server_configs.hpp"
 #include "util/simple_img_info.hpp"
 
@@ -229,12 +230,28 @@ namespace {
                                       );
 
                 if (const auto info = sung::get_simple_img_info(entry.path())) {
-                    const auto w = info->width_;
-                    const auto h = info->height_;
-                    response.add_file(sung::tostr(name), api_path, w, h);
+                    if (info->is_png()) {
+                        try {
+                            const auto meta = sung::read_png_metadata_only(
+                                entry.path()
+                            );
+                        } catch (const std::exception& e) {
+                            std::println(
+                                "Error reading PNG metadata for {}: {}",
+                                sung::tostr(entry.path()),
+                                e.what()
+                            );
+                        }
+                    }
+
+                    response.add_file(
+                        sung::tostr(name), api_path, info->width_, info->height_
+                    );
                 }
             }
         }
+
+        return;
     }
 
 }  // namespace

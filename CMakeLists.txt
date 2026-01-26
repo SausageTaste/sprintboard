@@ -10,8 +10,9 @@ project(sprintboard
 )
 
 
-find_package(imageinfo CONFIG REQUIRED)
 find_package(httplib CONFIG REQUIRED)
+find_package(imageinfo CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
+find_package(PNG REQUIRED)
 
 add_subdirectory(src_cpp)

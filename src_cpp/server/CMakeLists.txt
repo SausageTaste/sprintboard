@@ -34,4 +34,5 @@ target_link_libraries(${target_name} PRIVATE
     httplib::httplib
     imageinfo::imageinfo
     nlohmann_json::nlohmann_json
+    PNG::PNG
 )
