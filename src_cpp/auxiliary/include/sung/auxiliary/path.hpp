@@ -11,9 +11,12 @@ namespace sung {
     using Path = std::filesystem::path;
 
 
-    inline std::string tostr(const Path& path) {
-        const auto u8str = path.generic_u8string();
-        return std::string(u8str.begin(), u8str.end());
-    }
+    std::string tostr(const Path& path);
+
+    Path fromstr(const std::string& str);
+
+    Path path_concat(const Path& base, const std::string& suffix);
+
+    Path remove_ext(const Path& path);
 
 }  // namespace sung
