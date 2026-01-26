@@ -244,10 +244,12 @@ namespace {
                 const auto api_path = "/img/" / namespace_path / rel_path;
 
                 if (const auto info = sung::get_simple_img_info(entry.path())) {
+                    /*
                     const auto prompt = ::get_prompt(*info, entry.path());
                     if (prompt.find("sky") == std::string::npos) {
                         continue;
                     }
+                    */
 
                     response.add_file(
                         sung::tostr(name), api_path, info->width_, info->height_
