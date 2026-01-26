@@ -32,6 +32,14 @@ int main() {
         res.set_content("pong", "text/plain");
     });
 
+    svr.Get("/api/images/list", [](const httplib::Request& req, auto& res) {
+        std::print("Not implemented: {} {}\n", req.method, req.path);
+        for (const auto& [key, value] : req.params) {
+            std::print("  Param: {} = {}\n", key, value);
+        }
+        return;
+    });
+
     // SPA fallback: for any non-API GET that wasn't matched by a real file,
     // return index.html so the client-side router can handle it.
     svr.set_error_handler([](const httplib::Request& req,
