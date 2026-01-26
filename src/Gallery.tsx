@@ -89,6 +89,7 @@ export default function Gallery() {
         }
     }, [items.length, total, curDir]);
 
+    /*
     const refreshNewFiles = React.useCallback(async () => {
         if (loadingRef.current) return;
 
@@ -124,6 +125,7 @@ export default function Gallery() {
             console.warn("refresh failed", e);
         }
     }, [curDir]);
+    */
 
     React.useEffect(() => {
         setItems([]);
