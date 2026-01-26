@@ -3,7 +3,9 @@
 #include <sstream>
 #include <string>
 
-#include "httplib.h"
+#include <httplib.h>
+
+#include "util/server_configs.hpp"
 
 
 namespace {
@@ -22,6 +24,16 @@ namespace {
 
 
 int main() {
+    const auto cwd = std::filesystem::current_path();
+    std::print("CWD is '{}'\n", cwd.string());
+
+    const auto server_cfg = sung::load_server_configs();
+    for (auto [dir, bindings] : server_cfg.dir_bindings()) {
+        for (const auto& bind_path : bindings) {
+            std::print("Binding dir '{}' to '{}'\n", dir, bind_path.string());
+        }
+    }
+
     httplib::Server svr;
 
     // Serve static assets from ./dist
