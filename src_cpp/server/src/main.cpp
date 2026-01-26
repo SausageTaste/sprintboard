@@ -172,6 +172,35 @@ namespace {
         std::vector<FileInfo> files_;
     };
 
+
+    void fetch_directory(
+        ImageListResponse& response,
+        const sung::Path& namespace_path,
+        const sung::Path& local_dir,
+        const sung::Path& folder_path
+    ) {
+        if (!sung::fs::is_directory(folder_path))
+            return;
+
+        for (auto entry : sung::fs::directory_iterator(folder_path)) {
+            if (entry.is_directory()) {
+                const auto name = entry.path().filename();
+                const auto api_path = namespace_path /
+                                      sung::fs::relative(
+                                          entry.path(), local_dir
+                                      );
+                response.add_dir(sung::tostr(name), api_path);
+            } else if (entry.is_regular_file()) {
+                const auto name = entry.path().filename();
+                const auto api_path = "/img/" / namespace_path /
+                                      sung::fs::relative(
+                                          entry.path(), local_dir
+                                      );
+                response.add_file(sung::tostr(name), api_path, 0, 0);
+            }
+        }
+    }
+
 }  // namespace
 
 
@@ -222,25 +251,9 @@ int main() {
 
             const auto& binding_info = it_binding->second;
             for (auto& local_dir : binding_info.local_dirs_) {
-                const auto folder_path = local_dir / rest_path;
-                std::println("Listing folder: {}", sung::tostr(folder_path));
-                for (auto entry : sung::fs::directory_iterator(folder_path)) {
-                    if (entry.is_directory()) {
-                        const auto name = entry.path().filename();
-                        const auto api_path = namespace_path /
-                                              sung::fs::relative(
-                                                  entry.path(), local_dir
-                                              );
-                        response.add_dir(sung::tostr(name), api_path);
-                    } else if (entry.is_regular_file()) {
-                        const auto name = entry.path().filename();
-                        const auto api_path = "/img/" / namespace_path /
-                                              sung::fs::relative(
-                                                  entry.path(), local_dir
-                                              );
-                        response.add_file(sung::tostr(name), api_path, 0, 0);
-                    }
-                }
+                ::fetch_directory(
+                    response, namespace_path, local_dir, local_dir / rest_path
+                );
             }
         }
 
