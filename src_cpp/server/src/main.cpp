@@ -126,27 +126,23 @@ namespace {
             auto output = nlohmann::json::object();
 
             {
-                auto file_array = nlohmann::json::array();
+                auto& file_array = output["files"];
                 for (const auto& file_info : files_) {
-                    auto file_obj = nlohmann::json::object();
+                    auto& file_obj = file_array.emplace_back();
                     file_obj["name"] = file_info.name_;
                     file_obj["src"] = sung::tostr(file_info.path_);
                     file_obj["w"] = file_info.width_;
                     file_obj["h"] = file_info.height_;
-                    file_array.push_back(file_obj);
                 }
-                output["files"] = file_array;
             }
 
             {
-                auto dir_array = nlohmann::json::array();
+                auto& dir_array = output["folders"];
                 for (const auto& dir_info : dirs_) {
-                    auto dir_obj = nlohmann::json::object();
+                    auto& dir_obj = dir_array.emplace_back();
                     dir_obj["name"] = dir_info.name_;
                     dir_obj["path"] = sung::tostr(dir_info.path_);
-                    dir_array.push_back(dir_obj);
                 }
-                output["folders"] = dir_array;
             }
 
             output["thumbnail_width"] = 0;
