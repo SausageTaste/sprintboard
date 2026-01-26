@@ -262,6 +262,7 @@ int main() {
 
         const auto json_data = response.make_json();
         const auto json_str = json_data.dump();
+        res.status = 200;
         res.set_content(json_str, "application/json");
         std::print("JSON Response: {}\n", json_str);
         return;
@@ -292,12 +293,14 @@ int main() {
 
                 const auto mime = ::mime_from_ext(file_path);
 
-                if (!serve_file_streaming(file_path, mime, res)) {
-                    res.status = 404;
-                    res.set_content("Not found", "text/plain");
+                if (serve_file_streaming(file_path, mime, res)) {
+                    res.status = 200;
+                    return;
                 }
             }
 
+            res.status = 404;
+            res.set_content("Not found", "text/plain");
             return;
         }
     );
@@ -323,6 +326,9 @@ int main() {
         if (read_file("./dist/index.html", html)) {
             res.status = 200;
             res.set_content(std::move(html), "text/html; charset=utf-8");
+        } else {
+            res.status = 500;
+            res.set_content("Internal Server Error", "text/plain");
         }
     });
 
