@@ -22,7 +22,11 @@ namespace sung {
         auto& dir_bindings() const { return dir_bindings_; }
 
     private:
-        std::map<std::string, std::vector<Path>> dir_bindings_;
+        struct BindingInfo {
+            std::vector<Path> local_dirs_;
+        };
+
+        std::map<std::string, BindingInfo> dir_bindings_;
     };
 
 

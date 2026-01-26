@@ -6,9 +6,10 @@
 namespace sung {
 
     void ServerConfigs::fill_default() {
-        dir_bindings_ = {
-            { "downloads", { "Downloads" } },
-        };
+        {
+            auto& binding = dir_bindings_["downloads"];
+            binding.local_dirs_.push_back(fs::u8path("Downloads"));
+        }
     }
 
     void ServerConfigs::import_json(const nlohmann::json& json_data) {
@@ -20,10 +21,11 @@ namespace sung {
 
                 if (binding_info.contains("local_dirs")) {
                     auto& local_dirs = binding_info.at("local_dirs");
+                    auto& binding_info = dir_bindings_[dir];
                     for (auto& x : local_dirs) {
                         auto path_str = x.get<std::string>();
                         const auto path = fs::u8path(path_str);
-                        dir_bindings_[dir].push_back(path);
+                        binding_info.local_dirs_.push_back(path);
                     }
                 }
             }
@@ -36,8 +38,13 @@ namespace sung {
         {
             auto dir_bindings = nlohmann::json::object();
 
-            for (const auto& [dir, bindings] : dir_bindings_) {
-                dir_bindings[dir] = bindings;
+            for (const auto& [name, info] : dir_bindings_) {
+                auto json_binding = nlohmann::json::object();
+                json_binding["local_dirs"] = nlohmann::json::array();
+                for (const auto& path : info.local_dirs_) {
+                    json_binding["local_dirs"].push_back(path.u8string());
+                }
+                dir_bindings[name] = json_binding;
             }
 
             output["dir_bindings"] = dir_bindings;
