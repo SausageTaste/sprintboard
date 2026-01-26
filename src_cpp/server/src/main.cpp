@@ -122,6 +122,20 @@ namespace {
             files_.push_back({ name, path, width, height });
         }
 
+        void sort() {
+            std::sort(
+                files_.begin(), files_.end(), [](const auto& a, const auto& b) {
+                    return a.name_ > b.name_;
+                }
+            );
+
+            std::sort(
+                dirs_.begin(), dirs_.end(), [](const auto& a, const auto& b) {
+                    return a.name_ > b.name_;
+                }
+            );
+        }
+
         nlohmann::json make_json() const {
             auto output = nlohmann::json::object();
 
@@ -256,11 +270,11 @@ int main() {
             }
         }
 
+        response.sort();
         const auto json_data = response.make_json();
         const auto json_str = json_data.dump();
         res.status = 200;
         res.set_content(json_str, "application/json");
-        std::print("JSON Response: {}\n", json_str);
         return;
     });
 
