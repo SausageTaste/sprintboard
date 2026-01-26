@@ -232,8 +232,6 @@ namespace {
                     const auto w = info->width_;
                     const auto h = info->height_;
                     response.add_file(sung::tostr(name), api_path, w, h);
-                } else {
-                    response.add_file(sung::tostr(name), api_path, 0, 0);
                 }
             }
         }
