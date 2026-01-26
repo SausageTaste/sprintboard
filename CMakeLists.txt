@@ -10,6 +10,7 @@ project(sprintboard
 )
 
 
+find_package(imageinfo CONFIG REQUIRED)
 find_package(httplib CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 

@@ -4,11 +4,44 @@
 #include <string>
 
 #include <httplib.h>
+#include <imageinfo.hpp>
 
 #include "util/server_configs.hpp"
 
 
 namespace {
+
+
+    class FileReader {
+
+    public:
+        explicit FileReader(const sung::Path& path)
+            : file_(path, std::ios::in | std::ios::binary) {}
+
+        ~FileReader() {
+            if (file_.is_open()) {
+                file_.close();
+            }
+        }
+
+        size_t size() {
+            if (file_.is_open()) {
+                file_.seekg(0, std::ios::end);
+                return (size_t)file_.tellg();
+            } else {
+                return 0;
+            }
+        }
+
+        void read(void* buf, off_t offset, size_t size) {
+            file_.seekg(offset, std::ios::beg);
+            file_.read((char*)buf, (std::streamsize)size);
+        }
+
+    private:
+        std::ifstream file_;
+    };
+
 
     bool read_file(const std::string& path, std::string& out) {
         std::ifstream ifs(path, std::ios::binary);
@@ -35,7 +68,11 @@ namespace {
         return { namespace_path, rest_path };
     }
 
-    const char* mime_from_ext(const sung::Path& file_path) {
+    const char* determine_mime(const sung::Path& file_path) {
+        const auto info = imageinfo::parse<::FileReader>(file_path);
+        if (info.ok())
+            return info.mimetype();
+
         const auto ext = file_path.extension().string();
         if (ext == ".jpg" || ext == ".jpeg")
             return "image/jpeg";
@@ -49,6 +86,7 @@ namespace {
             return "image/avif";
         if (ext == ".heic")
             return "image/heic";
+
         return "application/octet-stream";
     }
 
@@ -159,13 +197,29 @@ namespace {
                 }
             }
 
-            output["thumbnail_width"] = 0;
-            output["thumbnail_height"] = 0;
+            const auto [avg_w, avg_h] = calc_average_thumbnail_size();
+            output["thumbnail_width"] = avg_w;
+            output["thumbnail_height"] = avg_h;
 
             return output;
         }
 
     private:
+        std::pair<double, double> calc_average_thumbnail_size() const {
+            if (files_.empty())
+                return { 0.0, 0.0 };
+
+            double total_w = 0.0;
+            double total_h = 0.0;
+            for (const auto& file_info : files_) {
+                total_w += static_cast<double>(file_info.width_);
+                total_h += static_cast<double>(file_info.height_);
+            }
+
+            return { total_w / static_cast<double>(files_.size()),
+                     total_h / static_cast<double>(files_.size()) };
+        }
+
         struct DirInfo {
             std::string name_;
             sung::Path path_;
@@ -206,7 +260,15 @@ namespace {
                                       sung::fs::relative(
                                           entry.path(), local_dir
                                       );
-                response.add_file(sung::tostr(name), api_path, 0, 0);
+
+                const auto info = imageinfo::parse<::FileReader>(entry.path());
+                if (info.ok()) {
+                    const auto w = info.size().width;
+                    const auto h = info.size().height;
+                    response.add_file(sung::tostr(name), api_path, w, h);
+                } else {
+                    response.add_file(sung::tostr(name), api_path, 0, 0);
+                }
             }
         }
     }
@@ -299,9 +361,7 @@ int main() {
             const auto& binding_info = it_binding->second;
             for (auto& local_dir : binding_info.local_dirs_) {
                 const auto file_path = local_dir / rest_path;
-                std::println("Serving file: {}", sung::tostr(file_path));
-
-                const auto mime = ::mime_from_ext(file_path);
+                const auto mime = ::determine_mime(file_path);
 
                 if (serve_file_streaming(file_path, mime, res)) {
                     res.status = 200;
