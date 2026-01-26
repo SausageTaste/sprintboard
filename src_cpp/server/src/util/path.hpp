@@ -12,7 +12,7 @@ namespace sung {
 
 
     inline std::string tostr(const Path& path) {
-        const auto u8str = path.u8string();
+        const auto u8str = path.generic_u8string();
         return std::string(u8str.begin(), u8str.end());
     }
 

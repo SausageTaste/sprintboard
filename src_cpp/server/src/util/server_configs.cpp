@@ -42,7 +42,7 @@ namespace sung {
                 auto json_binding = nlohmann::json::object();
                 json_binding["local_dirs"] = nlohmann::json::array();
                 for (const auto& path : info.local_dirs_) {
-                    json_binding["local_dirs"].push_back(path.u8string());
+                    json_binding["local_dirs"].push_back(sung::tostr(path));
                 }
                 dir_bindings[name] = json_binding;
             }
