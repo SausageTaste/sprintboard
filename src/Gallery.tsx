@@ -64,8 +64,8 @@ export default function Gallery() {
             const data = await res.json();
 
             setFolders(Array.isArray(data.folders) ? data.folders : []);
-            setThumbnailWidth(data.thumbnail_width || 3);
-            setThumbnailHeight(data.thumbnail_height || 4);
+            setThumbnailWidth(data.thumbnail_width || 512);
+            setThumbnailHeight(data.thumbnail_height || 512);
 
             const incoming: Item[] = data.files;
             const incomingTotal = data.files.Length;
@@ -330,8 +330,8 @@ export default function Gallery() {
         // loadAndOpen(index, dataSource) is supported in PhotoSwipe 5
         const ds = items.map((it) => ({
             src: it.src,
-            w: it.w ?? 1600,
-            h: it.h ?? 900,
+            w: it.w ?? 512,
+            h: it.h ?? 512,
             msrc: it.thumb ?? it.src,
         }));
 
@@ -597,8 +597,8 @@ export default function Gallery() {
                         <a
                             href={it.src}
                             data-pswp
-                            data-pswp-width={it.w ?? 1600}
-                            data-pswp-height={it.h ?? 900}
+                            data-pswp-width={it.w ?? 512}
+                            data-pswp-height={it.h ?? 512}
                             style={{ display: "block", borderRadius: 10, overflow: "hidden" }}
                         >
                             <img
