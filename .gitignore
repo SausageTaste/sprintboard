@@ -26,3 +26,4 @@ dist-ssr
 # C++
 /.vscode
 /build
+/server_configs.json
