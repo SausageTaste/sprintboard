@@ -212,7 +212,10 @@ int main() {
     httplib::Server svr;
 
     // Serve static assets from ./dist
-    svr.set_mount_point("/", "./dist");
+    const bool ok = svr.set_mount_point("/", "./dist");
+    std::println("mount ./dist ok? {}", ok);
+    std::println("CWD: {}", std::filesystem::current_path().string());
+    std::println("./dist exists? {}", std::filesystem::exists("./dist"));
 
     // API routes
     svr.Get("/api/ping", [](const httplib::Request&, httplib::Response& res) {
