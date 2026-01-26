@@ -5,6 +5,7 @@
 
 #include <httplib.h>
 
+#include "sung/auxiliary/comfyui_data.hpp"
 #include "sung/auxiliary/server_configs.hpp"
 #include "sung/image/png.hpp"
 #include "util/simple_img_info.hpp"
@@ -205,6 +206,23 @@ namespace {
     };
 
 
+    std::string get_prompt(
+        const sung::SimpleImageInfo& info, const sung::Path& file_path
+    ) {
+        if (info.is_png()) {
+            try {
+                const auto meta = sung::read_png_metadata_only(file_path);
+                if (auto wf = meta.find_text_chunk("workflow")) {
+                    return sung::find_prompt(wf->data(), wf->size());
+                }
+            } catch (const std::exception& e) {
+                return "";
+            }
+        } else {
+            return "";
+        }
+    }
+
     void fetch_directory(
         ImageListResponse& response,
         const sung::Path& namespace_path,
@@ -230,18 +248,9 @@ namespace {
                                       );
 
                 if (const auto info = sung::get_simple_img_info(entry.path())) {
-                    if (info->is_png()) {
-                        try {
-                            const auto meta = sung::read_png_metadata_only(
-                                entry.path()
-                            );
-                        } catch (const std::exception& e) {
-                            std::println(
-                                "Error reading PNG metadata for {}: {}",
-                                sung::tostr(entry.path()),
-                                e.what()
-                            );
-                        }
+                    const auto prompt = ::get_prompt(*info, entry.path());
+                    if (prompt.find("sky") == std::string::npos) {
+                        continue;
                     }
 
                     response.add_file(
