@@ -8,6 +8,9 @@
 namespace sung {
 
     struct SimpleImageInfo {
+        bool is_png() const;
+        bool is_avif() const;
+
         const char* mime_type_ = "application/octet-stream";
         int64_t width_ = 0;
         int64_t height_ = 0;

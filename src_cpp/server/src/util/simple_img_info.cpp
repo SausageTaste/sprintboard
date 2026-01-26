@@ -40,6 +40,15 @@ namespace {
 
 namespace sung {
 
+    bool SimpleImageInfo::is_png() const {
+        return mime_type_ == std::string_view("image/png");
+    }
+
+    bool SimpleImageInfo::is_avif() const {
+        return mime_type_ == std::string_view("image/avif");
+    }
+
+
     std::optional<SimpleImageInfo> get_simple_img_info(const Path& file_path) {
         const auto info = imageinfo::parse<::FileReader>(file_path);
         if (!info.ok())
