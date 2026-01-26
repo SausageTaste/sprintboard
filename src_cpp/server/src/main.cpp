@@ -233,19 +233,15 @@ namespace {
             return;
 
         for (auto entry : sung::fs::directory_iterator(folder_path)) {
+            const auto rel_path = sung::fs::relative(entry.path(), local_dir);
+
             if (entry.is_directory()) {
                 const auto name = entry.path().filename();
-                const auto api_path = namespace_path /
-                                      sung::fs::relative(
-                                          entry.path(), local_dir
-                                      );
+                const auto api_path = namespace_path / rel_path;
                 response.add_dir(sung::tostr(name), api_path);
             } else if (entry.is_regular_file()) {
                 const auto name = entry.path().filename();
-                const auto api_path = "/img/" / namespace_path /
-                                      sung::fs::relative(
-                                          entry.path(), local_dir
-                                      );
+                const auto api_path = "/img/" / namespace_path / rel_path;
 
                 if (const auto info = sung::get_simple_img_info(entry.path())) {
                     const auto prompt = ::get_prompt(*info, entry.path());
