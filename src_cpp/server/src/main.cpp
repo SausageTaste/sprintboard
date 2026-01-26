@@ -35,6 +35,76 @@ namespace {
         return { namespace_path, rest_path };
     }
 
+    const char* mime_from_ext(const sung::Path& file_path) {
+        const auto ext = file_path.extension().string();
+        if (ext == ".jpg" || ext == ".jpeg")
+            return "image/jpeg";
+        if (ext == ".png")
+            return "image/png";
+        if (ext == ".webp")
+            return "image/webp";
+        if (ext == ".gif")
+            return "image/gif";
+        if (ext == ".avif")
+            return "image/avif";
+        if (ext == ".heic")
+            return "image/heic";
+        return "application/octet-stream";
+    }
+
+    bool serve_file_streaming(
+        const sung::Path& path, const char* mime, httplib::Response& res
+    ) {
+        std::error_code ec;
+        const auto size = sung::fs::file_size(path, ec);
+        if (ec)
+            return false;
+
+        auto ifs = std::make_shared<std::ifstream>(path, std::ios::binary);
+        if (!ifs->is_open())
+            return false;
+
+        // Good caching defaults for derived assets (thumbs)
+        res.set_header("Cache-Control", "public, max-age=31536000, immutable");
+        res.set_header("X-Content-Type-Options", "nosniff");
+
+        // Stream file content
+        res.set_content_provider(
+            size,
+            mime,
+            [ifs](
+                size_t offset, size_t length, httplib::DataSink& sink
+            ) mutable {
+                // Seek
+                ifs->clear();  // clear eof/fail flags before seeking
+                ifs->seekg(static_cast<std::streamoff>(offset), std::ios::beg);
+                if (!(*ifs))
+                    return false;
+
+                // Read chunk
+                std::string buf;
+                buf.resize(length);
+
+                ifs->read(buf.data(), static_cast<std::streamsize>(length));
+                const auto got = static_cast<size_t>(ifs->gcount());
+
+                if (got > 0)
+                    sink.write(buf.data(), got);
+
+                // If we read less than requested, it's only OK if we hit EOF
+                return got == length || ifs->eof();
+            },
+            [ifs](bool success) mutable {
+                // shared_ptr keeps stream alive until httplib is done
+                // explicit close is optional
+                if (ifs->is_open())
+                    ifs->close();
+            }
+        );
+
+        return true;
+    }
+
 
     class ImageListResponse {
 
@@ -164,7 +234,7 @@ int main() {
                         response.add_dir(sung::tostr(name), api_path);
                     } else if (entry.is_regular_file()) {
                         const auto name = entry.path().filename();
-                        const auto api_path = namespace_path /
+                        const auto api_path = "/img/" / namespace_path /
                                               sung::fs::relative(
                                                   entry.path(), local_dir
                                               );
@@ -181,14 +251,57 @@ int main() {
         return;
     });
 
+    svr.Get(
+        R"(/img/(.*))",
+        [&](const httplib::Request& req, httplib::Response& res) {
+            const auto [namespace_path, rest_path] = ::split_namespace(
+                sung::fs::u8path(req.path.substr(5))
+            );
+
+            const auto it_binding = server_cfg.dir_bindings().find(
+                sung::tostr(namespace_path)
+            );
+            if (it_binding == server_cfg.dir_bindings().end()) {
+                res.status = 400;
+                res.set_content(
+                    "Invalid namespace in 'dir' parameter", "text/plain"
+                );
+                return;
+            }
+
+            const auto& binding_info = it_binding->second;
+            for (auto& local_dir : binding_info.local_dirs_) {
+                const auto file_path = local_dir / rest_path;
+                std::println("Serving file: {}", sung::tostr(file_path));
+
+                const auto mime = ::mime_from_ext(file_path);
+
+                if (!serve_file_streaming(file_path, mime, res)) {
+                    res.status = 404;
+                    res.set_content("Not found", "text/plain");
+                }
+            }
+
+            return;
+        }
+    );
+
     // SPA fallback: for any non-API GET that wasn't matched by a real file,
     // return index.html so the client-side router can handle it.
     svr.set_error_handler([](const httplib::Request& req,
                              httplib::Response& res) {
-        if (req.method != "GET")
+        if (req.method != "GET") {
+            std::println(
+                "Non-GET request not found: {} {}", req.method, req.path
+            );
             return;
-        if (req.path.rfind("/api/", 0) == 0 || req.path == "/api")
+        }
+        if (req.path.rfind("/api/", 0) == 0 || req.path == "/api") {
+            std::println("API route not found: {} {}", req.method, req.path);
             return;
+        }
+
+        std::println("Shit: {} {}", req.method, req.path);
 
         std::string html;
         if (read_file("./dist/index.html", html)) {
