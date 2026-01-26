@@ -1,7 +1,5 @@
 #include "sung/auxiliary/comfyui_data.hpp"
 
-#include <print>
-
 #include <nlohmann/json.hpp>
 
 
@@ -217,7 +215,6 @@ namespace sung {
                     continue;
                 if (active_node->type_.find("Text") == std::string::npos)
                     continue;
-                std::println("{}", active_node->widgets_values_[0]);
                 output += active_node->widgets_values_[0] + ", ";
             }
         }
