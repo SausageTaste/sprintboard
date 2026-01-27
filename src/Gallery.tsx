@@ -498,7 +498,7 @@ export default function Gallery() {
                                 src={it.thumb || it.src}
                                 alt={it.name}
                                 loading="lazy"
-                                decoding="async"
+                                decoding="auto"
                                 style={{
                                     width: "100%",
                                     aspectRatio: `${thumbnailWidth} / ${thumbnailHeight}`,
