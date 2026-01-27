@@ -199,11 +199,9 @@ namespace sung {
         return active_nodes;
     }
 
-    std::string find_prompt(const uint8_t* data, size_t size) {
-        const auto workflow_data = sung::parse_comfyui_workflow(data, size);
-        const auto nodes = workflow_data.get_nodes();
-        const auto links = workflow_data.get_links();
-
+    std::string find_prompt(
+        const WorkflowNodes& nodes, const WorkflowLinks& links
+    ) {
         std::string output;
         const auto terminal_nodes = sung::find_terminal_nodes(nodes, links);
         for (const auto node : terminal_nodes) {

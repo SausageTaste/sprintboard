@@ -8,13 +8,22 @@
 
 namespace {
 
+    auto find_prompt(const uint8_t* data, size_t size) {
+        const auto workflow_data = sung::parse_comfyui_workflow(
+            reinterpret_cast<const uint8_t*>(data), size
+        );
+        const auto nodes = workflow_data.get_nodes();
+        const auto links = workflow_data.get_links();
+        return sung::find_prompt(nodes, links);
+    }
+
     std::string get_prompt_no_catch(
         const sung::SimpleImageInfo& info, const sung::Path& file_path
     ) {
         if (info.is_png()) {
             const auto meta = sung::read_png_metadata_only(file_path);
             if (auto wf = meta.find_text_chunk("workflow")) {
-                return sung::find_prompt(wf->data(), wf->size());
+                return ::find_prompt(wf->data(), wf->size());
             }
         } else if (info.is_avif()) {
             const auto file_content = sung::read_file(file_path);
@@ -27,7 +36,7 @@ namespace {
             if (workflow.empty())
                 return "";
 
-            return sung::find_prompt(workflow.data(), workflow.size());
+            return ::find_prompt(workflow.data(), workflow.size());
         }
 
         return "";

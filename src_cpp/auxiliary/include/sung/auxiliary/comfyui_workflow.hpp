@@ -85,6 +85,8 @@ namespace sung {
     );
 
 
-    std::string find_prompt(const uint8_t* data, size_t size);
+    std::string find_prompt(
+        const WorkflowNodes& nodes, const WorkflowLinks& links
+    );
 
 }  // namespace sung

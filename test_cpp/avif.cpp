@@ -44,9 +44,13 @@ int main() {
 
         const auto workflow = avif_meta.find_workflow_data();
         if (!workflow.empty()) {
-            const auto prompt = sung::find_prompt(
+            const auto workflow_data = sung::parse_comfyui_workflow(
                 workflow.data(), workflow.size()
             );
+            const auto nodes = workflow_data.get_nodes();
+            const auto links = workflow_data.get_links();
+
+            const auto prompt = sung::find_prompt(nodes, links);
             std::println("Prompt for {}: {}", sung::tostr(avif_path), prompt);
         }
     }

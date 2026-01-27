@@ -32,10 +32,14 @@ int main() {
             }
 
             if (text_kv.key == "workflow") {
-                const auto prompt = sung::find_prompt(
+                const auto workflow_data = sung::parse_comfyui_workflow(
                     reinterpret_cast<const uint8_t*>(text_kv.value.data()),
                     text_kv.value.size()
                 );
+                const auto nodes = workflow_data.get_nodes();
+                const auto links = workflow_data.get_links();
+
+                const auto prompt = sung::find_prompt(nodes, links);
                 std::println(
                     "Prompt for {}: {}", sung::tostr(png_path), prompt
                 );
