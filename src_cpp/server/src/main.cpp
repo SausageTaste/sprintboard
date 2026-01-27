@@ -7,6 +7,7 @@
 #include "sung/auxiliary/filesys.hpp"
 #include "sung/auxiliary/server_configs.hpp"
 #include "util/simple_img_info.hpp"
+#include "util/wake.hpp"
 
 
 namespace {
@@ -164,6 +165,15 @@ int main() {
         const auto json_str = json_data.dump();
         res.status = 200;
         res.set_content(json_str, "application/json");
+        return;
+    });
+
+    svr.Get("/api/wake", [&](const httplib::Request& req, auto& res) {
+        auto response = nlohmann::json::object();
+        response["idle_time"] = sung::get_idle_time();
+
+        res.status = 200;
+        res.set_content(response.dump(), "application/json");
         return;
     });
 
