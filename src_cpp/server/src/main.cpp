@@ -254,9 +254,13 @@ namespace {
 
 
 int main() {
-    const auto cwd = std::filesystem::current_path();
-    std::print("CWD is '{}'\n", cwd.string());
-    const auto server_cfg = sung::load_server_configs();
+    const auto exp_server_cfg = sung::load_server_configs();
+    if (!exp_server_cfg) {
+        std::println("Failed to load server configs");
+        std::println("{}", exp_server_cfg.error());
+        return 1;
+    }
+    const auto& server_cfg = *exp_server_cfg;
 
     httplib::Server svr;
 
@@ -379,7 +383,9 @@ int main() {
         }
     });
 
-    std::println("Server started at http://192.168.0.201:8787");
-    svr.listen("192.168.0.201", 8787);
+    std::println(
+        "Server started at http://{}:{}", server_cfg.host(), server_cfg.port()
+    );
+    svr.listen(server_cfg.host(), server_cfg.port());
     return 0;
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <expected>
 #include <map>
 #include <string>
 #include <vector>
@@ -21,16 +22,23 @@ namespace sung {
 
         auto& dir_bindings() const { return dir_bindings_; }
 
+        auto& host() const { return server_host_; }
+        auto port() const { return server_port_; }
+
     private:
         struct BindingInfo {
             std::vector<Path> local_dirs_;
         };
 
         std::map<std::string, BindingInfo> dir_bindings_;
+        std::string server_host_;
+        int server_port_;
     };
 
 
-    ServerConfigs load_server_configs(const std::string& path);
-    ServerConfigs load_server_configs();
+    using ExpServerCgfs = std::expected<ServerConfigs, std::string>;
+
+    ExpServerCgfs load_server_configs(const Path& path);
+    ExpServerCgfs load_server_configs();
 
 }  // namespace sung

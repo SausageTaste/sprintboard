@@ -3,6 +3,14 @@
 #include <fstream>
 
 
+namespace {
+
+    constexpr std::string_view DEFAULT_HOST = "127.0.0.1";
+    constexpr int DEFAULT_PORT = 8787;
+
+}  // namespace
+
+
 namespace sung {
 
     void ServerConfigs::fill_default() {
@@ -10,6 +18,9 @@ namespace sung {
             auto& binding = dir_bindings_["downloads"];
             binding.local_dirs_.push_back(fs::u8path("Downloads"));
         }
+
+        server_host_ = DEFAULT_HOST;
+        server_port_ = DEFAULT_PORT;
     }
 
     void ServerConfigs::import_json(const nlohmann::json& json_data) {
@@ -29,6 +40,18 @@ namespace sung {
                     }
                 }
             }
+        }
+
+        if (json_data.contains("server_host")) {
+            server_host_ = json_data.at("server_host").get<std::string>();
+        } else {
+            server_host_ = DEFAULT_HOST;
+        }
+
+        if (json_data.contains("server_port")) {
+            server_port_ = json_data.at("server_port").get<int>();
+        } else {
+            server_port_ = DEFAULT_PORT;
         }
     }
 
@@ -50,6 +73,9 @@ namespace sung {
             output["dir_bindings"] = dir_bindings;
         }
 
+        output["server_host"] = server_host_;
+        output["server_port"] = server_port_;
+
         return output;
     }
 
@@ -58,13 +84,19 @@ namespace sung {
 
 namespace sung {
 
-    ServerConfigs load_server_configs(const std::string& path) {
+    ExpServerCgfs load_server_configs(const Path& path) {
         ServerConfigs configs;
 
         std::ifstream ifs(path);
         if (ifs) {
             nlohmann::json json_data;
-            ifs >> json_data;
+
+            try {
+                ifs >> json_data;
+            } catch (const std::exception& e) {
+                return std::unexpected(e.what());
+            }
+
             configs.import_json(json_data);
         } else {
             configs.fill_default();
@@ -79,7 +111,7 @@ namespace sung {
         return configs;
     }
 
-    ServerConfigs load_server_configs() {
+    ExpServerCgfs load_server_configs() {
         return load_server_configs("./server_configs.json");
     }
 
