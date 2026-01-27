@@ -15,8 +15,10 @@ option(SUNG_TEST "Build test exe projects" On)
 
 find_package(httplib CONFIG REQUIRED)
 find_package(imageinfo CONFIG REQUIRED)
+find_package(libavif CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(PNG REQUIRED)
+find_package(pugixml CONFIG REQUIRED)
 
 add_subdirectory(src_cpp)
 

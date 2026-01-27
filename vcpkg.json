@@ -2,8 +2,10 @@
     "dependencies": [
         "cpp-httplib",
         "imageinfo",
+        "libavif",
         "libpng",
-        "nlohmann-json"
+        "nlohmann-json",
+        "pugixml"
     ],
     "builtin-baseline": "fafcc0e93bfba303e5e48790def745d27e6d449b"
 }
