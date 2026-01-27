@@ -1,5 +1,7 @@
 #include "sung/auxiliary/comfyui_workflow.hpp"
 
+#include <print>
+
 #include <nlohmann/json.hpp>
 
 
@@ -216,6 +218,34 @@ namespace sung {
                 output += active_node->widgets_values_[0] + ", ";
             }
         }
+
+        return output;
+    }
+
+    std::string find_model(
+        const WorkflowNodes& nodes, const WorkflowLinks& links
+    ) {
+        std::string output;
+        const auto terminal_nodes = sung::find_terminal_nodes(nodes, links);
+
+        for (const auto node : terminal_nodes) {
+            const auto active_nodes = sung::find_active_nodes_from_terminal(
+                node->id_, nodes, links
+            );
+
+            for (auto active_node : active_nodes) {
+                if (active_node->type_.contains("Checkpoint")) {
+                    if (active_node->widgets_values_.empty())
+                        continue;
+                    if (!output.empty())
+                        output += ", ";
+                    output = active_node->widgets_values_[0];
+                }
+            }
+        }
+
+        if (output.ends_with(".safetensors"))
+            output = output.substr(0, output.size() - 12);
 
         return output;
     }

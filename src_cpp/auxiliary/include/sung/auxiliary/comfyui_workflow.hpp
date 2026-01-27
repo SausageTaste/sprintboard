@@ -89,4 +89,8 @@ namespace sung {
         const WorkflowNodes& nodes, const WorkflowLinks& links
     );
 
+    std::string find_model(
+        const WorkflowNodes& nodes, const WorkflowLinks& links
+    );
+
 }  // namespace sung

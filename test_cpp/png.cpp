@@ -49,6 +49,9 @@ int main() {
                 for (auto& token : prompt_parser) {
                     std::println("  - {}", token);
                 }
+
+                const auto model = sung::find_model(nodes, links);
+                std::println("Model detected: {}", model);
             }
         }
     }

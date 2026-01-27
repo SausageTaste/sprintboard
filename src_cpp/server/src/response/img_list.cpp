@@ -1,5 +1,6 @@
 #include "response/img_list.hpp"
 
+#include "util/comfyui_util.hpp"
 #include "util/simple_img_info.hpp"
 
 
@@ -118,11 +119,21 @@ namespace sung {
                 const auto api_path = "/img/" / namespace_path / rel_path;
 
                 if (const auto info = sung::get_simple_img_info(entry.path())) {
-                    /*
-                    const auto prompt = ::get_prompt(*info, entry.path());
-                    if (prompt.find("sky") == std::string::npos) {
+                    if (info->width_ > info->height_)
                         continue;
-                    }
+
+                    /*
+                    const auto wf = sung::get_workflow_data(
+                        *info, entry.path()
+                    );
+                    if (!wf)
+                        continue;
+
+                    const auto nodes = wf->get_nodes();
+                    const auto links = wf->get_links();
+
+                    const auto model = sung::find_model(nodes, links);
+                    const auto prompt = sung::find_prompt(nodes, links);
                     */
 
                     response.add_file(

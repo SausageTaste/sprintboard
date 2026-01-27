@@ -1,6 +1,5 @@
 #include "util/comfyui_util.hpp"
 
-#include "sung/auxiliary/comfyui_workflow.hpp"
 #include "sung/auxiliary/filesys.hpp"
 #include "sung/image/avif.hpp"
 #include "sung/image/png.hpp"
@@ -55,6 +54,34 @@ namespace sung {
         } catch (const std::exception& e) {
             return "";
         }
+    }
+
+    std::optional<WorkflowData> get_workflow_data(
+        const SimpleImageInfo& info, const Path& file_path
+    ) {
+        if (info.is_png()) {
+            const auto meta = sung::read_png_metadata_only(file_path);
+            if (auto wf = meta.find_text_chunk("workflow")) {
+                return sung::parse_comfyui_workflow(wf->data(), wf->size());
+            }
+        } else if (info.is_avif()) {
+            const auto file_content = sung::read_file(file_path);
+            if (file_content.empty())
+                return std::nullopt;
+
+            const auto avif_meta = sung::read_avif_metadata_only(
+                file_content.data(), file_content.size()
+            );
+            const auto workflow = avif_meta.find_workflow_data();
+            if (workflow.empty())
+                return std::nullopt;
+
+            return sung::parse_comfyui_workflow(
+                workflow.data(), workflow.size()
+            );
+        }
+
+        return std::nullopt;
     }
 
 }  // namespace sung

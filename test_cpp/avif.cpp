@@ -52,6 +52,9 @@ int main() {
 
             const auto prompt = sung::find_prompt(nodes, links);
             std::println("Prompt for {}: {}", sung::tostr(avif_path), prompt);
+
+            const auto model = sung::find_model(nodes, links);
+            std::println("Model detected: {}", model);
         }
     }
 
