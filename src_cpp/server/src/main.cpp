@@ -217,8 +217,6 @@ int main() {
             return;
         }
 
-        std::println("Shit: {} {}", req.method, req.path);
-
         std::string html;
         if (sung::read_file("./dist/index.html", html)) {
             res.status = 200;
