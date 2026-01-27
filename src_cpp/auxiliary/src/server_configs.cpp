@@ -5,8 +5,24 @@
 
 namespace {
 
-    constexpr std::string_view DEFAULT_HOST = "127.0.0.1";
+    const std::string DEFAULT_HOST = "127.0.0.1";
     constexpr int DEFAULT_PORT = 8787;
+
+    template <typename T>
+    T try_get(
+        const nlohmann::json& j, const char* key, const T& default_value
+    ) {
+        if (!j.contains(key))
+            return default_value;
+
+        try {
+            return j.at(key).get<T>();
+        } catch (const std::exception& e) {
+            throw std::runtime_error(
+                "Invalid type for key '" + std::string(key) + "'"
+            );
+        }
+    }
 
 }  // namespace
 
@@ -48,11 +64,8 @@ namespace sung {
             server_host_ = DEFAULT_HOST;
         }
 
-        if (json_data.contains("server_port")) {
-            server_port_ = json_data.at("server_port").get<int>();
-        } else {
-            server_port_ = DEFAULT_PORT;
-        }
+        server_host_ = try_get(json_data, "server_host", DEFAULT_HOST);
+        server_port_ = try_get(json_data, "server_port", DEFAULT_PORT);
     }
 
     nlohmann::json ServerConfigs::export_json() const {
@@ -97,7 +110,11 @@ namespace sung {
                 return std::unexpected(e.what());
             }
 
-            configs.import_json(json_data);
+            try {
+                configs.import_json(json_data);
+            } catch (const std::exception& e) {
+                return std::unexpected(e.what());
+            }
         } else {
             configs.fill_default();
             std::ofstream ofs(path);
