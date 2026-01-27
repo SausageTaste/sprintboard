@@ -126,7 +126,7 @@ int main() {
     std::println("./dist exists? {}", std::filesystem::exists("./dist"));
 
     svr.Get("/api/images/list", [&](const httplib::Request& req, auto& res) {
-        sung::ScopedWakeLock wake_lock{ g_power_gate };
+        // sung::ScopedWakeLock wake_lock{ g_power_gate };
 
         const auto it_param_dir = req.params.find("dir");
         if (it_param_dir == req.params.end()) {
@@ -174,7 +174,7 @@ int main() {
     });
 
     svr.Get("/api/wake", [&](const httplib::Request& req, auto& res) {
-        sung::ScopedWakeLock wake_lock{ g_power_gate };
+        // sung::ScopedWakeLock wake_lock{ g_power_gate };
 
         auto response = nlohmann::json::object();
         response["wake_on"] = 0 < g_power_gate.count();
@@ -186,7 +186,7 @@ int main() {
     });
 
     svr.Get("/api/wakeup", [&](const httplib::Request& req, auto& res) {
-        sung::ScopedWakeLock wake_lock{ g_power_gate };
+        // sung::ScopedWakeLock wake_lock{ g_power_gate };
 
         if (0 < g_power_gate.count()) {
             g_power_gate.leave();
@@ -208,7 +208,7 @@ int main() {
     svr.Get(
         R"(/img/(.*))",
         [&](const httplib::Request& req, httplib::Response& res) {
-            sung::ScopedWakeLock wake_lock{ g_power_gate };
+            // sung::ScopedWakeLock wake_lock{ g_power_gate };
 
             const auto [namespace_path, rest_path] = ::split_namespace(
                 sung::fs::u8path(req.path.substr(5))
@@ -246,7 +246,7 @@ int main() {
     // return index.html so the client-side router can handle it.
     svr.set_error_handler([](const httplib::Request& req,
                              httplib::Response& res) {
-        sung::ScopedWakeLock wake_lock{ g_power_gate };
+        // sung::ScopedWakeLock wake_lock{ g_power_gate };
 
         if (req.method != "GET") {
             std::println(
