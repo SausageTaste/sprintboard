@@ -3,11 +3,9 @@
 
 #include <httplib.h>
 
-#include "sung/auxiliary/comfyui_data.hpp"
+#include "response/img_list.hpp"
 #include "sung/auxiliary/filesys.hpp"
 #include "sung/auxiliary/server_configs.hpp"
-#include "sung/image/avif.hpp"
-#include "sung/image/png.hpp"
 #include "util/simple_img_info.hpp"
 
 
@@ -103,172 +101,6 @@ namespace {
     }
 
 
-    class ImageListResponse {
-
-    public:
-        void add_dir(const std::string& name, const sung::Path& path) {
-            dirs_.push_back({ name, path });
-        }
-
-        void add_file(
-            const std::string& name,
-            const sung::Path& path,
-            int width,
-            int height
-        ) {
-            files_.push_back({ name, path, width, height });
-        }
-
-        void sort() {
-            std::sort(
-                files_.begin(), files_.end(), [](const auto& a, const auto& b) {
-                    return a.name_ > b.name_;
-                }
-            );
-
-            std::sort(
-                dirs_.begin(), dirs_.end(), [](const auto& a, const auto& b) {
-                    return a.name_ > b.name_;
-                }
-            );
-        }
-
-        nlohmann::json make_json() const {
-            auto output = nlohmann::json::object();
-
-            {
-                auto& file_array = output["files"];
-                for (const auto& file_info : files_) {
-                    auto& file_obj = file_array.emplace_back();
-                    file_obj["name"] = file_info.name_;
-                    file_obj["src"] = sung::tostr(file_info.path_);
-                    file_obj["w"] = file_info.width_;
-                    file_obj["h"] = file_info.height_;
-                }
-            }
-
-            {
-                auto& dir_array = output["folders"];
-                for (const auto& dir_info : dirs_) {
-                    auto& dir_obj = dir_array.emplace_back();
-                    dir_obj["name"] = dir_info.name_;
-                    dir_obj["path"] = sung::tostr(dir_info.path_);
-                }
-            }
-
-            const auto [avg_w, avg_h] = calc_average_thumbnail_size();
-            output["thumbnail_width"] = avg_w;
-            output["thumbnail_height"] = avg_h;
-
-            return output;
-        }
-
-    private:
-        std::pair<double, double> calc_average_thumbnail_size() const {
-            if (files_.empty())
-                return { 0.0, 0.0 };
-
-            double total_w = 0.0;
-            double total_h = 0.0;
-            for (const auto& file_info : files_) {
-                total_w += static_cast<double>(file_info.width_);
-                total_h += static_cast<double>(file_info.height_);
-            }
-
-            return { total_w / static_cast<double>(files_.size()),
-                     total_h / static_cast<double>(files_.size()) };
-        }
-
-        struct DirInfo {
-            std::string name_;
-            sung::Path path_;
-        };
-
-        struct FileInfo {
-            std::string name_;
-            sung::Path path_;
-            int width_;
-            int height_;
-        };
-
-        std::vector<DirInfo> dirs_;
-        std::vector<FileInfo> files_;
-    };
-
-
-    std::string get_prompt_no_catch(
-        const sung::SimpleImageInfo& info, const sung::Path& file_path
-    ) {
-        if (info.is_png()) {
-            const auto meta = sung::read_png_metadata_only(file_path);
-            if (auto wf = meta.find_text_chunk("workflow")) {
-                return sung::find_prompt(wf->data(), wf->size());
-            }
-        } else if (info.is_avif()) {
-            const auto file_content = sung::read_file(file_path);
-            if (file_content.empty())
-                return "";
-            const auto avif_meta = sung::read_avif_metadata_only(
-                file_content.data(), file_content.size()
-            );
-            const auto workflow = avif_meta.find_workflow_data();
-            if (workflow.empty())
-                return "";
-
-            return sung::find_prompt(workflow.data(), workflow.size());
-        } else {
-            return "";
-        }
-    }
-
-    std::string get_prompt(
-        const sung::SimpleImageInfo& info, const sung::Path& file_path
-    ) {
-        try {
-            return get_prompt_no_catch(info, file_path);
-        } catch (const std::exception& e) {
-            return "";
-        }
-    }
-
-    void fetch_directory(
-        ImageListResponse& response,
-        const sung::Path& namespace_path,
-        const sung::Path& local_dir,
-        const sung::Path& folder_path
-    ) {
-        if (!sung::fs::is_directory(folder_path))
-            return;
-
-        for (auto entry : sung::fs::directory_iterator(folder_path)) {
-            const auto rel_path = sung::fs::relative(entry.path(), local_dir);
-
-            if (entry.is_directory()) {
-                const auto name = entry.path().filename();
-                const auto api_path = namespace_path / rel_path;
-                response.add_dir(sung::tostr(name), api_path);
-            } else if (entry.is_regular_file()) {
-                const auto name = entry.path().filename();
-                const auto api_path = "/img/" / namespace_path / rel_path;
-
-                if (const auto info = sung::get_simple_img_info(entry.path())) {
-                    /*
-                    const auto prompt = ::get_prompt(*info, entry.path());
-                    if (prompt.find("sky") == std::string::npos) {
-                        continue;
-                    }
-                    */
-
-                    response.add_file(
-                        sung::tostr(name), api_path, info->width_, info->height_
-                    );
-                }
-            }
-        }
-
-        return;
-    }
-
 }  // namespace
 
 
@@ -298,7 +130,7 @@ int main() {
         }
         auto& param_dir = it_param_dir->second;
 
-        ImageListResponse response;
+        sung::ImageListResponse response;
 
         if (param_dir.empty()) {
             for (auto [dir, bindings] : server_cfg.dir_bindings()) {
@@ -321,8 +153,8 @@ int main() {
 
             const auto& binding_info = it_binding->second;
             for (auto& local_dir : binding_info.local_dirs_) {
-                ::fetch_directory(
-                    response, namespace_path, local_dir, local_dir / rest_path
+                response.fetch_directory(
+                    namespace_path, local_dir, local_dir / rest_path
                 );
             }
         }
