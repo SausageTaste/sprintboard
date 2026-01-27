@@ -12,6 +12,9 @@
 
 namespace {
 
+    sung::GatedPowerRequest g_power_gate;
+
+
     std::pair<sung::Path, sung::Path> split_namespace(const sung::Path& p) {
         sung::Path namespace_path;
         sung::Path rest_path;
@@ -170,6 +173,25 @@ int main() {
 
     svr.Get("/api/wake", [&](const httplib::Request& req, auto& res) {
         auto response = nlohmann::json::object();
+        response["wake_on"] = 0 < g_power_gate.count();
+        response["idle_time"] = sung::get_idle_time();
+
+        res.status = 200;
+        res.set_content(response.dump(), "application/json");
+        return;
+    });
+
+    svr.Get("/api/wakeup", [&](const httplib::Request& req, auto& res) {
+        if (0 < g_power_gate.count()) {
+            g_power_gate.leave();
+            std::println("System wake released");
+        } else {
+            g_power_gate.enter();
+            std::println("System wake requested");
+        }
+
+        auto response = nlohmann::json::object();
+        response["wake_on"] = 0 < g_power_gate.count();
         response["idle_time"] = sung::get_idle_time();
 
         res.status = 200;

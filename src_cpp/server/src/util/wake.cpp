@@ -34,11 +34,43 @@ namespace sung {
                PowerSetRequest(handle_, PowerRequestDisplayRequired) == TRUE;
     }
 
-    // Call clear when done
     bool PowerRequest::clear_system_required() {
         return this->ok() &&
                PowerClearRequest(handle_, PowerRequestSystemRequired) == TRUE;
     }
+
+    bool PowerRequest::clear_display_required() {
+        return this->ok() &&
+               PowerClearRequest(handle_, PowerRequestDisplayRequired) == TRUE;
+    }
+
+}  // namespace sung
+
+
+// GatedPowerRequest
+namespace sung {
+
+    GatedPowerRequest::GatedPowerRequest()
+        : power_req_(L"Sprintboard server: keep system awake while active") {}
+
+    void GatedPowerRequest::enter() {
+        if (gate_count_.fetch_add(1) == 0) {
+            power_req_.set_system_required(true);
+            power_req_.set_display_required(true);
+        }
+    }
+
+    void GatedPowerRequest::leave() {
+        if (gate_count_.fetch_sub(1) == 1) {
+            power_req_.clear_system_required();
+            power_req_.clear_display_required();
+        }
+
+        if (gate_count_ < 0)
+            gate_count_ = 0;
+    }
+
+    int GatedPowerRequest::count() const { return gate_count_.load(); }
 
 }  // namespace sung
 
