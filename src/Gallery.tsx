@@ -68,9 +68,7 @@ export default function Gallery() {
             setThumbnailHeight(data.thumbnail_height || 512);
 
             const incoming: Item[] = data.files ?? [];
-            const incomingTotal = incoming.length;
-
-            if (incomingTotal !== null) setTotal(incomingTotal);
+            setTotal(incoming.length);
 
             // dedupe by src so it still works even if backend ignores offset/limit for now
             setItems(prev => {
