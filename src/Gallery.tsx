@@ -6,6 +6,7 @@ import "photoswipe/style.css";
 
 import Breadcrumbs from "./widgets/Breadcrumbs";
 import FolderCard from "./widgets/FolderCard";
+import GalleryDrawer from "./widgets/GalleryDrawer";
 import { loadSettings, saveSettings, type ViewerSettings } from "./func/ViewerSetings";
 
 
@@ -395,177 +396,17 @@ export default function Gallery() {
 
             <div style={{ height: 12 }} />
 
-            {/* Backdrop */}
-            <div
-                className={`drawer-backdrop ${menuOpen ? "open" : ""}`}
-                onClick={() => setMenuOpen(false)}
+            <GalleryDrawer
+                open={menuOpen}
+                curDir={curDir}
+                settings={settings}
+                onChangeSettings={(updater) => setSettings(updater)}
+                onClose={() => setMenuOpen(false)}
+                onRefreshNow={() => {
+                    // hook this up to whatever you want later
+                    // e.g. refreshNewFiles();
+                }}
             />
-
-            {/* Drawer */}
-            <aside className={`drawer ${menuOpen ? "open" : ""}`} role="dialog" aria-modal="true">
-                <div className="drawer-header">
-                    <div style={{ fontWeight: 800 }}>Menu</div>
-                    <button className="drawer-close" onClick={() => setMenuOpen(false)} aria-label="Close menu">
-                        ✕
-                    </button>
-                </div>
-
-                <div className="drawer-body">
-                    {/* Put your UI here */}
-                    <div className="drawer-section">
-                        <div className="drawer-label">Current folder</div>
-                        <div className="drawer-value">{curDir || "root"}</div>
-                    </div>
-
-                    <div className="drawer-section">
-                        <div className="drawer-label">Flags</div>
-
-
-                        <label
-                            style={{
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "space-between",
-                                padding: "10px 0",
-                            }}
-                        >
-                            <span>Thumbnail size</span>
-                            <input
-                                type="number"
-                                value={settings.thumbnailSize}
-                                onChange={(e) =>
-                                    setSettings(s => ({
-                                        ...s,
-                                        thumbnailSize: Number(e.target.value)
-                                    }))
-                                }
-                                style={{
-                                    width: 60,
-                                    height: 30,
-                                }}
-                            />
-                        </label>
-
-
-                        <label
-                            style={{
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "space-between",
-                                padding: "10px 0",
-                            }}
-                        >
-                            <span>Fill screen</span>
-                            <input
-                                type="checkbox"
-                                checked={settings.fillScreen}
-                                onChange={(e) =>
-                                    setSettings(s => ({
-                                        ...s,
-                                        fillScreen: e.target.checked
-                                    }))
-                                }
-                                style={{
-                                    width: 20,
-                                    height: 20,
-                                }}
-                            />
-                        </label>
-
-                    </div>
-
-                    <div className="drawer-section">
-                        <div className="drawer-label">Sort</div>
-                        <button
-                            className="drawer-btn"
-                            onClick={() => {
-                                // example action
-                                // setSort("newestFirst")
-                            }}
-                        >
-                            Newest first
-                        </button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                        <button className="drawer-btn">Oldest first</button>
-                    </div>
-
-                    <div className="drawer-section">
-                        <div className="drawer-label">Actions</div>
-                        <button
-                            className="drawer-btn"
-                            onClick={() => {
-                                // example: refresh now
-                                // refreshNewFiles();
-                                setMenuOpen(false);
-                            }}
-                        >
-                            Refresh now
-                        </button>
-                    </div>
-                </div>
-            </aside>
 
             <Breadcrumbs dir={curDir} onNavigate={p => navigate(`/images/${p}`)} />
 
