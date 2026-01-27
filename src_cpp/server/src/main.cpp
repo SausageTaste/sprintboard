@@ -270,11 +270,6 @@ int main() {
     std::println("CWD: {}", std::filesystem::current_path().string());
     std::println("./dist exists? {}", std::filesystem::exists("./dist"));
 
-    // API routes
-    svr.Get("/api/ping", [](const httplib::Request&, httplib::Response& res) {
-        res.set_content("pong", "text/plain");
-    });
-
     svr.Get("/api/images/list", [&](const httplib::Request& req, auto& res) {
         const auto it_param_dir = req.params.find("dir");
         if (it_param_dir == req.params.end()) {
