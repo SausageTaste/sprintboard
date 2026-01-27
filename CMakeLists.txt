@@ -9,8 +9,18 @@ project(sprintboard
     LANGUAGES CXX
 )
 
+include(FetchContent)
 
 option(SUNG_TEST "Build test exe projects" On)
+
+
+FetchContent_Declare(
+    fetch_sungtools
+    GIT_REPOSITORY  https://github.com/SausageTaste/sungtools
+    GIT_TAG         main
+)
+
+FetchContent_MakeAvailable(fetch_sungtools)
 
 
 find_package(absl CONFIG REQUIRED)

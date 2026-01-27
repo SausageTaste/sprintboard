@@ -47,4 +47,5 @@ target_link_libraries(${target_name}
         absl::log
         nlohmann_json::nlohmann_json
         pugixml::pugixml
+        sungtools::sungtools_basic
 )
