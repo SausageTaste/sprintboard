@@ -1,6 +1,4 @@
-// GalleryDrawer.tsx
-import React from "react";
-import type { ViewerSettings } from "./func/ViewerSetings";
+import type { ViewerSettings } from "../func/ViewerSetings";
 
 
 type Props = {
