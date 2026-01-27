@@ -1,27 +1,16 @@
 #include <fstream>
 #include <print>
-#include <sstream>
-#include <string>
 
 #include <httplib.h>
 
 #include "sung/auxiliary/comfyui_data.hpp"
+#include "sung/auxiliary/filesys.hpp"
 #include "sung/auxiliary/server_configs.hpp"
 #include "sung/image/png.hpp"
 #include "util/simple_img_info.hpp"
 
 
 namespace {
-
-    bool read_file(const std::string& path, std::string& out) {
-        std::ifstream ifs(path, std::ios::binary);
-        if (!ifs)
-            return false;
-        std::ostringstream ss;
-        ss << ifs.rdbuf();
-        out = ss.str();
-        return true;
-    }
 
     std::pair<sung::Path, sung::Path> split_namespace(const sung::Path& p) {
         sung::Path namespace_path;
@@ -381,7 +370,7 @@ int main() {
         std::println("Shit: {} {}", req.method, req.path);
 
         std::string html;
-        if (read_file("./dist/index.html", html)) {
+        if (sung::read_file("./dist/index.html", html)) {
             res.status = 200;
             res.set_content(std::move(html), "text/html; charset=utf-8");
         } else {
