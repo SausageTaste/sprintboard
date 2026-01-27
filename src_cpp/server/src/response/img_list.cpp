@@ -9,6 +9,12 @@ namespace sung {
     void ImageListResponse::add_dir(
         const std::string& name, const sung::Path& path
     ) {
+        for (auto& x : dirs_) {
+            if (x.path_ == path) {
+                return;
+            }
+        }
+
         dirs_.push_back({ name, path });
     }
 
