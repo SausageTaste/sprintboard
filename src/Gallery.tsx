@@ -132,8 +132,26 @@ export default function Gallery() {
         setTotal(null);
         loadingRef.current = false;
 
-        queueMicrotask(() => loadMore());
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+        (async () => {
+            if (loadingRef.current) return;
+            loadingRef.current = true;
+            try {
+                const res = await fetch(`/api/images/list?dir=${encodeURIComponent(curDir)}&offset=0&`);
+                const data = await res.json();
+
+                setFolders(Array.isArray(data.folders) ? data.folders : []);
+                setThumbnailWidth(data.thumbnail_width || 512);
+                setThumbnailHeight(data.thumbnail_height || 512);
+
+                const incoming: Item[] = data.files ?? [];
+                setItems(incoming);
+
+                // IMPORTANT: total should come from backend, not incoming.length
+                setTotal(data.total ?? null);
+            } finally {
+                loadingRef.current = false;
+            }
+        })();
     }, [curDir]);
 
     React.useEffect(() => {
