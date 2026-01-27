@@ -1,4 +1,4 @@
-#include "sung/auxiliary/comfyui_data.hpp"
+#include "sung/auxiliary/comfyui_workflow.hpp"
 
 #include <nlohmann/json.hpp>
 

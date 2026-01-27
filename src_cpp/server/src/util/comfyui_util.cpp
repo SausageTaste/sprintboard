@@ -1,6 +1,6 @@
 #include "util/comfyui_util.hpp"
 
-#include "sung/auxiliary/comfyui_data.hpp"
+#include "sung/auxiliary/comfyui_workflow.hpp"
 #include "sung/auxiliary/filesys.hpp"
 #include "sung/image/avif.hpp"
 #include "sung/image/png.hpp"

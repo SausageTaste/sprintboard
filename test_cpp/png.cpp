@@ -2,7 +2,7 @@
 #include <print>
 #include <source_location>
 
-#include "sung/auxiliary/comfyui_data.hpp"
+#include "sung/auxiliary/comfyui_workflow.hpp"
 #include "sung/auxiliary/path.hpp"
 #include "sung/image/png.hpp"
 
