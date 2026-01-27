@@ -2,6 +2,7 @@
 #include <print>
 #include <source_location>
 
+#include "sung/auxiliary/comfyui_prompt.hpp"
 #include "sung/auxiliary/comfyui_workflow.hpp"
 #include "sung/auxiliary/filesys.hpp"
 #include "sung/image/avif.hpp"
@@ -47,7 +48,12 @@ int main() {
             const auto prompt = sung::find_prompt(
                 workflow.data(), workflow.size()
             );
-            std::println("Prompt for {}: {}", sung::tostr(avif_path), prompt);
+
+            sung::PromptParser prompt_parser;
+            prompt_parser.parse(prompt.data(), prompt.size());
+            for (auto& token : prompt_parser) {
+                std::println("  - {}", token);
+            }
         }
     }
 

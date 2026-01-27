@@ -13,6 +13,7 @@ project(sprintboard
 option(SUNG_TEST "Build test exe projects" On)
 
 
+find_package(absl CONFIG REQUIRED)
 find_package(httplib CONFIG REQUIRED)
 find_package(imageinfo CONFIG REQUIRED)
 find_package(libavif CONFIG REQUIRED)
