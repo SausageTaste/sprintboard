@@ -39,6 +39,29 @@ namespace sung {
     };
 
 
+    class ScopedWakeLock final {
+
+    public:
+        explicit ScopedWakeLock(GatedPowerRequest& gate) : gate_(gate) {
+            // must either succeed or throw without partial state
+            gate_.enter();
+        }
+
+        ~ScopedWakeLock() noexcept {
+            // leave() should be noexcept. If it isn't, catch here.
+            gate_.leave();
+        }
+
+        ScopedWakeLock(const ScopedWakeLock&) = delete;
+        ScopedWakeLock& operator=(const ScopedWakeLock&) = delete;
+        ScopedWakeLock(ScopedWakeLock&&) = delete;
+        ScopedWakeLock& operator=(ScopedWakeLock&&) = delete;
+
+    private:
+        GatedPowerRequest& gate_;
+    };
+
+
     double get_idle_time();
 
 }  // namespace sung

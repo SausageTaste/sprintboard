@@ -1,5 +1,7 @@
 #include "util/wake.hpp"
 
+#include <print>
+
 #include <windows.h>
 
 
@@ -57,6 +59,7 @@ namespace sung {
         if (gate_count_.fetch_add(1) == 0) {
             power_req_.set_system_required(true);
             power_req_.set_display_required(true);
+            std::println("System wake requested");
         }
     }
 
@@ -64,6 +67,7 @@ namespace sung {
         if (gate_count_.fetch_sub(1) == 1) {
             power_req_.clear_system_required();
             power_req_.clear_display_required();
+            std::println("System wake released");
         }
 
         if (gate_count_ < 0)
