@@ -48,6 +48,7 @@ export default function Gallery() {
     const lastIndexRef = React.useRef<number>(0);
     const lightboxRef = React.useRef<PhotoSwipeLightbox | null>(null);
     const loadingRef = React.useRef(false);
+    const itemsRef = React.useRef(items);
 
     const { "*": path } = useParams();   // catch-all route
     const navigate = useNavigate();
@@ -127,6 +128,17 @@ export default function Gallery() {
     */
 
     React.useEffect(() => {
+        itemsRef.current = items;
+
+        const src = new URL(window.location.href).searchParams.get("src");
+        if (!src)
+            return;
+        const idx = items.findIndex(x => x.src === src);
+        if (idx >= 0)
+            openAt(idx);
+    }, [items]);
+
+    React.useEffect(() => {
         setItems([]);
         setTotal(null);
         loadingRef.current = false;
@@ -172,6 +184,13 @@ export default function Gallery() {
                 const i = pswp.currIndex;
                 lastIndexRef.current = i;
 
+                const it = itemsRef.current[i];
+                if (!it) return;
+
+                const url = new URL(window.location.href);
+                url.searchParams.set("src", it.src);
+                window.history.replaceState({}, "", url); // replace, don't spam history
+
                 // ✅ scroll grid to current image
                 /*
                 virtuosoRef.current?.scrollToIndex({
@@ -182,14 +201,15 @@ export default function Gallery() {
                 */
             });
 
-            // When closing → scroll back
             lb.on("close", () => {
                 unlockSelection();
 
-                // Scroll thumbnail into view
-                const i = lastIndexRef.current;
+                const url = new URL(window.location.href);
+                url.searchParams.delete("src");
+                window.history.replaceState({}, "", url);
+
                 virtuosoRef.current?.scrollToIndex({
-                    index: i,
+                    index: lastIndexRef.current,
                     align: "center",   // center it nicely
                     behavior: "smooth"
                 });
@@ -357,7 +377,13 @@ export default function Gallery() {
     function openAt(index: number) {
         lastIndexRef.current = index;
 
-        // loadAndOpen(index, dataSource) is supported in PhotoSwipe 5
+        const it = items[index];
+        if (it) {
+            const url = new URL(window.location.href);
+            url.searchParams.set("src", it.src);
+            window.history.pushState({}, "", url);
+        }
+
         const ds = items.map((it) => ({
             src: it.src,
             w: it.w ?? 512,
