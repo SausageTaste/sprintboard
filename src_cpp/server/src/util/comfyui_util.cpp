@@ -28,9 +28,9 @@ namespace {
                 return "";
 
             return sung::find_prompt(workflow.data(), workflow.size());
-        } else {
-            return "";
         }
+
+        return "";
     }
 
 }  // namespace
