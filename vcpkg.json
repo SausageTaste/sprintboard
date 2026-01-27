@@ -1,5 +1,6 @@
 {
     "dependencies": [
+        "abseil",
         "cpp-httplib",
         "imageinfo",
         "libavif",

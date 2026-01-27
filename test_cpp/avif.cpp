@@ -2,6 +2,7 @@
 #include <print>
 #include <source_location>
 
+#include "sung/auxiliary/comfyui_prompt.hpp"
 #include "sung/auxiliary/comfyui_workflow.hpp"
 #include "sung/auxiliary/filesys.hpp"
 #include "sung/image/avif.hpp"

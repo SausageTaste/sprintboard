@@ -41,6 +41,10 @@ target_include_directories(${target_name}
 
 target_link_libraries(${target_name}
     PUBLIC
+        absl::any
+        absl::base
+        absl::bits
+        absl::log
         nlohmann_json::nlohmann_json
         pugixml::pugixml
 )
