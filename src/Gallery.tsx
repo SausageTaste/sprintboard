@@ -255,6 +255,19 @@ export default function Gallery() {
                         });
                     },
                 });
+
+                pswp.ui.registerElement({
+                    name: "info-btn",
+                    order: 8,
+                    isButton: true,
+                    appendTo: "bar",
+                    html: "ⓘ",
+                    onClick: async () => {
+                        const i = pswp.currIndex;
+                        const src = items[i]?.src;
+                        console.log("Image info:", src);
+                    },
+                });
             });
 
             lb.init();
