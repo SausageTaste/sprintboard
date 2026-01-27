@@ -67,8 +67,8 @@ export default function Gallery() {
             setThumbnailWidth(data.thumbnail_width || 512);
             setThumbnailHeight(data.thumbnail_height || 512);
 
-            const incoming: Item[] = data.files;
-            const incomingTotal = data.files.Length;
+            const incoming: Item[] = data.files ?? [];
+            const incomingTotal = incoming.length;
 
             if (incomingTotal !== null) setTotal(incomingTotal);
 
