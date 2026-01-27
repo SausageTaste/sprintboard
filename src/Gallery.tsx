@@ -402,10 +402,7 @@ export default function Gallery() {
                 settings={settings}
                 onChangeSettings={(updater) => setSettings(updater)}
                 onClose={() => setMenuOpen(false)}
-                onRefreshNow={() => {
-                    // hook this up to whatever you want later
-                    // e.g. refreshNewFiles();
-                }}
+                onRefreshNow={() => { navigate(0); }}
             />
 
             <Breadcrumbs dir={curDir} onNavigate={p => navigate(`/images/${p}`)} />
