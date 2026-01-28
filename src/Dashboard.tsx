@@ -1,9 +1,12 @@
 import React from "react";
+import { useNavigate } from "react-router-dom";
 
 
 export default function Gallery() {
     const [idleTime, setIdleTime] = React.useState<number>(0);
     const [wakeStatus, setWakeStatus] = React.useState<boolean>(false);
+
+    const navigate = useNavigate();
 
     const loadMore = React.useCallback(async () => {
         try {
@@ -52,6 +55,8 @@ export default function Gallery() {
             <text>Wake status: {wakeStatus ? "ON" : "OFF"}</text>
             <div style={{ height: 12 }} />
             <button onClick={sendWakeUpCall}>Send Wake Up Call</button>
+            <div style={{ height: 12 }} />
+            <button onClick={() => navigate("/images")}>Go to Images</button>
         </div >
     );
 }
