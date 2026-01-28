@@ -185,11 +185,12 @@ export default function Gallery() {
                 lastIndexRef.current = i;
 
                 const it = itemsRef.current[i];
-                if (!it) return;
+                if (!it)
+                    return;
 
                 const url = new URL(window.location.href);
                 url.searchParams.set("src", it.src);
-                window.history.replaceState({}, "", url); // replace, don't spam history
+                window.history.replaceState({ pswp: true }, "", url);
 
                 // ✅ scroll grid to current image
                 /*
@@ -374,6 +375,19 @@ export default function Gallery() {
         saveSettings(settings);
     }, [settings]);
 
+    React.useEffect(() => {
+        function onPopState() {
+            const lb = lightboxRef.current;
+            const pswp = lb?.pswp;
+            if (pswp) {
+                pswp.close();
+            }
+        }
+
+        window.addEventListener("popstate", onPopState);
+        return () => window.removeEventListener("popstate", onPopState);
+    }, []);
+
     function openAt(index: number) {
         lastIndexRef.current = index;
 
@@ -381,7 +395,7 @@ export default function Gallery() {
         if (it) {
             const url = new URL(window.location.href);
             url.searchParams.set("src", it.src);
-            window.history.pushState({}, "", url);
+            window.history.pushState({ pswp: true }, "", url);
         }
 
         const ds = items.map((it) => ({
