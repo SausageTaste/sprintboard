@@ -105,9 +105,15 @@ namespace {
                 for (const auto& local_dir : binding_info.local_dirs_) {
                     for (auto entry :
                          sung::fs::recursive_directory_iterator(local_dir)) {
-                        if (entry.path().extension() == ".png") {
-                            png_files.push_back(entry.path());
-                        }
+                        if (entry.path().extension() != ".png")
+                            continue;
+
+                        auto avif_path = entry.path();
+                        avif_path.replace_extension(".avif");
+                        if (sung::fs::exists(avif_path))
+                            continue;
+
+                        png_files.push_back(entry.path());
                     }
                 }
             }

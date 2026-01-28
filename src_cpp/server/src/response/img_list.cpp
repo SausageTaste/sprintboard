@@ -115,6 +115,11 @@ namespace sung {
                 const auto api_path = namespace_path / rel_path;
                 response.add_dir(sung::tostr(name), api_path);
             } else if (entry.is_regular_file()) {
+                auto avif_path = entry.path();
+                avif_path.replace_extension(".avif");
+                if (avif_path != entry.path() && sung::fs::exists(avif_path))
+                    continue;
+
                 const auto name = entry.path().filename();
                 const auto api_path = "/img/" / namespace_path / rel_path;
 
