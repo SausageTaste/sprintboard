@@ -15,6 +15,13 @@ namespace sung {
     class ServerConfigs {
 
     public:
+        struct BindingInfo {
+            std::vector<Path> local_dirs_;
+        };
+
+        using DirBindings = std::map<std::string, BindingInfo>;
+
+    public:
         void fill_default();
 
         void import_json(const nlohmann::json& json_data);
@@ -26,11 +33,7 @@ namespace sung {
         auto port() const { return server_port_; }
 
     private:
-        struct BindingInfo {
-            std::vector<Path> local_dirs_;
-        };
-
-        std::map<std::string, BindingInfo> dir_bindings_;
+        DirBindings dir_bindings_;
         std::string server_host_;
         int server_port_;
     };
