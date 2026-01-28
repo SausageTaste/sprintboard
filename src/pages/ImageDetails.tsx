@@ -3,8 +3,7 @@ import { useLocation, useSearchParams } from "react-router-dom";
 
 
 export default function ImageDetails() {
-    const location = useLocation();
-    const [sp, setSp] = useSearchParams();
+    const [sp] = useSearchParams();
 
     const imgSrc = sp.get("src") ?? "";
     const dir = sp.get("dir") ?? "";
