@@ -205,9 +205,11 @@ export default function Gallery() {
             lb.on("close", () => {
                 unlockSelection();
 
-                const url = new URL(window.location.href);
-                url.searchParams.delete("src");
-                window.history.replaceState({}, "", url);
+                if (window.location.pathname.startsWith("/images")) {
+                    const url = new URL(window.location.href);
+                    url.searchParams.delete("src");
+                    window.history.replaceState({}, "", url);
+                }
 
                 virtuosoRef.current?.scrollToIndex({
                     index: lastIndexRef.current,
@@ -302,8 +304,17 @@ export default function Gallery() {
                     html: "ⓘ",
                     onClick: async () => {
                         const i = pswp.currIndex;
-                        const src = items[i]?.src;
-                        console.log("Image info:", src);
+                        const it = itemsRef.current[i];
+                        if (!it)
+                            return;
+
+                        pswp.close();
+
+                        const params = new URLSearchParams();
+                        params.set("src", it.src);
+                        params.set("dir", curDir);
+                        params.set("index", String(i));
+                        navigate(`/imagedetails?${params.toString()}`);
                     },
                 });
             });
