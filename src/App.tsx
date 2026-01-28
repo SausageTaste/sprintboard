@@ -1,7 +1,7 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 
-import Dashboard from "./Dashboard";
-import Gallery from "./Gallery";
+import Dashboard from "./pages/Dashboard";
+import Gallery from "./pages/Gallery";
 import ImageDetails from "./pages/ImageDetails";
 
 

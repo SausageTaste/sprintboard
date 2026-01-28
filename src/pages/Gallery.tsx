@@ -4,10 +4,10 @@ import { VirtuosoGrid } from "react-virtuoso";
 import PhotoSwipeLightbox from "photoswipe/lightbox";
 import "photoswipe/style.css";
 
-import Breadcrumbs from "./widgets/Breadcrumbs";
-import FolderCard from "./widgets/FolderCard";
-import GalleryDrawer from "./widgets/GalleryDrawer";
-import { loadSettings, saveSettings, type ViewerSettings } from "./func/ViewerSetings";
+import Breadcrumbs from "../widgets/Breadcrumbs";
+import FolderCard from "../widgets/FolderCard";
+import GalleryDrawer from "../widgets/GalleryDrawer";
+import { loadSettings, saveSettings, type ViewerSettings } from "../func/ViewerSetings";
 
 
 type Item = {
