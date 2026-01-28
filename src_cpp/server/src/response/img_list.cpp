@@ -119,10 +119,10 @@ namespace sung {
                 const auto api_path = "/img/" / namespace_path / rel_path;
 
                 if (const auto info = sung::get_simple_img_info(entry.path())) {
+                    /*
                     if (info->width_ > info->height_)
                         continue;
 
-                    /*
                     const auto wf = sung::get_workflow_data(
                         *info, entry.path()
                     );
