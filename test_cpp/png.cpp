@@ -20,18 +20,18 @@ int main() {
         if (png_path.extension() != ".png")
             continue;
 
-        const auto exp_meta = sung::read_png_metadata_only(png_path);
-        if (!exp_meta) {
+        const auto exp_png = sung::read_png(png_path);
+        if (!exp_png) {
             std::println(
                 "Failed to read PNG metadata for {}: {}",
                 sung::tostr(png_path),
-                exp_meta.error()
+                exp_png.error()
             );
             continue;
         }
-        const auto& meta = *exp_meta;
+        const auto& png = *exp_png;
 
-        for (auto& text_kv : meta.text) {
+        for (auto& text_kv : png.text) {
             const auto json_path = sung::path_concat(
                 sung::remove_ext(png_path), std::format("_{}.json", text_kv.key)
             );

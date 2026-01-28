@@ -43,8 +43,10 @@ namespace sung {
     };
 
 
-    std::expected<PngData, std::string> read_png_metadata_only(
+    std::expected<PngMeta, std::string> read_png_metadata_only(
         const Path& path
     );
+
+    std::expected<PngData, std::string> read_png(const Path& path);
 
 }  // namespace sung

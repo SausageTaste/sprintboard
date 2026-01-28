@@ -123,6 +123,67 @@ namespace {
             return {};
         }
 
+        std::expected<void, std::string> parse_pixels(sung::PngData& out) {
+            // ---- normalize to 8-bit RGBA
+            // 16-bit -> 8-bit
+            if (out.bit_depth == 16)
+                png_set_strip_16(png_ptr_);
+
+            // Palette -> RGB
+            if (out.color_type == PNG_COLOR_TYPE_PALETTE)
+                png_set_palette_to_rgb(png_ptr_);
+
+            // Grayscale < 8-bit -> 8-bit
+            if (out.color_type == PNG_COLOR_TYPE_GRAY && out.bit_depth < 8)
+                png_set_expand_gray_1_2_4_to_8(png_ptr_);
+
+            // tRNS chunk -> alpha channel
+            if (png_get_valid(png_ptr_, info_ptr_, PNG_INFO_tRNS))
+                png_set_tRNS_to_alpha(png_ptr_);
+
+            // Gray/Gray+Alpha -> RGB/RGBA
+            if (out.color_type == PNG_COLOR_TYPE_GRAY ||
+                out.color_type == PNG_COLOR_TYPE_GRAY_ALPHA)
+                png_set_gray_to_rgb(png_ptr_);
+
+            // Ensure alpha exists (if no alpha, add opaque)
+            // After the conversions above:
+            // - RGB becomes RGBA
+            // - RGBA stays RGBA
+            if (!(png_get_color_type(png_ptr_, info_ptr_) &
+                  PNG_COLOR_MASK_ALPHA))
+                png_set_add_alpha(png_ptr_, 0xFF, PNG_FILLER_AFTER);
+
+            // Update info after transforms
+            png_read_update_info(png_ptr_, info_ptr_);
+
+            const png_size_t rowbytes = png_get_rowbytes(png_ptr_, info_ptr_);
+            // Expect 4 bytes per pixel now
+            if (rowbytes != out.width * 4) {
+                throw std::runtime_error(
+                    "Unexpected row size after conversion (expected RGBA8)."
+                );
+            }
+
+            out.pixels.resize(
+                static_cast<size_t>(out.width) *
+                static_cast<size_t>(out.height) * 4
+            );
+
+            // Row pointers for libpng
+            std::vector<png_bytep> rows(out.height);
+            for (png_uint_32 y = 0; y < out.height; ++y) {
+                rows[y] = reinterpret_cast<png_bytep>(
+                    out.pixels.data() + (static_cast<size_t>(y) * out.width * 4)
+                );
+            }
+
+            png_read_image(png_ptr_, rows.data());
+            png_read_end(png_ptr_, nullptr);
+
+            return {};
+        }
+
         void destroy() {
             if (png_ptr_ || info_ptr_) {
                 png_destroy_read_struct(&png_ptr_, &info_ptr_, nullptr);
@@ -147,9 +208,33 @@ namespace {
 
 namespace sung {
 
-    std::expected<PngData, std::string> read_png_metadata_only(
+    std::expected<PngMeta, std::string> read_png_metadata_only(
         const Path& path
     ) {
+        ::PngReader reader;
+
+        const auto exp_open = reader.open(path);
+        if (!exp_open)
+            return std::unexpected(exp_open.error());
+
+        // ---- Parse header & metadata ----
+
+        const auto exp_parse_info = reader.parse_info();
+        if (!exp_parse_info)
+            return std::unexpected(exp_parse_info.error());
+
+        PngMeta png_data;
+        const auto exp_metadata = reader.get_metadata(png_data);
+        if (!exp_metadata)
+            return std::unexpected(exp_metadata.error());
+
+        // ---- Optional: read end metadata (slower) ----
+        // png_read_end(png_ptr, info_ptr);
+
+        return png_data;
+    }
+
+    std::expected<PngData, std::string> read_png(const Path& path) {
         ::PngReader reader;
 
         const auto exp_open = reader.open(path);
@@ -167,8 +252,9 @@ namespace sung {
         if (!exp_metadata)
             return std::unexpected(exp_metadata.error());
 
-        // ---- Optional: read end metadata (slower) ----
-        // png_read_end(png_ptr, info_ptr);
+        const auto exp_parse_pixels = reader.parse_pixels(png_data);
+        if (!exp_parse_pixels)
+            return std::unexpected(exp_parse_pixels.error());
 
         return png_data;
     }
