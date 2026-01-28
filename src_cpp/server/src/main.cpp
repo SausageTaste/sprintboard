@@ -13,9 +13,6 @@
 
 namespace {
 
-    sung::GatedPowerRequest g_power_gate;
-
-
     std::pair<sung::Path, sung::Path> split_namespace(const sung::Path& p) {
         sung::Path namespace_path;
         sung::Path rest_path;
@@ -106,6 +103,17 @@ namespace {
     }
 
 
+    class PowerRequestTask : public sung::ITask {
+
+    public:
+        void run() override { power_gate_.check(); }
+
+        sung::GatedPowerRequest& get() { return power_gate_; }
+
+    private:
+        sung::GatedPowerRequest power_gate_;
+    };
+
 }  // namespace
 
 
@@ -118,11 +126,11 @@ int main() {
     }
     const auto& server_cfg = *exp_server_cfg;
 
-    httplib::Server svr;
     sung::TaskManager tasks;
-    tasks.add_periodic_task(
-        []() { std::println("Periodic task: heartbeat"); }, 1
-    );
+    auto power_req = std::make_shared<::PowerRequestTask>();
+    tasks.add_periodic_task(power_req, 3.0);
+
+    httplib::Server svr;
 
     // Serve static assets from ./dist
     const bool ok = svr.set_mount_point("/", "./dist");
@@ -131,7 +139,7 @@ int main() {
     std::println("./dist exists? {}", std::filesystem::exists("./dist"));
 
     svr.Get("/api/images/list", [&](const httplib::Request& req, auto& res) {
-        // sung::ScopedWakeLock wake_lock{ g_power_gate };
+        sung::ScopedWakeLock wake_lock{ power_req->get() };
 
         const auto it_param_dir = req.params.find("dir");
         if (it_param_dir == req.params.end()) {
@@ -179,10 +187,8 @@ int main() {
     });
 
     svr.Get("/api/wake", [&](const httplib::Request& req, auto& res) {
-        // sung::ScopedWakeLock wake_lock{ g_power_gate };
-
         auto response = nlohmann::json::object();
-        response["wake_on"] = 0 < g_power_gate.count();
+        response["wake_on"] = power_req->get().is_active();
         response["idle_time"] = sung::get_idle_time();
 
         res.status = 200;
@@ -191,18 +197,9 @@ int main() {
     });
 
     svr.Get("/api/wakeup", [&](const httplib::Request& req, auto& res) {
-        // sung::ScopedWakeLock wake_lock{ g_power_gate };
-
-        if (0 < g_power_gate.count()) {
-            g_power_gate.leave();
-            std::println("System wake released");
-        } else {
-            g_power_gate.enter();
-            std::println("System wake requested");
-        }
-
+        sung::ScopedWakeLock wake_lock{ power_req->get() };
         auto response = nlohmann::json::object();
-        response["wake_on"] = 0 < g_power_gate.count();
+        response["wake_on"] = power_req->get().is_active();
         response["idle_time"] = sung::get_idle_time();
 
         res.status = 200;
@@ -213,7 +210,7 @@ int main() {
     svr.Get(
         R"(/img/(.*))",
         [&](const httplib::Request& req, httplib::Response& res) {
-            // sung::ScopedWakeLock wake_lock{ g_power_gate };
+            sung::ScopedWakeLock wake_lock{ power_req->get() };
 
             const auto [namespace_path, rest_path] = ::split_namespace(
                 sung::fs::u8path(req.path.substr(5))
@@ -249,9 +246,9 @@ int main() {
 
     // SPA fallback: for any non-API GET that wasn't matched by a real file,
     // return index.html so the client-side router can handle it.
-    svr.set_error_handler([](const httplib::Request& req,
-                             httplib::Response& res) {
-        // sung::ScopedWakeLock wake_lock{ g_power_gate };
+    svr.set_error_handler([&](const httplib::Request& req,
+                              httplib::Response& res) {
+        sung::ScopedWakeLock wake_lock{ power_req->get() };
 
         if (req.method != "GET") {
             std::println(

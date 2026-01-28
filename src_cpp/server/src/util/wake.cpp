@@ -27,23 +27,43 @@ namespace sung {
     }
 
     bool PowerRequest::set_system_required(bool on) {
-        return this->ok() &&
-               PowerSetRequest(handle_, PowerRequestSystemRequired) == TRUE;
+        if (!this->ok())
+            return false;
+        if (TRUE != PowerSetRequest(handle_, PowerRequestSystemRequired))
+            return false;
+
+        system_required_ = true;
+        return true;
     }
 
     bool PowerRequest::set_display_required(bool on) {
-        return this->ok() &&
-               PowerSetRequest(handle_, PowerRequestDisplayRequired) == TRUE;
+        if (!this->ok())
+            return false;
+        if (TRUE != PowerSetRequest(handle_, PowerRequestDisplayRequired))
+            return false;
+
+        display_required_ = true;
+        return true;
     }
 
     bool PowerRequest::clear_system_required() {
-        return this->ok() &&
-               PowerClearRequest(handle_, PowerRequestSystemRequired) == TRUE;
+        if (!this->ok())
+            return false;
+        if (TRUE != PowerClearRequest(handle_, PowerRequestSystemRequired))
+            return false;
+
+        system_required_ = false;
+        return true;
     }
 
     bool PowerRequest::clear_display_required() {
-        return this->ok() &&
-               PowerClearRequest(handle_, PowerRequestDisplayRequired) == TRUE;
+        if (!this->ok())
+            return false;
+        if (TRUE != PowerClearRequest(handle_, PowerRequestDisplayRequired))
+            return false;
+
+        display_required_ = false;
+        return true;
     }
 
 }  // namespace sung
@@ -56,25 +76,40 @@ namespace sung {
         : power_req_(L"Sprintboard server: keep system awake while active") {}
 
     void GatedPowerRequest::enter() {
-        if (gate_count_.fetch_add(1) == 0) {
-            power_req_.set_system_required(true);
-            power_req_.set_display_required(true);
-            std::println("System wake requested");
-        }
+        gate_count_ += 1;
+        mmv_.notify_signal(0 < gate_count_.load());
     }
 
     void GatedPowerRequest::leave() {
-        if (gate_count_.fetch_sub(1) == 1) {
-            power_req_.clear_system_required();
-            power_req_.clear_display_required();
-            std::println("System wake released");
-        }
+        gate_count_ -= 1;
 
         if (gate_count_ < 0)
             gate_count_ = 0;
+
+        mmv_.notify_signal(0 < gate_count_.load());
+    }
+
+    void GatedPowerRequest::check() {
+        edge_.notify_signal(mmv_.poll_signal(10));
+
+        const auto edge_type = edge_.check_edge();
+        if (edge_type == sung::EdgeDetector::Type::rising) {
+            power_req_.set_system_required(true);
+            // power_req_.set_display_required(true);
+            std::println("System wake requested");
+        } else if (edge_type == sung::EdgeDetector::Type::falling) {
+            power_req_.clear_system_required();
+            // power_req_.clear_display_required();
+            std::println("System wake released");
+        }
     }
 
     int GatedPowerRequest::count() const { return gate_count_.load(); }
+
+    bool GatedPowerRequest::is_active() const {
+        return power_req_.is_system_required() ||
+               power_req_.is_display_required();
+    }
 
 }  // namespace sung
 
