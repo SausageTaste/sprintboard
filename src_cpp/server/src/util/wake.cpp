@@ -90,7 +90,8 @@ namespace sung {
     }
 
     void GatedPowerRequest::check() {
-        edge_.notify_signal(mmv_.poll_signal(10));
+        constexpr double tolerance_sec = 5 * 60;
+        edge_.notify_signal(mmv_.poll_signal(tolerance_sec));
 
         const auto edge_type = edge_.check_edge();
         if (edge_type == sung::EdgeDetector::Type::rising) {
