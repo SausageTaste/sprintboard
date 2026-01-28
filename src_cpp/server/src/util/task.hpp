@@ -11,7 +11,7 @@
 namespace sung {
 
     struct ITask {
-        virtual ~ITask() = default;
+        virtual ~ITask() noexcept = default;
         virtual void run() = 0;
     };
 
