@@ -40,4 +40,15 @@ namespace sung {
         return data;
     }
 
+    bool write_file(const Path& path, const void* data, size_t size) {
+        std::ofstream ofs(path, std::ios::binary | std::ios::trunc);
+        if (!ofs)
+            return false;
+        ofs.write(
+            reinterpret_cast<const char*>(data),
+            static_cast<std::streamsize>(size)
+        );
+        return static_cast<size_t>(ofs.tellp()) == size;
+    }
+
 }  // namespace sung
