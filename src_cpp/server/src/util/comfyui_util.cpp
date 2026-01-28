@@ -20,7 +20,11 @@ namespace {
         const sung::SimpleImageInfo& info, const sung::Path& file_path
     ) {
         if (info.is_png()) {
-            const auto meta = sung::read_png_metadata_only(file_path);
+            const auto exp_meta = sung::read_png_metadata_only(file_path);
+            if (!exp_meta)
+                return "";
+            const auto& meta = *exp_meta;
+
             if (auto wf = meta.find_text_chunk("workflow")) {
                 return ::find_prompt(wf->data(), wf->size());
             }
@@ -60,7 +64,11 @@ namespace sung {
         const SimpleImageInfo& info, const Path& file_path
     ) {
         if (info.is_png()) {
-            const auto meta = sung::read_png_metadata_only(file_path);
+            const auto exp_meta = sung::read_png_metadata_only(file_path);
+            if (!exp_meta)
+                return std::nullopt;
+            const auto& meta = *exp_meta;
+
             if (auto wf = meta.find_text_chunk("workflow")) {
                 return sung::parse_comfyui_workflow(wf->data(), wf->size());
             }
