@@ -1,5 +1,6 @@
 #pragma once
 
+#include <expected>
 #include <string>
 #include <vector>
 
@@ -10,21 +11,18 @@
 
 namespace sung {
 
-    struct PngTextKV {
-        const uint8_t* data() const {
-            return reinterpret_cast<const uint8_t*>(value.data());
-        }
-        size_t size() const {
-            return value.size();
-        }
-
-        std::string key;
-        std::string value;
-    };
-
-
     struct PngMeta {
-        const PngTextKV* find_text_chunk(const std::string& key) const {
+        struct TextKV {
+            const uint8_t* data() const {
+                return reinterpret_cast<const uint8_t*>(value.data());
+            }
+            size_t size() const { return value.size(); }
+
+            std::string key;
+            std::string value;
+        };
+
+        const TextKV* find_text_chunk(const std::string& key) const {
             for (const auto& kv : text) {
                 if (kv.key == key)
                     return &kv;
@@ -36,10 +34,17 @@ namespace sung {
         int height = 0;
         int bit_depth = 0;
         int color_type = 0;
-        std::vector<PngTextKV> text;
+        std::vector<TextKV> text;
     };
 
 
-    PngMeta read_png_metadata_only(const Path& path);
+    struct PngData : PngMeta {
+        std::vector<uint8_t> pixels;
+    };
+
+
+    std::expected<PngData, std::string> read_png_metadata_only(
+        const Path& path
+    );
 
 }  // namespace sung

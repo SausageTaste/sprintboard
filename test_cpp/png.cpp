@@ -20,7 +20,16 @@ int main() {
         if (png_path.extension() != ".png")
             continue;
 
-        const auto meta = sung::read_png_metadata_only(png_path);
+        const auto exp_meta = sung::read_png_metadata_only(png_path);
+        if (!exp_meta) {
+            std::println(
+                "Failed to read PNG metadata for {}: {}",
+                sung::tostr(png_path),
+                exp_meta.error()
+            );
+            continue;
+        }
+        const auto& meta = *exp_meta;
 
         for (auto& text_kv : meta.text) {
             const auto json_path = sung::path_concat(
