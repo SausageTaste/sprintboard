@@ -14,6 +14,12 @@ namespace sung {
         return fromstr(tostr(base) + suffix);
     }
 
+    Path replace_ext(const Path& path, const std::string& new_ext) {
+        Path new_path = path;
+        new_path.replace_extension(new_ext);
+        return new_path;
+    }
+
     Path remove_ext(const Path& path) {
         Path new_path = path;
         new_path.replace_extension();
