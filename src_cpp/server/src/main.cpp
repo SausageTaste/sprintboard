@@ -7,6 +7,7 @@
 #include "sung/auxiliary/filesys.hpp"
 #include "sung/auxiliary/server_configs.hpp"
 #include "util/simple_img_info.hpp"
+#include "util/task.hpp"
 #include "util/wake.hpp"
 
 
@@ -118,6 +119,10 @@ int main() {
     const auto& server_cfg = *exp_server_cfg;
 
     httplib::Server svr;
+    sung::TaskManager tasks;
+    tasks.add_periodic_task(
+        []() { std::println("Periodic task: heartbeat"); }, 1
+    );
 
     // Serve static assets from ./dist
     const bool ok = svr.set_mount_point("/", "./dist");
