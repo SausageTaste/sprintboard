@@ -55,6 +55,7 @@ namespace sung {
         for (auto& entry : periodic_tasks_) {
             if (entry.timer_.check_if_elapsed(entry.interval_)) {
                 entry.task_->run();
+                entry.timer_.check();
                 return;
             }
         }
