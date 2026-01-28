@@ -30,6 +30,7 @@ find_package(libavif CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(PNG REQUIRED)
 find_package(pugixml CONFIG REQUIRED)
+find_package(TBB CONFIG REQUIRED)
 
 add_subdirectory(src_cpp)
 

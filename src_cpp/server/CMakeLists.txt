@@ -34,4 +34,7 @@ target_link_libraries(${target_name} PRIVATE
     httplib::httplib
     imageinfo::imageinfo
     sprintboard_img
+    TBB::tbb
+    TBB::tbbmalloc
+    TBB::tbbmalloc_proxy
 )

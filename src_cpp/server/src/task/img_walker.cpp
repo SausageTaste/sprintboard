@@ -5,6 +5,7 @@
 #include <print>
 
 #include <avif/avif.h>
+#include <tbb/task_group.h>
 #include <sung/basic/mamath.hpp>
 #include <sung/basic/time.hpp>
 
@@ -118,30 +119,46 @@ namespace {
     public:
         Task(const sung::ServerConfigs& cfg) : cfg_(cfg) {}
 
+        ~Task() noexcept override { tg_.wait(); }
+
         void run() override {
             sung::MonotonicRealtimeTimer timer;
 
+            size_t count = 0;
             for (const auto& p : ::gen_png_files(cfg_.dir_bindings())) {
-                const auto png_data = sung::read_png(p);
-                if (!png_data)
-                    continue;
+                ++count;
 
-                AvifEncodeParams avif_params;
-                const auto avif_blob = encode_avif(*png_data, avif_params);
-                if (!avif_blob)
-                    continue;
+                tg_.run([p]() {
+                    sung::MonotonicRealtimeTimer one_timer;
 
-                sung::write_file(sung::replace_ext(p, ".avif"), *avif_blob);
+                    const auto png_data = sung::read_png(p);
+                    if (!png_data)
+                        return;
+
+                    AvifEncodeParams avif_params;
+                    const auto avif_blob = encode_avif(*png_data, avif_params);
+                    if (!avif_blob)
+                        return;
+
+                    const auto avif_path = sung::replace_ext(p, ".avif");
+                    sung::write_file(avif_path, *avif_blob);
+                    std::println(
+                        "ImgWalker: AVIF saved: {} ({:.3f} sec)",
+                        sung::tostr(avif_path),
+                        one_timer.elapsed()
+                    );
+                });
+
+                if (count > 10)
+                    break;
             }
 
-            std::print(
-                "ImgWalker: elapsed time {:.3f} sec\n",
-                timer.check_get_elapsed()
-            );
+            tg_.wait();
         }
 
     private:
-        sung::ServerConfigs cfg_;
+        const sung::ServerConfigs& cfg_;
+        tbb::task_group tg_;
     };
 
 }  // namespace
