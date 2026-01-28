@@ -1,24 +1,26 @@
 #include "task/img_walker.hpp"
 
 #include <fstream>
+#include <generator>
 #include <print>
 
 #include <avif/avif.h>
 #include <sung/basic/mamath.hpp>
 #include <sung/basic/time.hpp>
 
+#include "sung/auxiliary/filesys.hpp"
 #include "sung/image/png.hpp"
 
 
 namespace {
 
     struct AvifEncodeParams {
-        int quality = 50;  // 0..100
+        int quality = 80;  // 0..100
         int speed = 4;     // 0 (slow/best) .. 10 (fast/worse)
         avifPixelFormat yuvFormat = AVIF_PIXEL_FORMAT_YUV420;  // or YUV444
     };
 
-    std::expected<std::vector<uint8_t>, std::string> encode_avif_from_png(
+    std::expected<std::vector<uint8_t>, std::string> encode_avif(
         const sung::PngData& src, const AvifEncodeParams& params
     ) {
         if (src.pixels.empty())
@@ -86,6 +88,26 @@ namespace {
         return outData;
     }
 
+    std::generator<sung::Path> gen_png_files(
+        const sung::ServerConfigs::DirBindings& dir_bindings
+    ) {
+        for (const auto& [name, binding_info] : dir_bindings) {
+            for (const auto& local_dir : binding_info.local_dirs_) {
+                for (const auto& entry :
+                     sung::fs::recursive_directory_iterator(local_dir)) {
+                    if (entry.path().extension() != ".png")
+                        continue;
+
+                    const auto avif = sung::replace_ext(entry.path(), ".avif");
+                    if (sung::fs::exists(avif))
+                        continue;
+
+                    co_yield entry.path();
+                }
+            }
+        }
+    }
+
 }  // namespace
 
 
@@ -99,56 +121,19 @@ namespace {
         void run() override {
             sung::MonotonicRealtimeTimer timer;
 
-            std::vector<sung::Path> png_files;
-
-            for (const auto& [name, binding_info] : cfg_.dir_bindings()) {
-                for (const auto& local_dir : binding_info.local_dirs_) {
-                    for (auto entry :
-                         sung::fs::recursive_directory_iterator(local_dir)) {
-                        if (entry.path().extension() != ".png")
-                            continue;
-
-                        auto avif_path = entry.path();
-                        avif_path.replace_extension(".avif");
-                        if (sung::fs::exists(avif_path))
-                            continue;
-
-                        png_files.push_back(entry.path());
-                    }
-                }
-            }
-
-            for (const auto& p : png_files) {
+            for (const auto& p : ::gen_png_files(cfg_.dir_bindings())) {
                 const auto png_data = sung::read_png(p);
                 if (!png_data)
                     continue;
 
                 AvifEncodeParams avif_params;
-                avif_params.quality = 80;
-                const auto avif_blob = encode_avif_from_png(
-                    *png_data, avif_params
-                );
+                const auto avif_blob = encode_avif(*png_data, avif_params);
+                if (!avif_blob)
+                    continue;
 
-                auto avif_path = p;
-                avif_path.replace_extension(".avif");
-                if (avif_blob) {
-                    std::ofstream ofs(
-                        sung::tostr(avif_path),
-                        std::ios::binary | std::ios::trunc
-                    );
-                    ofs.write(
-                        reinterpret_cast<const char*>(avif_blob->data()),
-                        static_cast<std::streamsize>(avif_blob->size())
-                    );
-                    std::print(
-                        "ImgWalker: wrote AVIF {}\n", sung::tostr(avif_path)
-                    );
-                }
-
-                continue;
+                sung::write_file(sung::replace_ext(p, ".avif"), *avif_blob);
             }
 
-            std::print("ImgWalker: scanned {} files\n", png_files.size());
             std::print(
                 "ImgWalker: elapsed time {:.3f} sec\n",
                 timer.check_get_elapsed()
