@@ -4,24 +4,16 @@
 #include <generator>
 #include <print>
 
-#include <avif/avif.h>
 #include <tbb/task_group.h>
 #include <pugixml.hpp>
-#include <sung/basic/mamath.hpp>
 #include <sung/basic/time.hpp>
 
 #include "sung/auxiliary/filesys.hpp"
+#include "sung/image/avif.hpp"
 #include "sung/image/png.hpp"
 
 
 namespace {
-
-    struct AvifEncodeParams {
-        std::vector<uint8_t> xmp_blob_;
-        avifPixelFormat yuvFormat = AVIF_PIXEL_FORMAT_YUV420;
-        int quality = 80;  // 0..100
-        int speed = 4;     // 0 (slow/best) .. 10 (fast/worse)
-    };
 
     void append_cdata_safely(pugi::xml_node parent, std::string_view s) {
         // Splits occurrences of "]]>" so the resulting XML is valid.
@@ -99,7 +91,7 @@ namespace {
     }
 
     std::expected<std::vector<uint8_t>, std::string> encode_avif(
-        const sung::PngData& src, const AvifEncodeParams& params
+        const sung::PngData& src, const sung::AvifEncodeParams& params
     ) {
         if (src.pixels.empty())
             return std::unexpected("empty image");
@@ -109,8 +101,8 @@ namespace {
         const auto image = avifImageCreate(
             src.width,
             src.height,
-            8,                // bit depth
-            params.yuvFormat  // AVIF_PIXEL_FORMAT_YUV420 or YUV444/422
+            8,  // bit depth
+            params.yuv_format()
         );
         if (!image)
             return std::unexpected("avifImageCreate failed");
@@ -131,9 +123,9 @@ namespace {
             return std::unexpected(avifResultToString(res));
         }
 
-        if (!params.xmp_blob_.empty()) {
+        if (!params.xmp().empty()) {
             const auto result = avifImageSetMetadataXMP(
-                image, params.xmp_blob_.data(), params.xmp_blob_.size()
+                image, params.xmp().data(), params.xmp().size()
             );
             if (result != AVIF_RESULT_OK) {
                 return std::unexpected(avifResultToString(res));
@@ -146,14 +138,10 @@ namespace {
             return std::unexpected("avifEncoderCreate failed");
         }
 
-        // Map "quality 0..100" → AV1 quantizer 0..63 (0 best, 63 worst)
-        int q = 63 - (params.quality * 63 + 50) / 100;  // simple mapping
-        q = sung::clamp(q, 0, 63);
-        enc->minQuantizer = q;
-        enc->maxQuantizer = q;  // constant quality for simplicity
-
-        // 0 slow/best, 10 fast/worse
-        enc->speed = sung::clamp(params.speed, 0, 10);
+        enc->minQuantizer = params.calc_quantizer();
+        // constant quality for simplicity
+        enc->maxQuantizer = enc->minQuantizer;
+        enc->speed = params.speed();
 
         avifRWData encoded = AVIF_DATA_EMPTY;
         res = avifEncoderWrite(enc, image, &encoded);
@@ -225,10 +213,8 @@ namespace {
                         return;
 
                     const auto xmp = ::make_xmp_packet(*png_data);
-                    AvifEncodeParams avif_params;
-                    avif_params.xmp_blob_ = std::vector<uint8_t>(
-                        xmp.data(), xmp.data() + xmp.size()
-                    );
+                    sung::AvifEncodeParams avif_params;
+                    avif_params.set_xmp(xmp);
                     const auto avif_blob = encode_avif(*png_data, avif_params);
                     if (!avif_blob)
                         return;

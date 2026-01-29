@@ -1,5 +1,8 @@
 #include "sung/image/avif.hpp"
 
+#include <algorithm>
+#include <cmath>
+
 #include <avif/avif.h>
 #include <pugixml.hpp>
 
@@ -39,6 +42,49 @@ namespace {
     };
 
 }  // namespace
+
+
+// AvifEncodeParams
+namespace sung {
+
+    AvifEncodeParams::AvifEncodeParams()
+        : yuv_format_(AVIF_PIXEL_FORMAT_YUV444), quality_(70), speed_(4) {}
+
+    const std::vector<uint8_t>& AvifEncodeParams::xmp() const {
+        return xmp_blob_;
+    }
+
+    avifPixelFormat AvifEncodeParams::yuv_format() const { return yuv_format_; }
+
+    double AvifEncodeParams::quality() const { return quality_; }
+
+    int AvifEncodeParams::speed() const { return speed_; }
+
+    int AvifEncodeParams::calc_quantizer() const {
+        constexpr double gamma = 1.6;
+
+        double q = (100.0 - quality_) / 100.0;  // 0..1 (0 = best)
+        q = std::pow(q, gamma);
+
+        int quant = int(std::round(63.0 * q));
+        return std::clamp(quant, 0, 63);
+    }
+
+    void AvifEncodeParams::set_xmp(const std::string& xmp) {
+        xmp_blob_.assign(xmp.data(), xmp.data() + xmp.size());
+    }
+
+    void AvifEncodeParams::set_yuv_format(avifPixelFormat f) {
+        yuv_format_ = f;
+    }
+
+    void AvifEncodeParams::set_quality(double q) {
+        quality_ = std::clamp(q, 0.0, 100.0);
+    }
+
+    void AvifEncodeParams::set_speed(int s) { speed_ = std::clamp(s, 0, 10); }
+
+}  // namespace sung
 
 
 namespace sung {
