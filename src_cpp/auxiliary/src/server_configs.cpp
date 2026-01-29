@@ -31,12 +31,17 @@ namespace sung {
 
     void ServerConfigs::fill_default() {
         {
-            auto& binding = dir_bindings_["downloads"];
-            binding.local_dirs_.push_back(fs::u8path("Downloads"));
+            auto& binding = dir_bindings_["example"];
+            binding.local_dirs_.push_back(sung::fromstr("./test_cpp/images"));
         }
 
         server_host_ = DEFAULT_HOST;
         server_port_ = DEFAULT_PORT;
+
+        avif_quality_ = 70.0;
+        avif_speed_ = 4;
+        avif_gen_ = false;
+        avif_gen_remove_src_ = false;
     }
 
     void ServerConfigs::import_json(const nlohmann::json& json_data) {
@@ -66,6 +71,11 @@ namespace sung {
 
         server_host_ = try_get(json_data, "server_host", DEFAULT_HOST);
         server_port_ = try_get(json_data, "server_port", DEFAULT_PORT);
+
+        avif_quality_ = try_get(json_data, "avif_quality", 70.0);
+        avif_speed_ = try_get(json_data, "avif_speed", 4);
+        avif_gen_ = try_get(json_data, "avif_gen", false);
+        avif_gen_remove_src_ = try_get(json_data, "avif_gen_remove_src", false);
     }
 
     nlohmann::json ServerConfigs::export_json() const {
@@ -88,6 +98,11 @@ namespace sung {
 
         output["server_host"] = server_host_;
         output["server_port"] = server_port_;
+
+        output["avif_quality"] = avif_quality_;
+        output["avif_speed"] = avif_speed_;
+        output["avif_gen"] = avif_gen_;
+        output["avif_gen_remove_src"] = avif_gen_remove_src_;
 
         return output;
     }

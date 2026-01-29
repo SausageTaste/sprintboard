@@ -33,6 +33,12 @@ namespace sung {
         // Server settings
         std::string server_host_;
         int server_port_;
+
+        // AVIF encoding settings
+        double avif_quality_;
+        int avif_speed_;
+        bool avif_gen_;
+        bool avif_gen_remove_src_;
     };
 
 

@@ -205,16 +205,18 @@ namespace {
             for (const auto& p : ::gen_png_files(cfg_.dir_bindings_)) {
                 ++count;
 
-                tg_.run([p]() {
+                tg_.run([p, this]() {
                     sung::MonotonicRealtimeTimer one_timer;
 
                     const auto png_data = sung::read_png(p);
                     if (!png_data)
                         return;
 
-                    const auto xmp = ::make_xmp_packet(*png_data);
                     sung::AvifEncodeParams avif_params;
-                    avif_params.set_xmp(xmp);
+                    avif_params.set_quality(cfg_.avif_quality_);
+                    avif_params.set_speed(cfg_.avif_speed_);
+                    avif_params.set_xmp(::make_xmp_packet(*png_data));
+
                     const auto avif_blob = encode_avif(*png_data, avif_params);
                     if (!avif_blob)
                         return;

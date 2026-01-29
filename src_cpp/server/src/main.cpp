@@ -130,8 +130,13 @@ int main() {
     sung::TaskManager tasks;
     auto power_req = std::make_shared<::PowerRequestTask>();
     tasks.add_periodic_task(power_req, 3.0);
-    auto img_walker = sung::create_img_walker_task(server_cfg);
-    tasks.add_periodic_task(img_walker, sung::AVIF_ENCODE_TIME_INTERVAL);
+
+    if (server_cfg.avif_gen_) {
+        tasks.add_periodic_task(
+            sung::create_img_walker_task(server_cfg),
+            sung::AVIF_ENCODE_TIME_INTERVAL
+        );
+    }
 
     httplib::Server svr;
 
