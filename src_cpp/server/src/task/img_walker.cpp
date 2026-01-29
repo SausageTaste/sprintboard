@@ -180,6 +180,9 @@ namespace {
     ) {
         for (const auto& [name, binding_info] : dir_bindings) {
             for (const auto& local_dir : binding_info.local_dirs_) {
+                if (!sung::fs::is_directory(local_dir))
+                    continue;
+
                 for (const auto& entry :
                      sung::fs::recursive_directory_iterator(local_dir)) {
                     if (entry.path().extension() != ".png")
