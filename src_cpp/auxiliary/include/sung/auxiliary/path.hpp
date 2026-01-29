@@ -21,4 +21,6 @@ namespace sung {
 
     Path remove_ext(const Path& path);
 
+    Path add_suffix(const Path& path, const std::string& suffix);
+
 }  // namespace sung

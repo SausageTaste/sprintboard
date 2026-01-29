@@ -26,4 +26,12 @@ namespace sung {
         return new_path;
     }
 
+    Path add_suffix(const Path& path, const std::string& suffix) {
+        auto stem = path.stem();
+        stem += fromstr(suffix);
+        Path new_path = path.parent_path() / stem;
+        new_path += path.extension();
+        return new_path;
+    }
+
 }  // namespace sung
