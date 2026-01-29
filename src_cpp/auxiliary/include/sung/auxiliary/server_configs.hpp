@@ -27,13 +27,10 @@ namespace sung {
         void import_json(const nlohmann::json& json_data);
         nlohmann::json export_json() const;
 
-        auto& dir_bindings() const { return dir_bindings_; }
-
-        auto& host() const { return server_host_; }
-        auto port() const { return server_port_; }
-
-    private:
+    public:
         DirBindings dir_bindings_;
+
+        // Server settings
         std::string server_host_;
         int server_port_;
     };

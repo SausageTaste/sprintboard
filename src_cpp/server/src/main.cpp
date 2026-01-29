@@ -155,17 +155,17 @@ int main() {
         sung::ImageListResponse response;
 
         if (param_dir.empty()) {
-            for (auto [dir, bindings] : server_cfg.dir_bindings()) {
+            for (auto [dir, bindings] : server_cfg.dir_bindings_) {
                 response.add_dir(dir, sung::fs::u8path(dir));
             }
         } else {
             const auto dir_path = sung::fs::u8path(param_dir);
             auto [namespace_path, rest_path] = ::split_namespace(dir_path);
 
-            const auto it_binding = server_cfg.dir_bindings().find(
+            const auto it_binding = server_cfg.dir_bindings_.find(
                 sung::tostr(namespace_path)
             );
-            if (it_binding == server_cfg.dir_bindings().end()) {
+            if (it_binding == server_cfg.dir_bindings_.end()) {
                 res.status = 400;
                 res.set_content(
                     "Invalid namespace in 'dir' parameter", "text/plain"
@@ -219,10 +219,10 @@ int main() {
                 sung::fs::u8path(req.path.substr(5))
             );
 
-            const auto it_binding = server_cfg.dir_bindings().find(
+            const auto it_binding = server_cfg.dir_bindings_.find(
                 sung::tostr(namespace_path)
             );
-            if (it_binding == server_cfg.dir_bindings().end()) {
+            if (it_binding == server_cfg.dir_bindings_.end()) {
                 res.status = 400;
                 res.set_content(
                     "Invalid namespace in 'dir' parameter", "text/plain"
@@ -275,8 +275,10 @@ int main() {
     });
 
     std::println(
-        "Server started at http://{}:{}", server_cfg.host(), server_cfg.port()
+        "Server started at http://{}:{}",
+        server_cfg.server_host_,
+        server_cfg.server_port_
     );
-    svr.listen(server_cfg.host(), server_cfg.port());
+    svr.listen(server_cfg.server_host_, server_cfg.server_port_);
     return 0;
 }

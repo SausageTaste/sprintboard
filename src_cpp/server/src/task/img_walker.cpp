@@ -202,7 +202,7 @@ namespace {
             sung::MonotonicRealtimeTimer timer;
 
             size_t count = 0;
-            for (const auto& p : ::gen_png_files(cfg_.dir_bindings())) {
+            for (const auto& p : ::gen_png_files(cfg_.dir_bindings_)) {
                 ++count;
 
                 tg_.run([p]() {
