@@ -5,7 +5,7 @@ type ViewerSettings = {
 };
 
 const DEFAULT_SETTINGS: ViewerSettings = {
-    thumbnailSize: 200,
+    thumbnailSize: 150,
     fillScreen: false,
 };
 
