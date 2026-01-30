@@ -1,6 +1,9 @@
 #include "sung/auxiliary/server_configs.hpp"
 
 #include <fstream>
+#include <print>
+
+#include "sung/auxiliary/err_str.hpp"
 
 
 namespace {
@@ -22,6 +25,35 @@ namespace {
                 "Invalid type for key '" + std::string(key) + "'"
             );
         }
+    }
+
+    sung::ErrStr load_or_create_new_server_configs(
+        const sung::Path& path, sung::ServerConfigs& configs
+    ) {
+        std::ifstream ifs(path);
+        if (ifs) {
+            std::println(
+                "Loading server configs from file: {}",
+                sung::tostr(sung::fs::absolute(path))
+            );
+            nlohmann::json json_data;
+
+            try {
+                ifs >> json_data;
+            } catch (const std::exception& e) {
+                return std::unexpected(e.what());
+            }
+
+            try {
+                configs.import_json(json_data);
+            } catch (const std::exception& e) {
+                return std::unexpected(e.what());
+            }
+        } else {
+            configs.fill_default();
+        }
+
+        return {};
     }
 
 }  // namespace
@@ -64,7 +96,8 @@ namespace sung {
         }
 
         if (json_data.contains("server_host")) {
-            server_host_ = json_data.at("server_host").get<std::string>();
+            const auto host = json_data.at("server_host").get<std::string>();
+            server_host_ = host;
         } else {
             server_host_ = DEFAULT_HOST;
         }
@@ -110,41 +143,72 @@ namespace sung {
 }  // namespace sung
 
 
+// ServerConfigManager
 namespace sung {
 
-    ExpServerCgfs load_server_configs(const Path& path) {
-        ServerConfigs configs;
-
-        std::ifstream ifs(path);
-        if (ifs) {
-            nlohmann::json json_data;
-
-            try {
-                ifs >> json_data;
-            } catch (const std::exception& e) {
-                return std::unexpected(e.what());
-            }
-
-            try {
-                configs.import_json(json_data);
-            } catch (const std::exception& e) {
-                return std::unexpected(e.what());
-            }
-        } else {
-            configs.fill_default();
-            std::ofstream ofs(path);
-            if (ofs) {
-                const auto json_data = configs.export_json();
-                ofs << json_data.dump(4);
-                ofs << '\n';
-            }
-        }
-
-        return configs;
+    ServerConfigManager::ServerConfigManager(const Path& config_path)
+        : config_path_(config_path) {
+        this->tick();
     }
 
-    ExpServerCgfs load_server_configs() {
-        return load_server_configs("./server_configs.json");
+    void ServerConfigManager::tick() {
+        if (!configs_) {
+            auto configs = std::make_shared<ServerConfigs>();
+            const auto res = ::load_or_create_new_server_configs(
+                config_path_, *configs
+            );
+
+            if (!res) {
+                std::println(
+                    "Failed to load/create server configs: {}", res.error()
+                );
+                return;
+            }
+
+            configs_ = std::move(configs);
+            this->update_last_write_time();
+        } else {
+            const auto current_write_time = sung::fs::last_write_time(
+                config_path_
+            );
+            if (current_write_time <= last_write_time_)
+                return;
+
+            auto configs = std::make_shared<ServerConfigs>();
+            const auto res = ::load_or_create_new_server_configs(
+                config_path_, *configs
+            );
+
+            if (!res) {
+                std::println(
+                    "Failed to reload server configs: {}", res.error()
+                );
+                // Need not to load broken file again and again
+                this->update_last_write_time();
+                return;
+            }
+
+            configs_ = std::move(configs);
+            this->update_last_write_time();
+            std::println("Server configs reloaded from file.");
+        }
+
+        std::ofstream ofs(config_path_);
+        if (ofs) {
+            const auto json_data = configs_->export_json();
+            ofs << json_data.dump(2);
+            ofs << '\n';
+            ofs.close();
+            this->update_last_write_time();
+        } else {
+            std::println(
+                "Failed to create config file: {}", sung::tostr(config_path_)
+            );
+        }
+    }
+
+    void ServerConfigManager::update_last_write_time() {
+        last_write_time_ = sung::fs::last_write_time(config_path_);
     }
 
 }  // namespace sung

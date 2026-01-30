@@ -194,18 +194,19 @@ namespace {
     class Task : public sung::ITask {
 
     public:
-        Task(const sung::ServerConfigs& cfg) : cfg_(cfg) {}
+        Task(const sung::ServerConfigManager& cfg) : cfg_(cfg) {}
 
         ~Task() noexcept override { tg_.wait(); }
 
         void run() override {
             sung::MonotonicRealtimeTimer timer;
+            auto configs = cfg_.get();
 
             size_t count = 0;
-            for (const auto& p : ::gen_png_files(cfg_.dir_bindings_)) {
+            for (const auto& p : ::gen_png_files(configs->dir_bindings_)) {
                 ++count;
 
-                tg_.run([p, this]() {
+                tg_.run([p, configs]() {
                     sung::MonotonicRealtimeTimer one_timer;
 
                     const auto png_data = sung::read_png(p);
@@ -213,8 +214,8 @@ namespace {
                         return;
 
                     sung::AvifEncodeParams avif_params;
-                    avif_params.set_quality(cfg_.avif_quality_);
-                    avif_params.set_speed(cfg_.avif_speed_);
+                    avif_params.set_quality(configs->avif_quality_);
+                    avif_params.set_speed(configs->avif_speed_);
                     avif_params.set_xmp(::make_xmp_packet(*png_data));
 
                     const auto avif_blob = encode_avif(*png_data, avif_params);
@@ -238,7 +239,7 @@ namespace {
         }
 
     private:
-        const sung::ServerConfigs& cfg_;
+        const sung::ServerConfigManager& cfg_;
         tbb::task_group tg_;
     };
 
@@ -247,7 +248,9 @@ namespace {
 
 namespace sung {
 
-    std::shared_ptr<ITask> create_img_walker_task(const ServerConfigs& cfg) {
+    std::shared_ptr<ITask> create_img_walker_task(
+        const ServerConfigManager& cfg
+    ) {
         return std::make_shared<::Task>(cfg);
     }
 

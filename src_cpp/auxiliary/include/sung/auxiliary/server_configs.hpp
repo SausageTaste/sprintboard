@@ -42,9 +42,21 @@ namespace sung {
     };
 
 
-    using ExpServerCgfs = std::expected<ServerConfigs, std::string>;
+    class ServerConfigManager {
 
-    ExpServerCgfs load_server_configs(const Path& path);
-    ExpServerCgfs load_server_configs();
+    public:
+        ServerConfigManager(const Path& config_path);
+        void tick();
+
+        bool is_ready() const { return configs_ != nullptr; }
+        std::shared_ptr<ServerConfigs> get() const { return configs_; }
+
+    private:
+        void update_last_write_time();
+
+        Path config_path_;
+        fs::file_time_type last_write_time_;
+        std::shared_ptr<ServerConfigs> configs_;
+    };
 
 }  // namespace sung

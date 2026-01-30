@@ -119,21 +119,21 @@ namespace {
 
 
 int main() {
-    const auto exp_server_cfg = sung::load_server_configs();
-    if (!exp_server_cfg) {
-        std::println("Failed to load server configs");
-        std::println("{}", exp_server_cfg.error());
+    sung::ServerConfigManager server_configs{ "server_configs.json" };
+    if (!server_configs.is_ready()) {
+        std::println("Cannot initialize server configs. Exiting.");
         return 1;
     }
-    const auto& server_cfg = *exp_server_cfg;
 
     sung::TaskManager tasks;
     auto power_req = std::make_shared<::PowerRequestTask>();
     tasks.add_periodic_task(power_req, 3.0);
 
-    if (server_cfg.avif_gen_) {
+    tasks.add_periodic_task([&server_configs]() { server_configs.tick(); }, 1);
+
+    if (server_configs.get()->avif_gen_) {
         tasks.add_periodic_task(
-            sung::create_img_walker_task(server_cfg),
+            sung::create_img_walker_task(server_configs),
             sung::AVIF_ENCODE_TIME_INTERVAL
         );
     }
@@ -157,6 +157,8 @@ int main() {
         }
         auto& param_dir = it_param_dir->second;
 
+        const auto server_cfg_ptr = server_configs.get();
+        const auto& server_cfg = *server_cfg_ptr;
         sung::ImageListResponse response;
 
         if (param_dir.empty()) {
@@ -224,6 +226,8 @@ int main() {
                 sung::fs::u8path(req.path.substr(5))
             );
 
+            const auto server_cfg_ptr = server_configs.get();
+            const auto& server_cfg = *server_cfg_ptr;
             const auto it_binding = server_cfg.dir_bindings_.find(
                 sung::tostr(namespace_path)
             );
@@ -279,11 +283,9 @@ int main() {
         }
     });
 
-    std::println(
-        "Server started at http://{}:{}",
-        server_cfg.server_host_,
-        server_cfg.server_port_
-    );
-    svr.listen(server_cfg.server_host_, server_cfg.server_port_);
+    const auto host = server_configs.get()->server_host_;
+    const auto port = server_configs.get()->server_port_;
+    std::println("Server started at http://{}:{}", host, port);
+    svr.listen(host, port);
     return 0;
 }
