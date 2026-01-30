@@ -168,29 +168,41 @@ namespace sung {
             configs_ = std::move(configs);
             this->update_last_write_time();
         } else {
-            const auto current_write_time = sung::fs::last_write_time(
-                config_path_
-            );
-            if (current_write_time <= last_write_time_)
-                return;
-
-            auto configs = std::make_shared<ServerConfigs>();
-            const auto res = ::load_or_create_new_server_configs(
-                config_path_, *configs
-            );
-
-            if (!res) {
+            if (!sung::fs::exists(config_path_)) {
                 std::println(
-                    "Failed to reload server configs: {}", res.error()
+                    "Config file not found. Creating new one at: {}",
+                    sung::tostr(sung::fs::absolute(config_path_))
                 );
-                // Need not to load broken file again and again
-                this->update_last_write_time();
-                return;
-            }
 
-            configs_ = std::move(configs);
-            this->update_last_write_time();
-            std::println("Server configs reloaded from file.");
+                auto configs = std::make_shared<ServerConfigs>();
+                configs->fill_default();
+                configs_ = std::move(configs);
+                this->update_last_write_time();
+            } else {
+                const auto current_write_time = sung::fs::last_write_time(
+                    config_path_
+                );
+                if (current_write_time <= last_write_time_)
+                    return;
+
+                auto configs = std::make_shared<ServerConfigs>();
+                const auto res = ::load_or_create_new_server_configs(
+                    config_path_, *configs
+                );
+
+                if (!res) {
+                    std::println(
+                        "Failed to reload server configs: {}", res.error()
+                    );
+                    // Need not to load broken file again and again
+                    this->update_last_write_time();
+                    return;
+                }
+
+                configs_ = std::move(configs);
+                this->update_last_write_time();
+                std::println("Server configs reloaded from file.");
+            }
         }
 
         std::ofstream ofs(config_path_);
@@ -208,7 +220,10 @@ namespace sung {
     }
 
     void ServerConfigManager::update_last_write_time() {
-        last_write_time_ = sung::fs::last_write_time(config_path_);
+        try {
+            last_write_time_ = sung::fs::last_write_time(config_path_);
+        } catch (fs::filesystem_error& e) {
+        }
     }
 
 }  // namespace sung
