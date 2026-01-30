@@ -4,6 +4,8 @@
 #include <fstream>
 #include <stdexcept>
 
+#include "sung/auxiliary/err_str.hpp"
+
 
 namespace {
 
@@ -32,7 +34,7 @@ namespace {
 
         ~PngReader() { this->destroy(); }
 
-        std::expected<void, std::string> open(const sung::Path& path) {
+        sung::ErrStr open(const sung::Path& path) {
             this->destroy();
 
             file_.open(path, std::ios::binary);
@@ -69,7 +71,7 @@ namespace {
             return {};
         }
 
-        std::expected<void, std::string> parse_info() {
+        sung::ErrStr parse_info() {
             if (setjmp(png_jmpbuf(png_ptr_))) {
                 return std::unexpected("libpng error while reading info");
             }
@@ -85,9 +87,7 @@ namespace {
             return {};
         }
 
-        std::expected<void, std::string> get_metadata(
-            sung::PngMeta& meta
-        ) const {
+        sung::ErrStr get_metadata(sung::PngMeta& meta) const {
             try {
                 meta.width = png_get_image_width(png_ptr_, info_ptr_);
                 meta.height = png_get_image_height(png_ptr_, info_ptr_);
@@ -123,7 +123,7 @@ namespace {
             return {};
         }
 
-        std::expected<void, std::string> parse_pixels(sung::PngData& out) {
+        sung::ErrStr parse_pixels(sung::PngData& out) {
             // ---- normalize to 8-bit RGBA
             // 16-bit -> 8-bit
             if (out.bit_depth == 16)
