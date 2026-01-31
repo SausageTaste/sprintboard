@@ -1,7 +1,28 @@
 #include "response/img_list.hpp"
 
+#include <generator>
+
 #include "util/comfyui_util.hpp"
 #include "util/simple_img_info.hpp"
+
+
+namespace {
+
+    std::generator<sung::fs::directory_entry> iter_dir(
+        const sung::Path& path, bool recursive
+    ) {
+        if (recursive) {
+            for (auto& e : sung::fs::recursive_directory_iterator(path)) {
+                co_yield e;
+            }
+        } else {
+            for (auto& e : sung::fs::directory_iterator(path)) {
+                co_yield e;
+            }
+        }
+    }
+
+}  // namespace
 
 
 // ImageListResponse
@@ -108,7 +129,7 @@ namespace sung {
         if (!sung::fs::is_directory(folder_path))
             return;
 
-        for (auto entry : sung::fs::directory_iterator(folder_path)) {
+        for (auto entry : ::iter_dir(folder_path, false)) {
             const auto rel_path = sung::fs::relative(entry.path(), local_dir);
 
             if (entry.is_directory()) {
