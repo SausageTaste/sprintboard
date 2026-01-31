@@ -46,7 +46,11 @@ function unlockSelection() {
 }
 
 async function fetchImageList(dir: string, offset: number): Promise<ImageListResponse> {
-    const res = await fetch(`/api/images/list?dir=${encodeURIComponent(dir)}&offset=${offset}&`);
+    const url = new URL("/api/images/list", window.location.origin);
+    url.searchParams.set("dir", dir);
+    url.searchParams.set("offset", String(offset));
+
+    const res = await fetch(url.toString());
     if (!res.ok)
         throw new Error(`HTTP ${res.status}`);
     return (await res.json()) as ImageListResponse;
