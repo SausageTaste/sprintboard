@@ -1,6 +1,8 @@
 #include "response/img_details.hpp"
 
+#include <nlohmann/json.hpp>
 #include <print>
+#include <pugixml.hpp>
 
 #include "sung/auxiliary/filesys.hpp"
 #include "sung/image/avif.hpp"
@@ -36,6 +38,13 @@ namespace sung {
                     }
                 }
 
+                for (auto& [key, value] : png_info_->text_chunks_) {
+                    try {
+                        const auto json_data = nlohmann::json::parse(value);
+                        value = json_data.dump(2);
+                    } catch (...) {
+                    }
+                }
             } else if (info->is_avif()) {
                 avif_info_ = AvifInfo{};
 
@@ -44,6 +53,21 @@ namespace sung {
                     file_content.data(), file_content.size()
                 );
                 avif_info_->xmp_ = avif_meta.xmp_data_;
+                {
+                    pugi::xml_document doc;
+                    pugi::xml_parse_result r = doc.load_buffer(
+                        avif_info_->xmp_.data(),
+                        avif_info_->xmp_.size(),
+                        pugi::parse_default | pugi::parse_cdata
+                    );
+
+                    if (r) {
+                        std::ostringstream oss;
+                        doc.save(oss, "  ");  // two-space indent
+                        std::string pretty = oss.str();
+                        avif_info_->xmp_.assign(pretty.begin(), pretty.end());
+                    }
+                }
 
                 const auto workflow = avif_meta.find_workflow_data();
                 if (!workflow.empty()) {
