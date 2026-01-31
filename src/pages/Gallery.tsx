@@ -74,6 +74,27 @@ export default function Gallery() {
         return (await res.json()) as ImageListResponse;
     }
 
+    function openAt(index: number) {
+        lastIndexRef.current = index;
+
+        const it = imgItems[index];
+        if (it) {
+            const url = new URL(window.location.href);
+            url.searchParams.set("src", it.src);
+            window.history.pushState({ pswp: true }, "", url);
+        }
+
+        const ds = imgItems.map((it) => ({
+            src: it.src,
+            w: it.w ?? 512,
+            h: it.h ?? 512,
+            msrc: it.thumb ?? it.src,
+        }));
+
+        lockSelection();
+        lightboxRef.current?.loadAndOpen(index, ds);
+    }
+
     const loadMore = React.useCallback(async () => {
         return;
 
@@ -417,27 +438,6 @@ export default function Gallery() {
         window.addEventListener("popstate", onPopState);
         return () => window.removeEventListener("popstate", onPopState);
     }, []);
-
-    function openAt(index: number) {
-        lastIndexRef.current = index;
-
-        const it = imgItems[index];
-        if (it) {
-            const url = new URL(window.location.href);
-            url.searchParams.set("src", it.src);
-            window.history.pushState({ pswp: true }, "", url);
-        }
-
-        const ds = imgItems.map((it) => ({
-            src: it.src,
-            w: it.w ?? 512,
-            h: it.h ?? 512,
-            msrc: it.thumb ?? it.src,
-        }));
-
-        lockSelection();
-        lightboxRef.current?.loadAndOpen(index, ds);
-    }
 
     return (
         <div style={{ padding: 16, fontFamily: "system-ui" }}>
