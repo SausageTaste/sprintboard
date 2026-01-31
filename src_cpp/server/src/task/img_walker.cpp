@@ -199,8 +199,9 @@ namespace {
         ~Task() noexcept override { tg_.wait(); }
 
         void run() override {
-            sung::MonotonicRealtimeTimer timer;
             auto configs = cfg_.get();
+            if (!configs->avif_gen_)
+                return;
 
             size_t count = 0;
             for (const auto& p : ::gen_png_files(configs->dir_bindings_)) {

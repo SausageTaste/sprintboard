@@ -132,12 +132,10 @@ int main() {
 
     tasks.add_periodic_task([&server_configs]() { server_configs.tick(); }, 1);
 
-    if (server_configs.get()->avif_gen_) {
-        tasks.add_periodic_task(
-            sung::create_img_walker_task(server_configs),
-            sung::AVIF_ENCODE_TIME_INTERVAL
-        );
-    }
+    tasks.add_periodic_task(
+        sung::create_img_walker_task(server_configs),
+        sung::AVIF_ENCODE_TIME_INTERVAL
+    );
 
     httplib::Server svr;
 
