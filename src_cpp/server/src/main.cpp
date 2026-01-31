@@ -3,6 +3,7 @@
 
 #include <httplib.h>
 
+#include "response/img_details.hpp"
 #include "response/img_list.hpp"
 #include "sung/auxiliary/filesys.hpp"
 #include "sung/auxiliary/server_configs.hpp"
@@ -189,6 +190,50 @@ int main() {
         }
 
         response.sort();
+        const auto json_data = response.make_json();
+        const auto json_str = json_data.dump();
+        res.status = 200;
+        res.set_content(json_str, "application/json");
+        return;
+    });
+
+    svr.Get("/api/images/details", [&](const httplib::Request& req, auto& res) {
+        sung::ScopedWakeLock wake_lock{ power_req->get() };
+
+        const auto it_param_path = req.params.find("path");
+        if (it_param_path == req.params.end()) {
+            res.status = 400;
+            res.set_content("Missing 'path' parameter", "text/plain");
+            return;
+        }
+
+        auto param_path = it_param_path->second;
+        if (param_path.starts_with("/img/")) {
+            param_path = param_path.substr(5);
+        }
+        const auto [ns, rest] = ::split_namespace(sung::fs::u8path(param_path));
+
+        const auto server_cfg_ptr = server_configs.get();
+        const auto& server_cfg = *server_cfg_ptr;
+        const auto opt_full_path = server_cfg.resolve_paths(ns / rest);
+        if (!opt_full_path) {
+            res.status = 400;
+            res.set_content(
+                "Cannot resolve path in 'path' parameter", "text/plain"
+            );
+            return;
+        }
+
+        sung::ImageDetailResponse response;
+        const auto err = response.fetch_img(*opt_full_path);
+        if (err) {
+            res.status = 400;
+            res.set_content(
+                "Error fetching image details: " + err.error(), "text/plain"
+            );
+            return;
+        }
+
         const auto json_data = response.make_json();
         const auto json_str = json_data.dump();
         res.status = 200;
