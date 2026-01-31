@@ -65,7 +65,7 @@ export default function GalleryDrawer({
                                         thumbnailSize: Number(e.target.value),
                                     }))
                                 }
-                                style={{ width: 60, height: 30 }}
+                                style={{ width: 60, height: 30, fontSize: 16 }}
                             />
                         </label>
 

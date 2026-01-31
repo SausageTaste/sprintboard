@@ -547,6 +547,7 @@ export default function Gallery() {
                         border: "1px solid rgba(255,255,255,0.15)",
                         background: "rgba(255,255,255,0.05)",
                         color: "inherit",
+                        fontSize: 16,
                     }}
                 />
             </form>
