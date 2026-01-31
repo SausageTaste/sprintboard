@@ -16,13 +16,13 @@ namespace {
         return sung::find_prompt(nodes, links);
     }
 
-    std::string get_prompt_no_catch(
+    std::vector<std::string> get_prompt_no_catch(
         const sung::SimpleImageInfo& info, const sung::Path& file_path
     ) {
         if (info.is_png()) {
             const auto exp_meta = sung::read_png_metadata_only(file_path);
             if (!exp_meta)
-                return "";
+                return {};
             const auto& meta = *exp_meta;
 
             if (auto wf = meta.find_text_chunk("workflow")) {
@@ -31,18 +31,18 @@ namespace {
         } else if (info.is_avif()) {
             const auto file_content = sung::read_file(file_path);
             if (file_content.empty())
-                return "";
+                return {};
             const auto avif_meta = sung::read_avif_metadata_only(
                 file_content.data(), file_content.size()
             );
             const auto workflow = avif_meta.find_workflow_data();
             if (workflow.empty())
-                return "";
+                return {};
 
             return ::find_prompt(workflow.data(), workflow.size());
         }
 
-        return "";
+        return {};
     }
 
 }  // namespace
@@ -50,13 +50,13 @@ namespace {
 
 namespace sung {
 
-    std::string get_prompt(
+    std::vector<std::string> get_prompt(
         const sung::SimpleImageInfo& info, const sung::Path& file_path
     ) {
         try {
             return get_prompt_no_catch(info, file_path);
         } catch (const std::exception& e) {
-            return "";
+            return {};
         }
     }
 

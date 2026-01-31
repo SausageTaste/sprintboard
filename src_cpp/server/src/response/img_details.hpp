@@ -18,7 +18,7 @@ namespace sung {
 
     public:
         std::string sd_model_name_;
-        std::string sd_prompt_;
+        std::vector<std::string> sd_prompt_;
         int64_t width_;
         int64_t height_;
     };

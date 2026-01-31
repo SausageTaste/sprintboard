@@ -201,10 +201,11 @@ namespace sung {
         return active_nodes;
     }
 
-    std::string find_prompt(
+    std::vector<std::string> find_prompt(
         const WorkflowNodes& nodes, const WorkflowLinks& links
     ) {
-        std::string output;
+        std::vector<std::string> output;
+
         const auto terminal_nodes = sung::find_terminal_nodes(nodes, links);
         for (const auto node : terminal_nodes) {
             const auto active_nodes = sung::find_active_nodes_from_terminal(
@@ -215,7 +216,7 @@ namespace sung {
                     continue;
                 if (active_node->type_.find("Text") == std::string::npos)
                     continue;
-                output += active_node->widgets_values_[0] + ", ";
+                output.push_back(active_node->widgets_values_[0]);
             }
         }
 

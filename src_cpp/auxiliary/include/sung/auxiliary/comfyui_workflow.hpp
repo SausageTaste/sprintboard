@@ -85,7 +85,7 @@ namespace sung {
     );
 
 
-    std::string find_prompt(
+    std::vector<std::string> find_prompt(
         const WorkflowNodes& nodes, const WorkflowLinks& links
     );
 
