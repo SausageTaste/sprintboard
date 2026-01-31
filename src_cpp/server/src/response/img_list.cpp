@@ -1,8 +1,10 @@
 #include "response/img_list.hpp"
 
 #include <generator>
+#include <print>
 
 #include <absl/strings/str_split.h>
+#include <sung/basic/time.hpp>
 
 #include "util/comfyui_util.hpp"
 #include "util/simple_img_info.hpp"
@@ -101,6 +103,8 @@ namespace {
         const sung::Path& folder_path,
         const std::string& query
     ) {
+        sung::MonotonicRealtimeTimer timer;
+
         Query q;
         q.parse(query);
 
@@ -122,7 +126,11 @@ namespace {
             }
         }
 
-        return;
+        std::print(
+            "Fetched directory '{}' in {:.3f} seconds\n",
+            sung::tostr(folder_path),
+            timer.elapsed()
+        );
     }
 
 }  // namespace
