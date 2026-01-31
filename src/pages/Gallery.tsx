@@ -228,10 +228,11 @@ export default function Gallery() {
                 if (!it)
                     return;
 
-                const url = new URL(window.location.href);
-                url.searchParams.set("src", it.src);
-
                 setSearchParams(prev => {
+                    const cur = prev.get("src");
+                    if (cur === it.src)
+                        return prev;
+
                     const p = new URLSearchParams(prev);
                     p.set("src", it.src);
                     return p;
@@ -241,10 +242,7 @@ export default function Gallery() {
             lb.on("close", () => {
                 unlockSelection();
 
-                if (window.location.pathname.startsWith("/images")) {
-                    const url = new URL(window.location.href);
-                    url.searchParams.delete("src");
-
+                if (location.pathname.startsWith("/images")) {
                     setSearchParams(prev => {
                         const p = new URLSearchParams(prev);
                         p.delete("src");
