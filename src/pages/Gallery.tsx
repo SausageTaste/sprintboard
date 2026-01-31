@@ -45,9 +45,10 @@ function unlockSelection() {
     window.getSelection?.()?.removeAllRanges?.();
 }
 
-async function fetchImageList(dir: string, offset: number): Promise<ImageListResponse> {
+async function fetchImageList(dir: string, query: string, offset: number): Promise<ImageListResponse> {
     const url = new URL("/api/images/list", window.location.origin);
     url.searchParams.set("dir", dir);
+    url.searchParams.set("query", query);
     url.searchParams.set("offset", String(offset));
 
     const res = await fetch(url.toString());
@@ -65,10 +66,10 @@ export default function Gallery() {
     const [thumbnailWidth, setThumbnailWidth] = React.useState<number>(3);
     const [thumbnailHeight, setThumbnailHeight] = React.useState<number>(4);
 
-    const [lightboxReady, setLightboxReady] = React.useState(false);
-    const [searchBoxText, setSearchBoxText] = React.useState("");
     const [menuOpen, setMenuOpen] = React.useState(false);
     const [settings, setSettings] = React.useState<ViewerSettings>(() => loadSettings());
+    const [lightboxReady, setLightboxReady] = React.useState(false);
+    const [searchBoxText, setSearchBoxText] = React.useState(settings.searchText || "");
 
     const virtuosoRef = React.useRef<any>(null);
     const lightboxRef = React.useRef<PhotoSwipeLightbox | null>(null);
@@ -106,7 +107,7 @@ export default function Gallery() {
         loadingRef.current = true;
         try {
             const offset = imgItems.length;
-            const data = await fetchImageList(curDir, offset);
+            const data = await fetchImageList(curDir, settings.searchText, offset);
 
             setFolders(data.folders);
             setThumbnailWidth(data.thumbnailWidth || 512);
@@ -130,7 +131,7 @@ export default function Gallery() {
         } finally {
             loadingRef.current = false;
         }
-    }, [imgItems.length, totalImgCount, curDir]);
+    }, [imgItems.length, totalImgCount, curDir, settings.searchText]);
 
     const setSrcInUrl = React.useCallback((src: string | null, replace: boolean) => {
         const p = new URLSearchParams(searchParams);
@@ -204,7 +205,7 @@ export default function Gallery() {
             loadingRef.current = true;
 
             try {
-                const data = await fetchImageList(curDir, 0);
+                const data = await fetchImageList(curDir, settings.searchText, 0);
                 console.log("Fetched image list:", data);
 
                 setFolders(data.folders || []);
@@ -216,7 +217,7 @@ export default function Gallery() {
                 loadingRef.current = false;
             }
         })();
-    }, [curDir]);
+    }, [curDir, settings.searchText]);
 
     React.useEffect(() => {
         if (!lightboxRef.current) {
@@ -527,20 +528,28 @@ export default function Gallery() {
 
             <div style={{ height: 12 }} />
 
-            <input
-                type="text"
-                placeholder="Search..."
-                value={searchBoxText}
-                onChange={(e) => setSearchBoxText(e.target.value)}
-                style={{
-                    width: "100%",
-                    padding: "10px 12px",
-                    borderRadius: 10,
-                    border: "1px solid rgba(255,255,255,0.15)",
-                    background: "rgba(255,255,255,0.05)",
-                    color: "inherit",
+            <form
+                onSubmit={(e) => {
+                    e.preventDefault();
+                    settings.searchText = searchBoxText;
+                    setSettings({ ...settings });
                 }}
-            />
+            >
+                <input
+                    type="search"
+                    placeholder="Search..."
+                    value={searchBoxText}
+                    onChange={(e) => setSearchBoxText(e.target.value)}
+                    style={{
+                        width: "100%",
+                        padding: "10px 12px",
+                        borderRadius: 10,
+                        border: "1px solid rgba(255,255,255,0.15)",
+                        background: "rgba(255,255,255,0.05)",
+                        color: "inherit",
+                    }}
+                />
+            </form>
 
             <div style={{ height: 12 }} />
 

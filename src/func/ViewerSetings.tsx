@@ -1,10 +1,12 @@
 
 type ViewerSettings = {
+    searchText: string;
     thumbnailSize: number;
     fillScreen: boolean;
 };
 
 const DEFAULT_SETTINGS: ViewerSettings = {
+    searchText: "",
     thumbnailSize: 150,
     fillScreen: false,
 };
