@@ -218,7 +218,6 @@ export default function Gallery() {
                 bgOpacity: 1,
             });
 
-            // Track current slide
             lb.on("change", () => {
                 const pswp = lb.pswp;
                 if (!pswp)
@@ -234,15 +233,6 @@ export default function Gallery() {
                 const url = new URL(window.location.href);
                 url.searchParams.set("src", it.src);
                 window.history.replaceState({ pswp: true }, "", url);
-
-                // ✅ scroll grid to current image
-                /*
-                virtuosoRef.current?.scrollToIndex({
-                  index: i,
-                  align: "center",
-                  behavior: "smooth",
-                });
-                */
             });
 
             lb.on("close", () => {
@@ -263,7 +253,10 @@ export default function Gallery() {
 
             lb.on("uiRegister", () => {
                 const pswp = lb.pswp;
-                if (!pswp || !pswp.ui) return;
+                if (!pswp)
+                    return;
+                if (!pswp.ui)
+                    return;
 
                 pswp.ui.registerElement({
                     name: "tap-prev",
@@ -371,12 +364,10 @@ export default function Gallery() {
 
         lbOptions.initialZoomLevel = settings.fillScreen ? "fill" : "fit";
         lbOptions.secondaryZoomLevel = settings.fillScreen ? "fit" : "fill";
-
-        // ✅ dataSource drives the gallery length, NOT the DOM
         lbOptions.dataSource = imgItems.map((it) => ({
             src: it.src,
-            w: it.w ?? 1600,
-            h: it.h ?? 900,
+            w: it.w ?? 512,
+            h: it.h ?? 512,
             msrc: it.thumb ?? it.src, // thumb used in animation (optional)
         }));
 
