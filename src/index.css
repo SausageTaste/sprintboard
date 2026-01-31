@@ -95,6 +95,10 @@ img,
   background: rgb(0, 0, 0, 0.1);
 }
 
+.pswp__button {
+  color: rgba(255, 255, 255, 0.85);
+}
+
 .drawer-backdrop {
   position: fixed;
   inset: 0;

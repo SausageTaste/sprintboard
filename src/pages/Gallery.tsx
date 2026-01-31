@@ -358,7 +358,7 @@ export default function Gallery() {
 
                 pswp.ui.registerElement({
                     name: "download-btn",
-                    order: 9,
+                    order: 7,
                     isButton: true,
                     appendTo: "bar",
                     html: "⬇︎",
