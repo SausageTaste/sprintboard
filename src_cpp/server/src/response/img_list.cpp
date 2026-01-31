@@ -2,11 +2,44 @@
 
 #include <generator>
 
+#include <absl/strings/str_split.h>
+
 #include "util/comfyui_util.hpp"
 #include "util/simple_img_info.hpp"
 
 
 namespace {
+
+    class Query {
+
+    public:
+        void parse(const std::string& query) {
+            auto parts = absl::StrSplit(query, ',');
+            for (auto part : parts) {
+                if (!part.empty()) {
+                    part = absl::StripAsciiWhitespace(part);
+
+                    if (!part.empty())
+                        terms_.push_back(std::string{ part });
+                }
+            }
+        }
+
+        bool empty() const { return terms_.empty(); }
+
+        bool match(const std::string& text) const {
+            for (const auto& term : terms_) {
+                if (!text.contains(term)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+    private:
+        std::vector<std::string> terms_;
+    };
+
 
     std::generator<sung::fs::directory_entry> iter_dir(
         const sung::Path& path, bool recursive
@@ -26,7 +59,7 @@ namespace {
     }
 
     std::optional<sung::SimpleImageInfo> is_file_eligible(
-        const sung::fs::directory_entry& entry, const std::string& query
+        const sung::fs::directory_entry& entry, const ::Query& query
     ) {
         const auto avif_path = sung::replace_ext(entry.path(), ".avif");
         if (avif_path != entry.path() && sung::fs::exists(avif_path))
@@ -47,13 +80,13 @@ namespace {
         const auto links = wf->get_links();
 
         const auto model = sung::find_model(nodes, links);
-        if (model.contains(query)) {
+        if (query.match(model)) {
             return info;
         }
 
         const auto prompt = sung::find_prompt(nodes, links);
         for (const auto& p : prompt) {
-            if (p.contains(query)) {
+            if (query.match(p)) {
                 return info;
             }
         }
@@ -68,6 +101,9 @@ namespace {
         const sung::Path& folder_path,
         const std::string& query
     ) {
+        Query q;
+        q.parse(query);
+
         for (auto entry : ::iter_dir(folder_path, true)) {
             const auto rel_path = sung::fs::relative(entry.path(), local_dir);
 
@@ -76,7 +112,7 @@ namespace {
                 const auto api_path = namespace_path / rel_path;
                 response.add_dir(sung::tostr(name), api_path);
             } else if (entry.is_regular_file()) {
-                if (const auto info = ::is_file_eligible(entry, query)) {
+                if (const auto info = ::is_file_eligible(entry, q)) {
                     const auto name = entry.path().filename();
                     const auto api_path = "/img/" / namespace_path / rel_path;
                     response.add_file(
