@@ -12,6 +12,14 @@ namespace sung {
     class ImageListResponse {
 
     public:
+        struct FileInfo {
+            std::string name_;
+            sung::Path path_;
+            int width_;
+            int height_;
+        };
+
+    public:
         void add_dir(const std::string& name, const sung::Path& path);
 
         void add_file(
@@ -27,6 +35,14 @@ namespace sung {
             int width,
             int height
         );
+
+        void add_files(std::vector<FileInfo>&& infos) {
+            files_.insert(
+                files_.end(),
+                std::make_move_iterator(infos.begin()),
+                std::make_move_iterator(infos.end())
+            );
+        }
 
         void fetch_directory(
             const sung::Path& namespace_path,
@@ -44,13 +60,6 @@ namespace sung {
         struct DirInfo {
             std::string name_;
             sung::Path path_;
-        };
-
-        struct FileInfo {
-            std::string name_;
-            sung::Path path_;
-            int width_;
-            int height_;
         };
 
         std::vector<DirInfo> dirs_;

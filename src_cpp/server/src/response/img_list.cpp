@@ -101,12 +101,6 @@ namespace {
     }
 
 
-    struct FileItemInfo {
-        sung::SimpleImageInfo info_;
-        sung::Path file_path_;
-    };
-
-
     template <class T>
     class BoundedQueue {
 
@@ -114,12 +108,12 @@ namespace {
         explicit BoundedQueue(size_t capacity) : cap_(capacity) {}
 
         // returns false if queue closed
-        bool push(T&& item) {
+        bool push(const T& item) {
             std::unique_lock lk(mtx_);
             cv_not_full_.wait(lk, [&] { return closed_ || q_.size() < cap_; });
             if (closed_)
                 return false;
-            q_.push(std::move(item));
+            q_.push(item);
             cv_not_empty_.notify_one();
             return true;
         }
@@ -158,27 +152,42 @@ namespace {
     public:
         WorkerTask() { results_.reserve(256); }
 
-        void init(const Query& query, BoundedQueue<FileItemInfo>& q) {
-            query_ = &query;
+        void init(
+            BoundedQueue<sung::Path>& q,
+            const Query& query,
+            const sung::Path& local_dir,
+            const sung::Path& api_path_prefix
+        ) {
             task_q_ = &q;
+            query_ = &query;
+            local_dir_ = local_dir;
+            api_path_prefix_ = api_path_prefix;
         }
 
         void operator()() {
-            FileItemInfo task;
-            while (task_q_->pop(task)) {
-                if (auto info = ::is_file_eligible(task.file_path_, *query_)) {
-                    task.info_ = std::move(*info);
-                    results_.push_back(std::move(task));
+            sung::Path path;
+            while (task_q_->pop(path)) {
+                if (auto info = ::is_file_eligible(path, *query_)) {
+                    const auto rel_path = sung::fs::relative(path, local_dir_);
+                    const auto api_path = api_path_prefix_ / rel_path;
+
+                    auto& file_info = results_.emplace_back();
+                    file_info.name_ = sung::tostr(path.filename());
+                    file_info.path_ = api_path;
+                    file_info.width_ = static_cast<int>(info->width_);
+                    file_info.height_ = static_cast<int>(info->height_);
                 }
             }
         }
 
-        const std::vector<FileItemInfo>& results() const { return results_; }
+        auto&& results() { return std::move(results_); }
 
     private:
+        BoundedQueue<sung::Path>* task_q_ = nullptr;
         const Query* query_ = nullptr;
-        BoundedQueue<FileItemInfo>* task_q_ = nullptr;
-        std::vector<FileItemInfo> results_;
+        sung::Path local_dir_;
+        sung::Path api_path_prefix_;
+        std::vector<sung::ImageListResponse::FileInfo> results_;
     };
 
 
@@ -194,16 +203,17 @@ namespace {
         Query q;
         q.parse(query);
 
+        const auto api_path_prefix = "/img" / namespace_path;
         const auto thread_count = std::clamp<size_t>(
             std::max(1u, std::thread::hardware_concurrency()), 1, 12
         );
 
-        BoundedQueue<FileItemInfo> task_q(5000);
+        BoundedQueue<sung::Path> task_q(5000);
         std::vector<::WorkerTask> workers(thread_count);
         std::vector<std::thread> threads;
         threads.reserve(thread_count);
         for (size_t i = 0; i < thread_count; ++i) {
-            workers[i].init(q, task_q);
+            workers[i].init(task_q, q, local_dir, api_path_prefix);
             threads.emplace_back(std::ref(workers[i]));
         }
 
@@ -215,9 +225,7 @@ namespace {
                 const auto api_path = namespace_path / rel_path;
                 response.add_dir(sung::tostr(path.filename()), api_path);
             } else if (entry.is_regular_file()) {
-                FileItemInfo item;
-                item.file_path_ = path;
-                if (!task_q.push(std::move(item)))
+                if (!task_q.push(path))
                     break;
             }
         }
@@ -225,20 +233,8 @@ namespace {
         task_q.close();
         for (auto& t : threads) t.join();
 
-        const auto api_path_prefix = "/img" / namespace_path;
-
         for (auto& worker : workers) {
-            for (auto& info : worker.results()) {
-                const auto& path = info.file_path_;
-                const auto rel_path = sung::fs::relative(path, local_dir);
-                const auto api_path = api_path_prefix / rel_path;
-                response.add_file(
-                    path.filename(),
-                    api_path,
-                    info.info_.width_,
-                    info.info_.height_
-                );
-            }
+            response.add_files(std::move(worker.results()));
         }
 
         std::print(
