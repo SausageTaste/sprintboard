@@ -181,6 +181,7 @@ export default function Gallery() {
     }, [imgItems]);
 
     React.useEffect(() => {
+        setFolders([]);
         setImgItems([]);
         setTotalImgCount(0);
         loadingRef.current = false;
@@ -195,8 +196,8 @@ export default function Gallery() {
                 const data = await fetchImageList(curDir, 0);
                 console.log("Fetched image list:", data);
 
-                setFolders(Array.isArray(data.folders) ? data.folders : []);
-                setImgItems(data.imageFiles)
+                setFolders(data.folders || []);
+                setImgItems(data.imageFiles || []);
                 setTotalImgCount(data.totalImageCount);
                 setThumbnailWidth(data.thumbnailWidth || 512);
                 setThumbnailHeight(data.thumbnailHeight || 512);
