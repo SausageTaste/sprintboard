@@ -10,7 +10,7 @@ import GalleryDrawer from "../widgets/GalleryDrawer";
 import { loadSettings, saveSettings, type ViewerSettings } from "../func/ViewerSetings";
 
 
-type Item = {
+type ImageFileInfo = {
     src: string;
     name: string;
     thumb?: string;
@@ -18,7 +18,18 @@ type Item = {
     h?: number;
 };
 
-type Folder = { name: string; path: string };
+type FolderInfo = {
+    name: string;
+    path: string;
+};
+
+interface ImageListResponse {
+    folders: FolderInfo[];
+    imageFiles: ImageFileInfo[];
+    totalImageCount: number;
+    thumbnailWidth: number;
+    thumbnailHeight: number;
+};
 
 
 function lockSelection() {
@@ -35,47 +46,54 @@ function unlockSelection() {
 }
 
 export default function Gallery() {
-    const [items, setItems] = React.useState<Item[]>([]);
-    const [folders, setFolders] = React.useState<Folder[]>([]);
-    const [total, setTotal] = React.useState<number | null>(null);
+    // Query result of image list
+    const [imgItems, setImgItems] = React.useState<ImageFileInfo[]>([]);
+    const [folders, setFolders] = React.useState<FolderInfo[]>([]);
+    const [totalImgCount, setTotalImgCount] = React.useState<number | null>(null);
     const [thumbnailWidth, setThumbnailWidth] = React.useState<number>(3);
     const [thumbnailHeight, setThumbnailHeight] = React.useState<number>(4);
-    const [query, setQuery] = React.useState("");
+
+    const [searchBoxText, setSearchBoxText] = React.useState("");
     const [menuOpen, setMenuOpen] = React.useState(false);
     const [settings, setSettings] = React.useState<ViewerSettings>(() => loadSettings());
 
     const virtuosoRef = React.useRef<any>(null);
-    const lastIndexRef = React.useRef<number>(0);
     const lightboxRef = React.useRef<PhotoSwipeLightbox | null>(null);
+    const lastIndexRef = React.useRef<number>(0);
     const loadingRef = React.useRef(false);
-    const itemsRef = React.useRef(items);
+    const imgItemsRef = React.useRef(imgItems);
 
     const { "*": path } = useParams();   // catch-all route
     const navigate = useNavigate();
     const curDir = path ?? ""; // "" = root
 
+    async function fetchImageList(dir: string, offset: number): Promise<ImageListResponse> {
+        const res = await fetch(`/api/images/list?dir=${encodeURIComponent(dir)}&offset=${offset}&`);
+        if (!res.ok)
+            throw new Error(`HTTP ${res.status}`);
+        return (await res.json()) as ImageListResponse;
+    }
+
     const loadMore = React.useCallback(async () => {
         return;
 
         if (loadingRef.current) return;
-        if (total !== null && items.length >= total) return;
+        if (totalImgCount !== null && imgItems.length >= totalImgCount) return;
 
         loadingRef.current = true;
         try {
-            const offset = items.length;
-            console.log("Cur dir", curDir);
-            const res = await fetch(`/api/images/list?dir=${encodeURIComponent(curDir)}&offset=${offset}&`);
-            const data = await res.json();
+            const offset = imgItems.length;
+            const data = await fetchImageList(curDir, offset);
 
-            setFolders(Array.isArray(data.folders) ? data.folders : []);
+            setFolders(data.folders);
             setThumbnailWidth(data.thumbnail_width || 512);
             setThumbnailHeight(data.thumbnail_height || 512);
 
-            const incoming: Item[] = data.files ?? [];
-            setTotal(incoming.length);
+            const incoming: ImageFileInfo[] = data.files ?? [];
+            setTotalImgCount(incoming.length);
 
             // dedupe by src so it still works even if backend ignores offset/limit for now
-            setItems(prev => {
+            setImgItems(prev => {
                 const seen = new Set(prev.map(x => x.src));
                 const merged = [...prev];
                 for (const it of incoming) {
@@ -89,7 +107,7 @@ export default function Gallery() {
         } finally {
             loadingRef.current = false;
         }
-    }, [items.length, total, curDir]);
+    }, [imgItems.length, totalImgCount, curDir]);
 
     /*
     const refreshNewFiles = React.useCallback(async () => {
@@ -103,7 +121,7 @@ export default function Gallery() {
 
             const data = await res.json();
 
-            const incoming: Item[] = data.files ?? [];
+            const incoming: ImageFileInfo[] = data.files ?? [];
 
             if (!incoming.length) return;
 
@@ -130,37 +148,36 @@ export default function Gallery() {
     */
 
     React.useEffect(() => {
-        itemsRef.current = items;
+        imgItemsRef.current = imgItems;
 
         const src = new URL(window.location.href).searchParams.get("src");
         if (!src)
             return;
-        const idx = items.findIndex(x => x.src === src);
+        const idx = imgItems.findIndex(x => x.src === src);
         if (idx >= 0)
             openAt(idx);
-    }, [items]);
+    }, [imgItems]);
 
     React.useEffect(() => {
-        setItems([]);
-        setTotal(null);
+        setImgItems([]);
+        setTotalImgCount(null);
         loadingRef.current = false;
+        imgItemsRef.current = imgItems;
 
         (async () => {
-            if (loadingRef.current) return;
+            if (loadingRef.current)
+                return;
             loadingRef.current = true;
+
             try {
-                const res = await fetch(`/api/images/list?dir=${encodeURIComponent(curDir)}&offset=0&`);
-                const data = await res.json();
+                const data = await fetchImageList(curDir, 0);
+                console.log("Fetched image list:", data);
 
                 setFolders(Array.isArray(data.folders) ? data.folders : []);
-                setThumbnailWidth(data.thumbnail_width || 512);
-                setThumbnailHeight(data.thumbnail_height || 512);
-
-                const incoming: Item[] = data.files ?? [];
-                setItems(incoming);
-
-                // IMPORTANT: total should come from backend, not incoming.length
-                setTotal(data.total ?? null);
+                setImgItems(data.imageFiles)
+                setTotalImgCount(data.totalImageCount);
+                setThumbnailWidth(data.thumbnailWidth || 512);
+                setThumbnailHeight(data.thumbnailHeight || 512);
             } finally {
                 loadingRef.current = false;
             }
@@ -186,7 +203,7 @@ export default function Gallery() {
                 const i = pswp.currIndex;
                 lastIndexRef.current = i;
 
-                const it = itemsRef.current[i];
+                const it = imgItemsRef.current[i];
                 if (!it)
                     return;
 
@@ -306,7 +323,7 @@ export default function Gallery() {
                     html: "ⓘ",
                     onClick: async () => {
                         const i = pswp.currIndex;
-                        const it = itemsRef.current[i];
+                        const it = imgItemsRef.current[i];
                         if (!it)
                             return;
 
@@ -332,7 +349,7 @@ export default function Gallery() {
         lbOptions.secondaryZoomLevel = settings.fillScreen ? "fit" : "fill";
 
         // ✅ dataSource drives the gallery length, NOT the DOM
-        lbOptions.dataSource = items.map((it) => ({
+        lbOptions.dataSource = imgItems.map((it) => ({
             src: it.src,
             w: it.w ?? 1600,
             h: it.h ?? 900,
@@ -340,9 +357,9 @@ export default function Gallery() {
         }));
 
         return () => {
-            // don't destroy on every items change; destroy only on unmount
+            // don't destroy on every imgItems change; destroy only on unmount
         };
-    }, [items, settings.fillScreen]);
+    }, [imgItems, settings.fillScreen]);
 
     // destroy on unmount
     React.useEffect(() => {
@@ -359,7 +376,7 @@ export default function Gallery() {
         }, 5000); // every 5s (tune later)
 
         return () => clearInterval(interval);
-    }, [curDir, items.length]);
+    }, [curDir, imgItems.length]);
     */
 
     React.useEffect(() => {
@@ -404,14 +421,14 @@ export default function Gallery() {
     function openAt(index: number) {
         lastIndexRef.current = index;
 
-        const it = items[index];
+        const it = imgItems[index];
         if (it) {
             const url = new URL(window.location.href);
             url.searchParams.set("src", it.src);
             window.history.pushState({ pswp: true }, "", url);
         }
 
-        const ds = items.map((it) => ({
+        const ds = imgItems.map((it) => ({
             src: it.src,
             w: it.w ?? 512,
             h: it.h ?? 512,
@@ -465,8 +482,8 @@ export default function Gallery() {
             <input
                 type="text"
                 placeholder="Search..."
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                value={searchBoxText}
+                onChange={(e) => setSearchBoxText(e.target.value)}
                 style={{
                     width: "100%",
                     padding: "10px 12px",
@@ -498,7 +515,7 @@ export default function Gallery() {
                 useWindowScroll
                 key={curDir}
                 style={{ height: "100%" }}
-                data={items}
+                data={imgItems}
                 endReached={loadMore}
                 overscan={600}
                 listClassName="grid"
