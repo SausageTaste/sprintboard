@@ -20,7 +20,7 @@ namespace {
                     part = absl::StripAsciiWhitespace(part);
 
                     if (!part.empty())
-                        terms_.push_back(std::string{ part });
+                        terms_.push_back(part);
                 }
             }
         }
@@ -37,7 +37,7 @@ namespace {
         }
 
     private:
-        std::vector<std::string> terms_;
+        std::vector<std::string_view> terms_;
     };
 
 
