@@ -45,11 +45,19 @@ function unlockSelection() {
     window.getSelection?.()?.removeAllRanges?.();
 }
 
+async function fetchImageList(dir: string, offset: number): Promise<ImageListResponse> {
+    const res = await fetch(`/api/images/list?dir=${encodeURIComponent(dir)}&offset=${offset}&`);
+    if (!res.ok)
+        throw new Error(`HTTP ${res.status}`);
+    return (await res.json()) as ImageListResponse;
+}
+
+
 export default function Gallery() {
     // Query result of image list
     const [imgItems, setImgItems] = React.useState<ImageFileInfo[]>([]);
     const [folders, setFolders] = React.useState<FolderInfo[]>([]);
-    const [totalImgCount, setTotalImgCount] = React.useState<number | null>(null);
+    const [totalImgCount, setTotalImgCount] = React.useState<number>(0);
     const [thumbnailWidth, setThumbnailWidth] = React.useState<number>(3);
     const [thumbnailHeight, setThumbnailHeight] = React.useState<number>(4);
 
@@ -66,13 +74,6 @@ export default function Gallery() {
     const { "*": path } = useParams();   // catch-all route
     const navigate = useNavigate();
     const curDir = path ?? ""; // "" = root
-
-    async function fetchImageList(dir: string, offset: number): Promise<ImageListResponse> {
-        const res = await fetch(`/api/images/list?dir=${encodeURIComponent(dir)}&offset=${offset}&`);
-        if (!res.ok)
-            throw new Error(`HTTP ${res.status}`);
-        return (await res.json()) as ImageListResponse;
-    }
 
     function openAt(index: number) {
         lastIndexRef.current = index;
@@ -98,8 +99,10 @@ export default function Gallery() {
     const loadMore = React.useCallback(async () => {
         return;
 
-        if (loadingRef.current) return;
-        if (totalImgCount !== null && imgItems.length >= totalImgCount) return;
+        if (loadingRef.current)
+            return;
+        if (imgItems.length >= totalImgCount)
+            return;
 
         loadingRef.current = true;
         try {
@@ -107,10 +110,10 @@ export default function Gallery() {
             const data = await fetchImageList(curDir, offset);
 
             setFolders(data.folders);
-            setThumbnailWidth(data.thumbnail_width || 512);
-            setThumbnailHeight(data.thumbnail_height || 512);
+            setThumbnailWidth(data.thumbnailWidth || 512);
+            setThumbnailHeight(data.thumbnailHeight || 512);
 
-            const incoming: ImageFileInfo[] = data.files ?? [];
+            const incoming: ImageFileInfo[] = data.imageFiles ?? [];
             setTotalImgCount(incoming.length);
 
             // dedupe by src so it still works even if backend ignores offset/limit for now
@@ -181,7 +184,7 @@ export default function Gallery() {
 
     React.useEffect(() => {
         setImgItems([]);
-        setTotalImgCount(null);
+        setTotalImgCount(0);
         loadingRef.current = false;
         imgItemsRef.current = imgItems;
 
