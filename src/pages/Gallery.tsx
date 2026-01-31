@@ -355,6 +355,36 @@ export default function Gallery() {
                         navigate(`/imagedetails?${params.toString()}`);
                     },
                 });
+
+                pswp.ui.registerElement({
+                    name: "download-btn",
+                    order: 9,
+                    isButton: true,
+                    appendTo: "bar",
+                    html: "⬇︎",
+                    onClick: async () => {
+                        const i = pswp.currIndex;
+                        const it = imgItemsRef.current[i];
+                        if (!it) return;
+
+                        // If same-origin, fetch -> blob -> download (works even if headers aren't ideal)
+                        const res = await fetch(it.src);
+                        if (!res.ok) return;
+
+                        const blob = await res.blob();
+                        const url = URL.createObjectURL(blob);
+
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = it.name || "image";
+                        document.body.appendChild(a);
+                        a.click();
+                        a.remove();
+
+                        URL.revokeObjectURL(url);
+                    },
+                });
+
             });
 
             lb.init();
