@@ -3,6 +3,7 @@
 #include <expected>
 #include <map>
 #include <string>
+#include <optional>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -23,6 +24,8 @@ namespace sung {
 
     public:
         void fill_default();
+
+        std::optional<Path> resolve_paths(const Path& base_dir) const;
 
         void import_json(const nlohmann::json& json_data);
         nlohmann::json export_json() const;

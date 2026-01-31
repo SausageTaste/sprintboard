@@ -56,6 +56,21 @@ namespace {
         return {};
     }
 
+    std::pair<sung::Path, sung::Path> split_namespace(const sung::Path& p) {
+        sung::Path namespace_path;
+        sung::Path rest_path;
+
+        for (auto x : p) {
+            if (namespace_path.empty()) {
+                namespace_path = x;
+            } else {
+                rest_path /= x;
+            }
+        }
+
+        return { namespace_path, rest_path };
+    }
+
 }  // namespace
 
 
@@ -74,6 +89,25 @@ namespace sung {
         avif_speed_ = 4;
         avif_gen_ = false;
         avif_gen_remove_src_ = false;
+    }
+
+    std::optional<Path> ServerConfigs::resolve_paths(
+        const Path& base_dir
+    ) const {
+        const auto [ns, rest] = ::split_namespace(base_dir);
+
+        const auto it = dir_bindings_.find(sung::tostr(ns));
+        if (it == dir_bindings_.end())
+            return std::nullopt;
+
+        for (const auto& local_dir : it->second.local_dirs_) {
+            const auto full_path = local_dir / rest;
+            if (sung::fs::exists(full_path)) {
+                return full_path;
+            }
+        }
+
+        return std::nullopt;
     }
 
     void ServerConfigs::import_json(const nlohmann::json& json_data) {
