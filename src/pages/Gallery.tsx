@@ -206,7 +206,7 @@ export default function Gallery() {
 
             try {
                 const data = await fetchImageList(curDir, settings.searchText, 0);
-                console.log("Fetched image list:", data);
+                // console.log("Fetched image list:", data);
 
                 setFolders(data.folders || []);
                 setImgItems(data.imageFiles || []);
