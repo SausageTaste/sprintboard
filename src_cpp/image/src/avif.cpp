@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
+#include <print>
+#include <set>
 
 #include <avif/avif.h>
 #include <pugixml.hpp>
@@ -87,6 +90,48 @@ namespace sung {
 }  // namespace sung
 
 
+namespace {
+
+    const pugi::xml_node* find_node_by_name(
+        const pugi::xml_node& node, const std::string_view criterion
+    ) {
+        const auto name = std::string_view{ node.name() };
+        if (name == criterion)
+            return &node;
+
+        for (const auto& child : node.children()) {
+            if (auto found = ::find_node_by_name(child, criterion))
+                return found;
+        }
+
+        return nullptr;
+    };
+
+    const pugi::xml_attribute* find_attr_by_name(
+        const pugi::xml_node& node, const std::string_view criterion
+    ) {
+        for (auto attr : node.attributes()) {
+            const std::string_view name{ attr.name() };
+            if (name == criterion)
+                return &attr;
+        }
+
+        for (const auto& child : node.children()) {
+            if (auto found = ::find_attr_by_name(child, criterion))
+                return found;
+        }
+
+        return nullptr;
+    };
+
+    std::vector<uint8_t> conv_str_data(const std::string_view& sv) {
+        return std::vector<uint8_t>{
+            reinterpret_cast<const uint8_t*>(sv.data()),
+            reinterpret_cast<const uint8_t*>(sv.data() + sv.size())
+        };
+    }
+
+}  // namespace
 namespace sung {
 
     std::vector<uint8_t> AvifMeta::find_workflow_data() const {
@@ -97,25 +142,26 @@ namespace sung {
         if (!parse_result)
             return {};
 
-        // 2. Use XPath to find the Description node.
-        // We use "local-name()" to ignore namespace prefixes which can vary.
-        const auto desc_node = xmp_doc.select_node(
-            "//*[local-name()='Description']"
-        );
-
-        if (desc_node) {
-            const auto node = desc_node.node();
-
-            // 3. Access attributes by their name
-            // Note: Even though it has a prefix in the XML,
-            // pugixml matches the full "prefix:name" string.
-            const auto begin = node.attribute("refimg:png.workflow").value();
-            const auto end = begin + std::strlen(begin);
-
-            return std::vector<uint8_t>(
-                reinterpret_cast<const uint8_t*>(begin),
-                reinterpret_cast<const uint8_t*>(end)
+        // PNG tXTt chunk transplanted to XMP by Sprintboard
+        {
+            const auto found = ::find_node_by_name(
+                xmp_doc.root(), "sprintboard:workflow"
             );
+            if (found) {
+                const auto text = std::string_view{ found->text().as_string() };
+                return conv_str_data(text);
+            }
+        }
+
+        // PNG tXTt chunk transplanted to XMP by refimg
+        {
+            auto found = ::find_attr_by_name(
+                xmp_doc.root(), "refimg:png.workflow"
+            );
+            if (found) {
+                const std::string_view value{ found->value() };
+                return conv_str_data(value);
+            }
         }
 
         return {};
