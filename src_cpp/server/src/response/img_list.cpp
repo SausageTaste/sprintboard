@@ -11,6 +11,9 @@ namespace {
     std::generator<sung::fs::directory_entry> iter_dir(
         const sung::Path& path, bool recursive
     ) {
+        if (!sung::fs::is_directory(path))
+            co_return;
+
         if (recursive) {
             for (auto& e : sung::fs::recursive_directory_iterator(path)) {
                 co_yield e;
@@ -20,6 +23,70 @@ namespace {
                 co_yield e;
             }
         }
+    }
+
+    std::optional<sung::SimpleImageInfo> is_file_eligible(
+        const sung::fs::directory_entry& entry, const std::string& query
+    ) {
+        const auto avif_path = sung::replace_ext(entry.path(), ".avif");
+        if (avif_path != entry.path() && sung::fs::exists(avif_path))
+            return std::nullopt;
+
+        const auto info = sung::get_simple_img_info(entry.path());
+        if (!info)
+            return std::nullopt;
+
+        if (query.empty())
+            return info;
+
+        const auto wf = sung::get_workflow_data(*info, entry.path());
+        if (!wf)
+            return std::nullopt;
+
+        const auto nodes = wf->get_nodes();
+        const auto links = wf->get_links();
+
+        const auto model = sung::find_model(nodes, links);
+        if (model.contains(query)) {
+            return info;
+        }
+
+        const auto prompt = sung::find_prompt(nodes, links);
+        for (const auto& p : prompt) {
+            if (p.contains(query)) {
+                return info;
+            }
+        }
+
+        return std::nullopt;
+    }
+
+    void fetch_directory(
+        sung::ImageListResponse& response,
+        const sung::Path& namespace_path,
+        const sung::Path& local_dir,
+        const sung::Path& folder_path,
+        const std::string& query
+    ) {
+        for (auto entry : ::iter_dir(folder_path, true)) {
+            const auto rel_path = sung::fs::relative(entry.path(), local_dir);
+
+            if (entry.is_directory()) {
+                const auto name = entry.path().filename();
+                const auto api_path = namespace_path / rel_path;
+                response.add_dir(sung::tostr(name), api_path);
+            } else if (entry.is_regular_file()) {
+                if (const auto info = ::is_file_eligible(entry, query)) {
+                    const auto name = entry.path().filename();
+                    const auto api_path = "/img/" / namespace_path / rel_path;
+                    response.add_file(
+                        name, api_path, info->width_, info->height_
+                    );
+                }
+            }
+        }
+
+        return;
     }
 
 }  // namespace
@@ -46,13 +113,20 @@ namespace sung {
         files_.push_back({ name, path, width, height });
     }
 
+    void ImageListResponse::add_file(
+        const sung::Path& name, const sung::Path& path, int width, int height
+    ) {
+        files_.push_back({ sung::tostr(name), path, width, height });
+    }
+
     void ImageListResponse::fetch_directory(
         const sung::Path& namespace_path,
         const sung::Path& local_dir,
-        const sung::Path& folder_path
+        const sung::Path& folder_path,
+        const std::string& query
     ) {
-        return sung::fetch_directory(
-            *this, namespace_path, local_dir, folder_path
+        return ::fetch_directory(
+            *this, namespace_path, local_dir, folder_path, query
         );
     }
 
@@ -113,64 +187,6 @@ namespace sung {
 
         return { total_w / static_cast<double>(files_.size()),
                  total_h / static_cast<double>(files_.size()) };
-    }
-
-}  // namespace sung
-
-
-namespace sung {
-
-    void fetch_directory(
-        sung::ImageListResponse& response,
-        const sung::Path& namespace_path,
-        const sung::Path& local_dir,
-        const sung::Path& folder_path
-    ) {
-        if (!sung::fs::is_directory(folder_path))
-            return;
-
-        for (auto entry : ::iter_dir(folder_path, false)) {
-            const auto rel_path = sung::fs::relative(entry.path(), local_dir);
-
-            if (entry.is_directory()) {
-                const auto name = entry.path().filename();
-                const auto api_path = namespace_path / rel_path;
-                response.add_dir(sung::tostr(name), api_path);
-            } else if (entry.is_regular_file()) {
-                auto avif_path = entry.path();
-                avif_path.replace_extension(".avif");
-                if (avif_path != entry.path() && sung::fs::exists(avif_path))
-                    continue;
-
-                const auto name = entry.path().filename();
-                const auto api_path = "/img/" / namespace_path / rel_path;
-
-                if (const auto info = sung::get_simple_img_info(entry.path())) {
-                    /*
-                    if (info->width_ > info->height_)
-                        continue;
-
-                    const auto wf = sung::get_workflow_data(
-                        *info, entry.path()
-                    );
-                    if (!wf)
-                        continue;
-
-                    const auto nodes = wf->get_nodes();
-                    const auto links = wf->get_links();
-
-                    const auto model = sung::find_model(nodes, links);
-                    const auto prompt = sung::find_prompt(nodes, links);
-                    */
-
-                    response.add_file(
-                        sung::tostr(name), api_path, info->width_, info->height_
-                    );
-                }
-            }
-        }
-
-        return;
     }
 
 }  // namespace sung

@@ -156,6 +156,11 @@ int main() {
         }
         auto& param_dir = it_param_dir->second;
 
+        const auto it_param_query = req.params.find("query");
+        std::string query;
+        if (it_param_query != req.params.end())
+            query = it_param_query->second;
+
         const auto server_cfg_ptr = server_configs.get();
         const auto& server_cfg = *server_cfg_ptr;
         sung::ImageListResponse response;
@@ -182,7 +187,7 @@ int main() {
             const auto& binding_info = it_binding->second;
             for (auto& local_dir : binding_info.local_dirs_) {
                 response.fetch_directory(
-                    namespace_path, local_dir, local_dir / rest_path
+                    namespace_path, local_dir, local_dir / rest_path, query
                 );
             }
         }

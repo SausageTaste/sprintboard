@@ -21,10 +21,18 @@ namespace sung {
             int height
         );
 
+        void add_file(
+            const sung::Path& name,
+            const sung::Path& path,
+            int width,
+            int height
+        );
+
         void fetch_directory(
             const sung::Path& namespace_path,
             const sung::Path& local_dir,
-            const sung::Path& folder_path
+            const sung::Path& folder_path,
+            const std::string& query
         );
 
         void sort();
@@ -48,13 +56,5 @@ namespace sung {
         std::vector<DirInfo> dirs_;
         std::vector<FileInfo> files_;
     };
-
-
-    void fetch_directory(
-        sung::ImageListResponse& response,
-        const sung::Path& namespace_path,
-        const sung::Path& local_dir,
-        const sung::Path& folder_path
-    );
 
 }  // namespace sung
