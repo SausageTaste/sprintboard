@@ -198,8 +198,6 @@ namespace {
         const sung::Path& folder_path,
         const std::string& query
     ) {
-        sung::MonotonicRealtimeTimer timer;
-
         Query q;
         q.parse(query);
 
@@ -236,12 +234,6 @@ namespace {
         for (auto& worker : workers) {
             response.add_files(std::move(worker.results()));
         }
-
-        std::print(
-            "Fetched directory '{}' in {:.3f} seconds\n",
-            sung::tostr(folder_path),
-            timer.elapsed()
-        );
     }
 
 }  // namespace
@@ -280,8 +272,16 @@ namespace sung {
         const sung::Path& folder_path,
         const std::string& query
     ) {
-        return ::fetch_directory(
-            *this, namespace_path, local_dir, folder_path, query
+        sung::MonotonicRealtimeTimer timer;
+
+        ::fetch_directory(*this, namespace_path, local_dir, folder_path, query);
+
+        std::println(
+            "Fetched directory '{}' ({} files, {} folders) in {:.3f} seconds",
+            sung::tostr(folder_path),
+            files_.size(),
+            dirs_.size(),
+            timer.elapsed()
         );
     }
 
