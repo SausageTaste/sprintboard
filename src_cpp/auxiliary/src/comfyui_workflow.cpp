@@ -160,8 +160,8 @@ namespace sung {
     WorkflowNodes find_terminal_nodes(
         const WorkflowNodes& nodes, const WorkflowLinks& links
     ) {
-        std::map<int, size_t> node_from_counts;
-        std::map<int, size_t> node_to_counts;
+        std::unordered_map<int, size_t> node_from_counts;
+        std::unordered_map<int, size_t> node_to_counts;
 
         for (auto& link : links) {
             node_from_counts[link->from_node_]++;
@@ -240,7 +240,7 @@ namespace sung {
                         continue;
                     if (!output.empty())
                         output += ", ";
-                    output = active_node->widgets_values_[0];
+                    output += active_node->widgets_values_[0];
                 }
             }
         }
