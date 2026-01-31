@@ -80,7 +80,7 @@ export default function Gallery() {
     const { "*": path } = useParams();   // catch-all route
     const navigate = useNavigate();
     const location = useLocation();
-    const [searchParams, setSearchParams] = useSearchParams();
+    const [searchParams, _] = useSearchParams();
     const curDir = path ?? ""; // "" = root
 
     function openAt(index: number) {
