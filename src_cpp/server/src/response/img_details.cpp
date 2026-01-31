@@ -13,8 +13,6 @@
 namespace sung {
 
     ErrStr ImageDetailResponse::fetch_img(const sung::Path& file_path) {
-        std::println("fetch_img called for path: {}", sung::tostr(file_path));
-
         if (const auto info = sung::get_simple_img_info(file_path)) {
             width_ = info->width_;
             height_ = info->height_;

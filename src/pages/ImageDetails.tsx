@@ -2,11 +2,22 @@ import React from "react";
 import { useSearchParams } from "react-router-dom";
 
 
+interface PngInfo {
+    text_chunks: Record<string, string>;
+};
+
+interface AvifInfo {
+    xmp: string;
+};
+
 interface ImageDetailsResponse {
     sdModelName: string;
     sdPrompt: Array<string>;
     width: number;
     height: number;
+
+    pngInfo?: PngInfo;
+    avifInfo?: AvifInfo;
 };
 
 
@@ -32,6 +43,7 @@ export default function ImageDetails() {
 
     React.useEffect(() => {
         fetchImageDetails(imgSrc).then((data) => {
+            console.log("Fetched image details:", data);
             setImageDetails(data);
         }).catch((err) => {
             console.error("Error fetching image details:", err);
@@ -56,6 +68,64 @@ export default function ImageDetails() {
             {imageDetails?.sdPrompt.map((s, i) => (
                 <p key={i}>{s}</p>
             ))}
+
+            {imageDetails?.pngInfo && (
+                <>
+                    <h2>PNG Info</h2>
+                    <h3>Text Chunks</h3>
+                    {Object.entries(imageDetails.pngInfo.text_chunks).map(([key, value]) => (
+                        <div key={key} style={{ marginBottom: 16 }}>
+                            <div style={{ fontWeight: 600, marginBottom: 6 }}>
+                                {key}
+                            </div>
+
+                            <pre
+                                style={{
+                                    maxHeight: 220,
+                                    overflow: "auto",
+                                    whiteSpace: "pre-wrap",
+                                    padding: "10px 12px",
+                                    borderRadius: 8,
+                                    background: "rgba(255,255,255,0.05)",
+                                    border: "1px solid rgba(255,255,255,0.1)",
+                                    fontSize: 12,
+                                    lineHeight: 1.5,
+                                }}
+                            >
+                                {value}
+                            </pre>
+                        </div>
+                    ))}
+                </>
+            )}
+
+            {imageDetails?.avifInfo && (
+                <>
+                    <h2>AVIF Info</h2>
+                    <h3>XMP Data</h3>
+                    <div style={{ marginBottom: 16 }}>
+                        <div style={{ fontWeight: 600, marginBottom: 6 }}>
+                            XMP
+                        </div>
+
+                        <pre
+                            style={{
+                                maxHeight: 220,
+                                overflow: "auto",
+                                whiteSpace: "pre-wrap",
+                                padding: "10px 12px",
+                                borderRadius: 8,
+                                background: "rgba(255,255,255,0.05)",
+                                border: "1px solid rgba(255,255,255,0.1)",
+                                fontSize: 12,
+                                lineHeight: 1.5,
+                            }}
+                        >
+                            {imageDetails.avifInfo.xmp}
+                        </pre>
+                    </div>
+                </>
+            )}
         </div >
     );
 }
