@@ -1,7 +1,11 @@
 #include "response/img_list.hpp"
 
+#include <atomic>
 #include <generator>
+#include <mutex>
 #include <print>
+#include <queue>
+#include <thread>
 
 #include <absl/strings/str_split.h>
 #include <sung/basic/time.hpp>
@@ -61,20 +65,20 @@ namespace {
     }
 
     std::optional<sung::SimpleImageInfo> is_file_eligible(
-        const sung::fs::directory_entry& entry, const ::Query& query
+        const sung::Path& file_path, const ::Query& query
     ) {
-        const auto avif_path = sung::replace_ext(entry.path(), ".avif");
-        if (avif_path != entry.path() && sung::fs::exists(avif_path))
+        const auto avif_path = sung::replace_ext(file_path, ".avif");
+        if (avif_path != file_path && sung::fs::exists(avif_path))
             return std::nullopt;
 
-        const auto info = sung::get_simple_img_info(entry.path());
+        const auto info = sung::get_simple_img_info(file_path);
         if (!info)
             return std::nullopt;
 
         if (query.empty())
             return info;
 
-        const auto wf = sung::get_workflow_data(*info, entry.path());
+        const auto wf = sung::get_workflow_data(*info, file_path);
         if (!wf)
             return std::nullopt;
 
@@ -96,6 +100,82 @@ namespace {
         return std::nullopt;
     }
 
+
+    struct FileItemInfo {
+        sung::SimpleImageInfo info_;
+        sung::Path file_path_;
+        sung::Path api_path_;
+    };
+
+
+    class WorkerTask {
+
+    public:
+        template <typename T>
+        class MutQueue {
+
+        public:
+            bool push(T&& path) {
+                std::lock_guard lock(nut_);
+                if (queue_.size() >= 5000)
+                    return false;
+
+                queue_.push(std::move(path));
+                return true;
+            }
+
+            std::optional<T> pop() {
+                std::lock_guard lock(nut_);
+                if (queue_.empty())
+                    return std::nullopt;
+
+                auto path = std::move(queue_.front());
+                queue_.pop();
+                return path;
+            }
+
+        private:
+            std::mutex nut_;
+            std::queue<T> queue_;
+        };
+
+        void init(const Query& query, MutQueue<FileItemInfo>& task_q) {
+            query_ = &query;
+            task_q_ = &task_q;
+        }
+
+        void operator()() {
+            while (true) {
+                auto task_opt = task_q_->pop();
+                if (!task_opt) {
+                    if (stop_.load(std::memory_order_relaxed))
+                        break;
+
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                    continue;
+                }
+
+                const auto file_path = task_opt->file_path_;
+                auto info = ::is_file_eligible(file_path, *query_);
+                if (info) {
+                    task_opt->info_ = std::move(*info);
+                    results_.push_back(std::move(*task_opt));
+                }
+            }
+        }
+
+        void stop() { stop_.store(true, std::memory_order_relaxed); }
+
+        const std::vector<FileItemInfo>& results() const { return results_; }
+
+    private:
+        const Query* query_;
+        MutQueue<FileItemInfo>* task_q_;
+        std::atomic_bool stop_{ false };
+        std::vector<FileItemInfo> results_;
+    };
+
+
     void fetch_directory(
         sung::ImageListResponse& response,
         const sung::Path& namespace_path,
@@ -108,6 +188,17 @@ namespace {
         Query q;
         q.parse(query);
 
+        const size_t thread_count = std::max(
+            1u, std::thread::hardware_concurrency()
+        );
+        WorkerTask::MutQueue<FileItemInfo> task_q;
+        std::vector<::WorkerTask> workers(thread_count);
+        std::vector<std::thread> threads;
+        for (size_t i = 0; i < thread_count; ++i) {
+            workers[i].init(q, task_q);
+            threads.emplace_back(std::ref(workers[i]));
+        }
+
         for (auto entry : ::iter_dir(folder_path, true)) {
             const auto rel_path = sung::fs::relative(entry.path(), local_dir);
 
@@ -116,13 +207,25 @@ namespace {
                 const auto api_path = namespace_path / rel_path;
                 response.add_dir(sung::tostr(name), api_path);
             } else if (entry.is_regular_file()) {
-                if (const auto info = ::is_file_eligible(entry, q)) {
-                    const auto name = entry.path().filename();
-                    const auto api_path = "/img/" / namespace_path / rel_path;
-                    response.add_file(
-                        name, api_path, info->width_, info->height_
-                    );
+                FileItemInfo item;
+                item.file_path_ = entry.path();
+                item.api_path_ = "/img/" / namespace_path / rel_path;
+
+                while (!task_q.push(std::move(item))) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
                 }
+            }
+        }
+
+        for (auto& worker : workers) worker.stop();
+        for (auto& t : threads) t.join();
+
+        for (auto& worker : workers) {
+            for (auto& info : worker.results()) {
+                const auto name = info.file_path_.filename();
+                response.add_file(
+                    name, info.api_path_, info.info_.width_, info.info_.height_
+                );
             }
         }
 
