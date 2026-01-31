@@ -55,6 +55,8 @@ export default function Gallery() {
     const curDir = path ?? ""; // "" = root
 
     const loadMore = React.useCallback(async () => {
+        return;
+
         if (loadingRef.current) return;
         if (total !== null && items.length >= total) return;
 
