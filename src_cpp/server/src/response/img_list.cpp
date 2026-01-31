@@ -108,70 +108,77 @@ namespace {
     };
 
 
+    template <class T>
+    class BoundedQueue {
+
+    public:
+        explicit BoundedQueue(size_t capacity) : cap_(capacity) {}
+
+        // returns false if queue closed
+        bool push(T item) {
+            std::unique_lock lk(mtx_);
+            cv_not_full_.wait(lk, [&] { return closed_ || q_.size() < cap_; });
+            if (closed_)
+                return false;
+            q_.push(std::move(item));
+            cv_not_empty_.notify_one();
+            return true;
+        }
+
+        // returns false when closed and empty
+        bool pop(T& out) {
+            std::unique_lock lk(mtx_);
+            cv_not_empty_.wait(lk, [&] { return closed_ || !q_.empty(); });
+            if (q_.empty())
+                return false;  // closed_ must be true here
+            out = std::move(q_.front());
+            q_.pop();
+            cv_not_full_.notify_one();
+            return true;
+        }
+
+        void close() {
+            std::lock_guard lk(mtx_);
+            closed_ = true;
+            cv_not_empty_.notify_all();
+            cv_not_full_.notify_all();
+        }
+
+    private:
+        size_t cap_;
+        std::mutex mtx_;
+        std::condition_variable cv_not_empty_;
+        std::condition_variable cv_not_full_;
+        std::queue<T> q_;
+        bool closed_ = false;
+    };
+
+
     class WorkerTask {
 
     public:
-        template <typename T>
-        class MutQueue {
+        WorkerTask() { results_.reserve(4096); }
 
-        public:
-            bool push(T&& path) {
-                std::lock_guard lock(nut_);
-                if (queue_.size() >= 5000)
-                    return false;
-
-                queue_.push(std::move(path));
-                return true;
-            }
-
-            std::optional<T> pop() {
-                std::lock_guard lock(nut_);
-                if (queue_.empty())
-                    return std::nullopt;
-
-                auto path = std::move(queue_.front());
-                queue_.pop();
-                return path;
-            }
-
-        private:
-            std::mutex nut_;
-            std::queue<T> queue_;
-        };
-
-        void init(const Query& query, MutQueue<FileItemInfo>& task_q) {
+        void init(const Query& query, BoundedQueue<FileItemInfo>& q) {
             query_ = &query;
-            task_q_ = &task_q;
+            task_q_ = &q;
         }
 
         void operator()() {
-            while (true) {
-                auto task_opt = task_q_->pop();
-                if (!task_opt) {
-                    if (stop_.load(std::memory_order_relaxed))
-                        break;
-
-                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                    continue;
-                }
-
-                const auto file_path = task_opt->file_path_;
-                auto info = ::is_file_eligible(file_path, *query_);
-                if (info) {
-                    task_opt->info_ = std::move(*info);
-                    results_.push_back(std::move(*task_opt));
+            FileItemInfo task;
+            while (task_q_->pop(task)) {
+                if (auto info = ::is_file_eligible(task.file_path_, *query_)) {
+                    task.info_ = std::move(*info);
+                    results_.push_back(std::move(task));
                 }
             }
         }
-
-        void stop() { stop_.store(true, std::memory_order_relaxed); }
 
         const std::vector<FileItemInfo>& results() const { return results_; }
 
     private:
-        const Query* query_;
-        MutQueue<FileItemInfo>* task_q_;
-        std::atomic_bool stop_{ false };
+        const Query* query_ = nullptr;
+        BoundedQueue<FileItemInfo>* task_q_ = nullptr;
         std::vector<FileItemInfo> results_;
     };
 
@@ -191,9 +198,10 @@ namespace {
         const size_t thread_count = std::max(
             1u, std::thread::hardware_concurrency()
         );
-        WorkerTask::MutQueue<FileItemInfo> task_q;
+        BoundedQueue<FileItemInfo> task_q(5000);
         std::vector<::WorkerTask> workers(thread_count);
         std::vector<std::thread> threads;
+        threads.reserve(thread_count);
         for (size_t i = 0; i < thread_count; ++i) {
             workers[i].init(q, task_q);
             threads.emplace_back(std::ref(workers[i]));
@@ -210,14 +218,11 @@ namespace {
                 FileItemInfo item;
                 item.file_path_ = entry.path();
                 item.api_path_ = "/img/" / namespace_path / rel_path;
-
-                while (!task_q.push(std::move(item))) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                }
+                task_q.push(std::move(item));
             }
         }
 
-        for (auto& worker : workers) worker.stop();
+        task_q.close();
         for (auto& t : threads) t.join();
 
         for (auto& worker : workers) {
