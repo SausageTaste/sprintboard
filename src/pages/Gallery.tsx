@@ -1,5 +1,5 @@
 import React from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useLocation, useSearchParams } from "react-router-dom";
 import { VirtuosoGrid } from "react-virtuoso";
 import PhotoSwipeLightbox from "photoswipe/lightbox";
 import "photoswipe/style.css";
@@ -73,27 +73,25 @@ export default function Gallery() {
 
     const { "*": path } = useParams();   // catch-all route
     const navigate = useNavigate();
+    const location = useLocation();
+    const [searchParams, setSearchParams] = useSearchParams();
     const curDir = path ?? ""; // "" = root
 
     function openAt(index: number) {
         lastIndexRef.current = index;
 
         const it = imgItems[index];
-        if (it) {
-            const url = new URL(window.location.href);
-            url.searchParams.set("src", it.src);
-            window.history.pushState({ pswp: true }, "", url);
-        }
+        if (!it)
+            return;
 
-        const ds = imgItems.map((it) => ({
-            src: it.src,
-            w: it.w ?? 512,
-            h: it.h ?? 512,
-            msrc: it.thumb ?? it.src,
-        }));
+        setSearchParams(prev => {
+            const p = new URLSearchParams(prev);
+            p.set("src", it.src);
+            return p;
+        }, { replace: false });
 
         lockSelection();
-        lightboxRef.current?.loadAndOpen(index, ds);
+        lightboxRef.current?.loadAndOpen(index);
     }
 
     const loadMore = React.useCallback(async () => {
@@ -232,7 +230,12 @@ export default function Gallery() {
 
                 const url = new URL(window.location.href);
                 url.searchParams.set("src", it.src);
-                window.history.replaceState({ pswp: true }, "", url);
+
+                setSearchParams(prev => {
+                    const p = new URLSearchParams(prev);
+                    p.set("src", it.src);
+                    return p;
+                }, { replace: true });
             });
 
             lb.on("close", () => {
@@ -241,7 +244,12 @@ export default function Gallery() {
                 if (window.location.pathname.startsWith("/images")) {
                     const url = new URL(window.location.href);
                     url.searchParams.delete("src");
-                    window.history.replaceState({}, "", url);
+
+                    setSearchParams(prev => {
+                        const p = new URLSearchParams(prev);
+                        p.delete("src");
+                        return p;
+                    }, { replace: true });
                 }
 
                 virtuosoRef.current?.scrollToIndex({
@@ -376,6 +384,29 @@ export default function Gallery() {
         };
     }, [imgItems, settings.fillScreen]);
 
+    React.useEffect(() => {
+        const lb = lightboxRef.current;
+        if (!lb) return;
+
+        const src = searchParams.get("src");
+
+        // If URL has no src => ensure closed
+        if (!src) {
+            if (lb.pswp) lb.pswp.close();
+            return;
+        }
+
+        // URL has src => open (or jump) when we have the list
+        const idx = imgItemsRef.current.findIndex(x => x.src === src);
+        if (idx < 0) return; // list not loaded yet, wait
+
+        // Already open at right index? do nothing
+        if (lb.pswp && lb.pswp.currIndex === idx) return;
+
+        lockSelection();
+        lb.loadAndOpen(idx);
+    }, [searchParams, location.key]);
+
     // destroy on unmount
     React.useEffect(() => {
         return () => {
@@ -419,19 +450,6 @@ export default function Gallery() {
     React.useEffect(() => {
         saveSettings(settings);
     }, [settings]);
-
-    React.useEffect(() => {
-        function onPopState() {
-            const lb = lightboxRef.current;
-            const pswp = lb?.pswp;
-            if (pswp) {
-                pswp.close();
-            }
-        }
-
-        window.addEventListener("popstate", onPopState);
-        return () => window.removeEventListener("popstate", onPopState);
-    }, []);
 
     return (
         <div style={{ padding: 16, fontFamily: "system-ui" }}>
