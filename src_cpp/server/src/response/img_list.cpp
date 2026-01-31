@@ -51,7 +51,7 @@ namespace sung {
         auto output = nlohmann::json::object();
 
         {
-            auto& file_array = output["files"];
+            auto& file_array = output["imageFiles"];
             for (const auto& file_info : files_) {
                 auto& file_obj = file_array.emplace_back();
                 file_obj["name"] = file_info.name_;
@@ -59,6 +59,7 @@ namespace sung {
                 file_obj["w"] = file_info.width_;
                 file_obj["h"] = file_info.height_;
             }
+            output["totalImageCount"] = static_cast<int>(files_.size());
         }
 
         {
@@ -71,8 +72,8 @@ namespace sung {
         }
 
         const auto [avg_w, avg_h] = calc_average_thumbnail_size();
-        output["thumbnail_width"] = avg_w;
-        output["thumbnail_height"] = avg_h;
+        output["thumbnailWidth"] = avg_w;
+        output["thumbnailHeight"] = avg_h;
 
         return output;
     }
