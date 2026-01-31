@@ -61,6 +61,7 @@ export default function Gallery() {
     const [thumbnailWidth, setThumbnailWidth] = React.useState<number>(3);
     const [thumbnailHeight, setThumbnailHeight] = React.useState<number>(4);
 
+    const [lightboxReady, setLightboxReady] = React.useState(false);
     const [searchBoxText, setSearchBoxText] = React.useState("");
     const [menuOpen, setMenuOpen] = React.useState(false);
     const [settings, setSettings] = React.useState<ViewerSettings>(() => loadSettings());
@@ -70,6 +71,7 @@ export default function Gallery() {
     const lastIndexRef = React.useRef<number>(0);
     const loadingRef = React.useRef(false);
     const imgItemsRef = React.useRef(imgItems);
+    const pathnameRef = React.useRef("");
 
     const { "*": path } = useParams();   // catch-all route
     const navigate = useNavigate();
@@ -84,12 +86,7 @@ export default function Gallery() {
         if (!it)
             return;
 
-        setSearchParams(prev => {
-            const p = new URLSearchParams(prev);
-            p.set("src", it.src);
-            return p;
-        }, { replace: false });
-
+        setSrcInUrl(it.src, false);
         lockSelection();
         lightboxRef.current?.loadAndOpen(index);
     }
@@ -131,6 +128,19 @@ export default function Gallery() {
         }
     }, [imgItems.length, totalImgCount, curDir]);
 
+    const setSrcInUrl = React.useCallback((src: string | null, replace: boolean) => {
+        const p = new URLSearchParams(searchParams);
+        if (src) p.set("src", src);
+        else p.delete("src");
+
+        const s = p.toString();
+
+        navigate(
+            { pathname: pathnameRef.current, search: s ? `?${s}` : "" },
+            { replace }
+        );
+    }, [navigate, searchParams]);
+
     /*
     const refreshNewFiles = React.useCallback(async () => {
         if (loadingRef.current) return;
@@ -171,14 +181,11 @@ export default function Gallery() {
 
     React.useEffect(() => {
         imgItemsRef.current = imgItems;
-
-        const src = new URL(window.location.href).searchParams.get("src");
-        if (!src)
-            return;
-        const idx = imgItems.findIndex(x => x.src === src);
-        if (idx >= 0)
-            openAt(idx);
     }, [imgItems]);
+
+    React.useEffect(() => {
+        pathnameRef.current = location.pathname;
+    }, [location.pathname]);
 
     React.useEffect(() => {
         setFolders([]);
@@ -229,26 +236,14 @@ export default function Gallery() {
                 if (!it)
                     return;
 
-                setSearchParams(prev => {
-                    const cur = prev.get("src");
-                    if (cur === it.src)
-                        return prev;
-
-                    const p = new URLSearchParams(prev);
-                    p.set("src", it.src);
-                    return p;
-                }, { replace: true });
+                setSrcInUrl(it.src, true);
             });
 
             lb.on("close", () => {
                 unlockSelection();
 
                 if (location.pathname.startsWith("/images")) {
-                    setSearchParams(prev => {
-                        const p = new URLSearchParams(prev);
-                        p.delete("src");
-                        return p;
-                    }, { replace: true });
+                    setSrcInUrl(null, true);
                 }
 
                 virtuosoRef.current?.scrollToIndex({
@@ -364,6 +359,7 @@ export default function Gallery() {
 
             lb.init();
             lightboxRef.current = lb;
+            setLightboxReady(true);
         }
 
         const lb = lightboxRef.current;
@@ -384,27 +380,34 @@ export default function Gallery() {
     }, [imgItems, settings.fillScreen]);
 
     React.useEffect(() => {
+        if (!lightboxReady)
+            return;
+
         const lb = lightboxRef.current;
-        if (!lb) return;
+        if (!lb)
+            return;
 
         const src = searchParams.get("src");
 
-        // If URL has no src => ensure closed
+        // no src => close
         if (!src) {
-            if (lb.pswp) lb.pswp.close();
+            if (lb.pswp)
+                lb.pswp.close();
             return;
         }
 
-        // URL has src => open (or jump) when we have the list
+        // wait until list is loaded enough to find it
         const idx = imgItemsRef.current.findIndex(x => x.src === src);
-        if (idx < 0) return; // list not loaded yet, wait
+        if (idx < 0)
+            return;
 
-        // Already open at right index? do nothing
-        if (lb.pswp && lb.pswp.currIndex === idx) return;
+        // already open at correct slide
+        if (lb.pswp && lb.pswp.currIndex === idx)
+            return;
 
         lockSelection();
         lb.loadAndOpen(idx);
-    }, [searchParams, location.key]);
+    }, [lightboxReady, imgItems.length, searchParams, location.key]);
 
     // destroy on unmount
     React.useEffect(() => {
