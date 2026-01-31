@@ -104,7 +104,6 @@ namespace {
     struct FileItemInfo {
         sung::SimpleImageInfo info_;
         sung::Path file_path_;
-        sung::Path api_path_;
     };
 
 
@@ -209,17 +208,15 @@ namespace {
         }
 
         for (auto entry : ::iter_dir(folder_path, true)) {
-            const auto rel_path = sung::fs::relative(entry.path(), local_dir);
+            const auto& path = entry.path();
 
             if (entry.is_directory()) {
-                const auto name = entry.path().filename();
+                const auto rel_path = sung::fs::relative(path, local_dir);
                 const auto api_path = namespace_path / rel_path;
-                response.add_dir(sung::tostr(name), api_path);
+                response.add_dir(sung::tostr(path.filename()), api_path);
             } else if (entry.is_regular_file()) {
                 FileItemInfo item;
-                item.file_path_ = entry.path();
-                item.api_path_ = "/img/" / namespace_path / rel_path;
-
+                item.file_path_ = path;
                 if (!task_q.push(std::move(item)))
                     break;
             }
@@ -228,11 +225,18 @@ namespace {
         task_q.close();
         for (auto& t : threads) t.join();
 
+        const auto api_path_prefix = "/img" / namespace_path;
+
         for (auto& worker : workers) {
             for (auto& info : worker.results()) {
-                const auto name = info.file_path_.filename();
+                const auto& path = info.file_path_;
+                const auto rel_path = sung::fs::relative(path, local_dir);
+                const auto api_path = api_path_prefix / rel_path;
                 response.add_file(
-                    name, info.api_path_, info.info_.width_, info.info_.height_
+                    path.filename(),
+                    api_path,
+                    info.info_.width_,
+                    info.info_.height_
                 );
             }
         }
