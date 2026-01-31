@@ -340,19 +340,19 @@ export default function Gallery() {
                     isButton: true,
                     appendTo: "bar",
                     html: "ⓘ",
-                    onClick: async () => {
+                    onClick: () => {
                         const i = pswp.currIndex;
                         const it = imgItemsRef.current[i];
                         if (!it)
                             return;
 
-                        pswp.close();
-
                         const params = new URLSearchParams();
                         params.set("src", it.src);
                         params.set("dir", curDir);
                         params.set("index", String(i));
-                        navigate(`/imagedetails?${params.toString()}`);
+
+                        const url = `/imagedetails?${params.toString()}`;
+                        window.open(url, "_blank", "noopener,noreferrer");
                     },
                 });
 
