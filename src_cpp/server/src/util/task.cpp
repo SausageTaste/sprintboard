@@ -15,7 +15,7 @@ namespace sung {
         thread_ = std::thread([this]() {
             while (!stop_) {
                 this->run_once();
-                sung::sleep_naive(1);
+                sung::sleep_naive(0.1);
             }
         });
     }
