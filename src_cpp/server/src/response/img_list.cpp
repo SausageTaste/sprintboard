@@ -26,7 +26,7 @@ namespace {
                     part = absl::StripAsciiWhitespace(part);
 
                     if (!part.empty())
-                        terms_.push_back(part);
+                        terms_.push_back(std::string{ part });
                 }
             }
         }
@@ -43,7 +43,7 @@ namespace {
         }
 
     private:
-        std::vector<std::string_view> terms_;
+        std::vector<std::string> terms_;
     };
 
 
@@ -115,7 +115,7 @@ namespace {
         explicit BoundedQueue(size_t capacity) : cap_(capacity) {}
 
         // returns false if queue closed
-        bool push(T item) {
+        bool push(T&& item) {
             std::unique_lock lk(mtx_);
             cv_not_full_.wait(lk, [&] { return closed_ || q_.size() < cap_; });
             if (closed_)
@@ -157,7 +157,7 @@ namespace {
     class WorkerTask {
 
     public:
-        WorkerTask() { results_.reserve(4096); }
+        WorkerTask() { results_.reserve(256); }
 
         void init(const Query& query, BoundedQueue<FileItemInfo>& q) {
             query_ = &query;
@@ -195,9 +195,10 @@ namespace {
         Query q;
         q.parse(query);
 
-        const size_t thread_count = std::max(
-            1u, std::thread::hardware_concurrency()
+        const auto thread_count = std::clamp<size_t>(
+            std::max(1u, std::thread::hardware_concurrency()), 1, 12
         );
+
         BoundedQueue<FileItemInfo> task_q(5000);
         std::vector<::WorkerTask> workers(thread_count);
         std::vector<std::thread> threads;
@@ -218,7 +219,9 @@ namespace {
                 FileItemInfo item;
                 item.file_path_ = entry.path();
                 item.api_path_ = "/img/" / namespace_path / rel_path;
-                task_q.push(std::move(item));
+
+                if (!task_q.push(std::move(item)))
+                    break;
             }
         }
 
