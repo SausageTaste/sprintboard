@@ -26,7 +26,7 @@ namespace {
                     part = absl::StripAsciiWhitespace(part);
 
                     if (!part.empty())
-                        terms_.push_back(std::string{ part });
+                        terms_.push_back(absl::AsciiStrToLower(part));
                 }
             }
         }
