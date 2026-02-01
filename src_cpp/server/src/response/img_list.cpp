@@ -47,6 +47,30 @@ namespace {
     };
 
 
+    std::optional<int> check_path_depth(
+        const sung::Path& base, const sung::Path& target
+    ) {
+        try {
+            // canonical() resolves symlinks and ".." to get the true absolute
+            // path
+            const auto abs_base = sung::fs::canonical(base);
+            const auto abs_target = sung::fs::canonical(target);
+
+            // Get the portion of the path that exists beyond the base
+            const auto relative = sung::fs::relative(abs_target, abs_base);
+
+            // Count the segments in the relative path
+            int depth = 0;
+            for (auto it = relative.begin(); it != relative.end(); ++it) {
+                depth++;
+            }
+
+            return depth;
+        } catch (const sung::fs::filesystem_error& e) {
+            return std::nullopt;
+        }
+    }
+
     std::generator<sung::fs::directory_entry> iter_dir(
         const sung::Path& path, bool recursive
     ) {
@@ -198,6 +222,8 @@ namespace {
         const sung::Path& folder_path,
         const std::string& query
     ) {
+        constexpr bool recursive = false;
+
         Query q;
         q.parse(query);
 
@@ -215,10 +241,16 @@ namespace {
             threads.emplace_back(std::ref(workers[i]));
         }
 
-        for (auto entry : ::iter_dir(folder_path, true)) {
+        for (auto entry : ::iter_dir(folder_path, recursive)) {
             const auto& path = entry.path();
 
             if (entry.is_directory()) {
+                if (recursive) {
+                    const auto depth_opt = check_path_depth(local_dir, path);
+                    if (depth_opt && *depth_opt > 1)
+                        continue;
+                }
+
                 const auto rel_path = sung::fs::relative(path, local_dir);
                 const auto api_path = namespace_path / rel_path;
                 response.add_dir(sung::tostr(path.filename()), api_path);
