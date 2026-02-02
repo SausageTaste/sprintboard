@@ -233,3 +233,53 @@ img,
   align-items: center;
   gap: 12px;
 }
+
+/* Hidden by default */
+.pswp .pswp-menu,
+.pswp .pswp-menu-backdrop {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease;
+}
+
+/* Backdrop */
+.pswp .pswp-menu-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+/* Panel */
+.pswp .pswp-menu {
+  position: absolute;
+  top: 56px;
+  right: 12px;
+  width: min(240px, 70vw);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(24, 24, 24, 0.95);
+  backdrop-filter: blur(10px);
+  overflow: hidden;
+  z-index: 9999;
+}
+
+.pswp .pswp-menu-item {
+  width: 100%;
+  padding: 12px 12px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+}
+
+.pswp .pswp-menu-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* Toggle open */
+.pswp.pswp-menu-open .pswp-menu,
+.pswp.pswp-menu-open .pswp-menu-backdrop {
+  opacity: 1;
+  pointer-events: auto;
+}

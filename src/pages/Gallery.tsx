@@ -234,6 +234,8 @@ export default function Gallery() {
                 if (!pswp)
                     return;
 
+                pswp.element?.classList.remove("pswp-menu-open")
+
                 const i = pswp.currIndex;
                 lastIndexRef.current = i;
 
@@ -340,56 +342,79 @@ export default function Gallery() {
                 });
 
                 pswp.ui.registerElement({
-                    name: "info-btn",
-                    order: 8,
+                    name: "menu-btn",
+                    order: 7,              // choose position
                     isButton: true,
                     appendTo: "bar",
-                    html: "ⓘ",
+                    html: "☰",             // start with text icon
                     onClick: () => {
-                        const i = pswp.currIndex;
-                        const it = imgItemsRef.current[i];
-                        if (!it)
-                            return;
-
-                        const params = new URLSearchParams();
-                        params.set("src", it.src);
-                        params.set("dir", curDir);
-                        params.set("index", String(i));
-
-                        const url = `/imagedetails?${params.toString()}`;
-                        window.open(url, "_blank", "noopener,noreferrer");
+                        // toggle menu
+                        const root = pswp.element;               // PhotoSwipe root
+                        root?.classList.toggle("pswp-menu-open");
                     },
                 });
 
                 pswp.ui.registerElement({
-                    name: "download-btn",
-                    order: 7,
-                    isButton: true,
-                    appendTo: "bar",
-                    html: "⬇︎",
-                    onClick: async () => {
-                        const i = pswp.currIndex;
-                        const it = imgItemsRef.current[i];
-                        if (!it) return;
+                    name: "menu-panel",
+                    order: 9,
+                    isButton: false,
+                    appendTo: "root",
+                    html: `
+    <div class="pswp-menu">
+      <button class="pswp-menu-item" data-action="details">Details...</button>
+      <button class="pswp-menu-item" data-action="download">Download</button>
+      <button class="pswp-menu-item" data-action="newtab">Open in new tab</button>
+      <button class="pswp-menu-item" data-action="copy">Copy URL</button>
+    </div>
+    <div class="pswp-menu-backdrop"></div>
+  `,
+                    onInit: (el) => {
+                        const root = pswp.element!;
 
-                        // If same-origin, fetch -> blob -> download (works even if headers aren't ideal)
-                        const res = await fetch(it.src);
-                        if (!res.ok) return;
+                        const backdrop = el.querySelector(".pswp-menu-backdrop") as HTMLDivElement;
+                        backdrop.addEventListener("click", () => root.classList.remove("pswp-menu-open"));
 
-                        const blob = await res.blob();
-                        const url = URL.createObjectURL(blob);
+                        el.addEventListener("click", async (e) => {
+                            const t = e.target as HTMLElement;
+                            const btn = t.closest(".pswp-menu-item") as HTMLElement | null;
+                            if (!btn) return;
 
-                        const a = document.createElement("a");
-                        a.href = url;
-                        a.download = it.name || "image";
-                        document.body.appendChild(a);
-                        a.click();
-                        a.remove();
+                            const action = btn.getAttribute("data-action");
+                            const i = pswp.currIndex;
+                            const it = imgItemsRef.current[i];
+                            if (!it) return;
 
-                        URL.revokeObjectURL(url);
+                            if (action === "newtab") {
+                                window.open(it.src, "_blank", "noopener,noreferrer");
+                            } else if (action === "download") {
+                                const a = document.createElement("a");
+                                a.href = it.src;
+                                a.download = ""; // lets browser pick filename if same-origin
+                                a.rel = "noopener";
+                                document.body.appendChild(a);
+                                a.click();
+                                a.remove();
+                            } else if (action === "copy") {
+                                try { await navigator.clipboard.writeText(it.src); } catch { }
+                            } else if (action === "details") {
+                                const i = pswp.currIndex;
+                                const it = imgItemsRef.current[i];
+                                if (!it)
+                                    return;
+
+                                const params = new URLSearchParams();
+                                params.set("src", it.src);
+                                params.set("dir", curDir);
+                                params.set("index", String(i));
+
+                                const url = `/imagedetails?${params.toString()}`;
+                                window.open(url, "_blank", "noopener,noreferrer");
+                            }
+
+                            root.classList.remove("pswp-menu-open");
+                        });
                     },
                 });
-
             });
 
             lb.init();
