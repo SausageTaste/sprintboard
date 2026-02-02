@@ -420,11 +420,9 @@ export default function Gallery() {
                                 if (!window.confirm(`Are you sure you want to delete "${it.name}"? This action cannot be undone.`))
                                     return;
 
-                                await fetch("/api/images/delete", {
-                                    method: "POST",
-                                    headers: { "Content-Type": "application/json" },
-                                    body: JSON.stringify({ src: it.src }),
-                                });
+                                const url = new URL("/api/images/delete", window.location.origin);
+                                url.searchParams.set("path", it.src);
+                                await fetch(url.toString(), { method: "DELETE" });
 
                                 // Remove from list
                                 setImgItems(prev => {
