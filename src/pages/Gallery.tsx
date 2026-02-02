@@ -365,6 +365,7 @@ export default function Gallery() {
       <button class="pswp-menu-item" data-action="download">Download</button>
       <button class="pswp-menu-item" data-action="newtab">Open in new tab</button>
       <button class="pswp-menu-item" data-action="copy">Copy URL</button>
+      <button class="pswp-menu-item" data-action="delete">Delete</button>
     </div>
     <div class="pswp-menu-backdrop"></div>
   `,
@@ -409,6 +410,29 @@ export default function Gallery() {
 
                                 const url = `/imagedetails?${params.toString()}`;
                                 window.open(url, "_blank", "noopener,noreferrer");
+                            }
+                            else if (action === "delete") {
+                                const i = pswp.currIndex;
+                                const it = imgItemsRef.current[i];
+                                if (!it)
+                                    return;
+
+                                if (!window.confirm(`Are you sure you want to delete "${it.name}"? This action cannot be undone.`))
+                                    return;
+
+                                await fetch("/api/images/delete", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ src: it.src }),
+                                });
+
+                                // Remove from list
+                                setImgItems(prev => {
+                                    const next = prev.filter((_, idx) => idx !== i);
+                                    return next;
+                                });
+
+                                pswp.close();
                             }
 
                             root.classList.remove("pswp-menu-open");
