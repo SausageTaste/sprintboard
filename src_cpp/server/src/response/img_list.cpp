@@ -25,13 +25,38 @@ namespace {
                 if (!part.empty()) {
                     part = absl::StripAsciiWhitespace(part);
 
-                    if (!part.empty())
-                        terms_.push_back(absl::AsciiStrToLower(part));
+                    if (part.empty())
+                        continue;
+
+                    auto part_str = absl::AsciiStrToLower(part);
+
+                    if (part_str.starts_with("model:")) {
+                        model_ = part_str.substr(6);
+                    } else if (part_str.starts_with("dim:")) {
+                        const auto dim_str = part_str.substr(4);
+                        if (dim_str == "ver") {
+                            opt_ver_ = true;
+                            opt_hor_ = false;
+                        } else if (dim_str == "hor") {
+                            opt_hor_ = true;
+                            opt_ver_ = false;
+                        }
+                    } else {
+                        terms_.push_back(part_str);
+                    }
                 }
             }
+
+            return;
         }
 
-        bool empty() const { return terms_.empty(); }
+        bool need_metadata() const {
+            if (!model_.empty())
+                return true;
+            if (!terms_.empty())
+                return true;
+            return false;
+        }
 
         bool match(const std::string& text) const {
             for (const auto& term : terms_) {
@@ -42,8 +67,32 @@ namespace {
             return true;
         }
 
+        bool match_model(const std::string& model) const {
+            // If user did not specify model filter, always match
+            if (model_.empty())
+                return true;
+
+            // If image does not have model info, no match
+            if (model.empty())
+                return false;
+
+            return model.contains(model_);
+        }
+
+        template <typename T>
+        bool match_dim(T width, T height) const {
+            if (opt_ver_ && height <= width)
+                return false;
+            if (opt_hor_ && width <= height)
+                return false;
+            return true;
+        }
+
     private:
         std::vector<std::string> terms_;
+        std::string model_;
+        bool opt_ver_ = false;
+        bool opt_hor_ = false;
     };
 
 
@@ -99,7 +148,9 @@ namespace {
         if (!info)
             return std::nullopt;
 
-        if (query.empty())
+        if (!query.match_dim(info->width_, info->height_))
+            return std::nullopt;
+        if (!query.need_metadata())
             return info;
 
         const auto wf = sung::get_workflow_data(*info, file_path);
@@ -110,9 +161,8 @@ namespace {
         const auto links = wf->get_links();
 
         const auto model = sung::find_model(nodes, links);
-        if (query.match(model)) {
-            return info;
-        }
+        if (!query.match_model(model))
+            return std::nullopt;
 
         const auto prompt = sung::find_prompt(nodes, links);
         for (const auto& p : prompt) {
@@ -222,7 +272,7 @@ namespace {
         const sung::Path& folder_path,
         const std::string& query
     ) {
-        constexpr bool recursive = false;
+        constexpr bool recursive = true;
 
         Query q;
         q.parse(query);
