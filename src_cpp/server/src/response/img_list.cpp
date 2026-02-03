@@ -106,7 +106,7 @@ namespace {
             const auto abs_target = sung::fs::canonical(target);
 
             // Get the portion of the path that exists beyond the base
-            const auto relative = sung::fs::relative(abs_target, abs_base);
+            const auto relative = abs_target.lexically_relative(abs_base);
 
             // Count the segments in the relative path
             int depth = 0;
@@ -242,7 +242,7 @@ namespace {
             sung::Path path;
             while (task_q_->pop(path)) {
                 if (auto info = ::is_file_eligible(path, *query_)) {
-                    const auto rel_path = sung::fs::relative(path, local_dir_);
+                    const auto rel_path = path.lexically_relative(local_dir_);
                     const auto api_path = api_path_prefix_ / rel_path;
 
                     auto& file_info = results_.emplace_back();
@@ -301,7 +301,7 @@ namespace {
                         continue;
                 }
 
-                const auto rel_path = sung::fs::relative(path, local_dir);
+                const auto rel_path = path.lexically_relative(local_dir);
                 const auto api_path = namespace_path / rel_path;
                 response.add_dir(sung::tostr(path.filename()), api_path);
             } else if (entry.is_regular_file()) {
