@@ -224,6 +224,14 @@ namespace {
                         return;
 
                     const auto avif_path = sung::replace_ext(p, ".avif");
+                    if (!sung::fs::exists(p)) {
+                        std::println(
+                            "Source PNG missing, skipping AVIF generation: {}",
+                            sung::tostr(p)
+                        );
+                        return;
+                    }
+
                     sung::write_file(avif_path, *avif_blob);
                     std::println(
                         "ImgWalker: AVIF saved: {} ({:.3f} sec)",
