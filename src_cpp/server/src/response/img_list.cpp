@@ -100,13 +100,8 @@ namespace {
         const sung::Path& base, const sung::Path& target
     ) {
         try {
-            // canonical() resolves symlinks and ".." to get the true absolute
-            // path
-            const auto abs_base = sung::fs::canonical(base);
-            const auto abs_target = sung::fs::canonical(target);
-
             // Get the portion of the path that exists beyond the base
-            const auto relative = abs_target.lexically_relative(abs_base);
+            const auto relative = target.lexically_relative(base);
 
             // Count the segments in the relative path
             int depth = 0;
