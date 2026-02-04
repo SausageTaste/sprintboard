@@ -28,7 +28,7 @@ def cdata(value: str) -> str:
 
 def build_xmp_from_png_text(kv: dict[str, str]) -> str:
     lines = []
-    lines.append('<?xpacket begin="ï»¿" id="W5M0MpCehiHzreSzNTczkc9d"?>')
+    lines.append('<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>')
     lines.append('<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="sprintboard">')
     lines.append('  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">')
     lines.append('    <rdf:Description rdf:about="" xmlns:sprintboard="https://github.com/SausageTaste/sprintboard/">')
