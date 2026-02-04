@@ -73,7 +73,7 @@ namespace {
         ) = "https://github.com/SausageTaste/sprintboard/";
 
         for (auto& kv : src.text) {
-            const auto key = std::format("sprintboard:{}", kv.key);
+            const auto key = std::format("sprintboard:pngText_{}", kv.key);
             pugi::xml_node n = desc.append_child(key.c_str());
             append_cdata_safely(n, kv.value);
         }
