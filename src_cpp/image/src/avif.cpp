@@ -107,23 +107,6 @@ namespace {
         return nullptr;
     };
 
-    const pugi::xml_attribute* find_attr_by_name(
-        const pugi::xml_node& node, const std::string_view criterion
-    ) {
-        for (auto attr : node.attributes()) {
-            const std::string_view name{ attr.name() };
-            if (name == criterion)
-                return &attr;
-        }
-
-        for (const auto& child : node.children()) {
-            if (auto found = ::find_attr_by_name(child, criterion))
-                return found;
-        }
-
-        return nullptr;
-    };
-
     std::vector<uint8_t> conv_str_data(const std::string_view& sv) {
         return std::vector<uint8_t>{
             reinterpret_cast<const uint8_t*>(sv.data()),
@@ -161,17 +144,6 @@ namespace sung {
             if (found) {
                 const auto text = std::string_view{ found->text().as_string() };
                 return conv_str_data(text);
-            }
-        }
-
-        // PNG tXTt chunk transplanted to XMP by refimg
-        {
-            auto found = ::find_attr_by_name(
-                xmp_doc.root(), "refimg:png.workflow"
-            );
-            if (found) {
-                const std::string_view value{ found->value() };
-                return conv_str_data(value);
             }
         }
 
