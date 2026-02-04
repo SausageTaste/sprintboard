@@ -110,21 +110,28 @@ namespace sung {
             auto it_inputs_json = node_json.find("inputs");
             if (it_inputs_json != node_json.end()) {
                 for (auto& input_json : *it_inputs_json) {
-                    WorkflowNodes::Input input;
+                    if (!input_json.is_object())
+                        continue;
 
-                    try {
-                        input.name_ = input_json["name"].get<std::string>();
-                    } catch (...) {
-                        input.name_ = input_json["name"].dump();
+                    auto& input = node.inputs_.emplace_back();
+
+                    if (input_json.contains("name")) {
+                        auto name_json = input_json["name"];
+                        if (name_json.is_string()) {
+                            input.name_ = name_json.get<std::string>();
+                        } else {
+                            input.name_ = name_json.dump();
+                        }
                     }
 
-                    try {
-                        input.type_ = input_json["type"].get<std::string>();
-                    } catch (...) {
-                        input.type_ = input_json["type"].dump();
+                    if (input_json.contains("type")) {
+                        auto type_json = input_json["type"];
+                        if (type_json.is_string()) {
+                            input.type_ = type_json.get<std::string>();
+                        } else {
+                            input.type_ = type_json.dump();
+                        }
                     }
-
-                    node.inputs_.push_back(std::move(input));
                 }
             }
 
