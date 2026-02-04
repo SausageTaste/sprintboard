@@ -17,7 +17,7 @@ namespace sung {
         ErrStr fetch_img(const sung::Path& img_path);
         nlohmann::json make_json() const;
 
-    public:
+    private:
         struct PngInfo {
             std::map<std::string, std::string> text_chunks_;
         };
