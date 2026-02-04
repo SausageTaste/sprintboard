@@ -1,7 +1,8 @@
-import subprocess
+import multiprocessing as mp
 import os
-import tempfile
 import re
+import subprocess
+import tempfile
 
 try:
     from lxml import etree
@@ -46,78 +47,85 @@ def build_xmp_from_png_text(kv: dict[str, str]) -> str:
     return "\n".join(lines)
 
 
-def main():
-    root_dir = r'C:\Users\KCEI\Documents\GitHub\sprintboard-ui\test_cpp\images'
+def __gen_file_paths(root_dir):
+    for dirpath, _, filenames in os.walk(root_dir):
+        for filename in filenames:
+            if not filename.lower().endswith('.avif'):
+                continue
 
-    for item in os.listdir(root_dir):
-        if not item.lower().endswith('.avif'):
-            continue
+            yield os.path.join(dirpath, filename)
 
-        file_path = os.path.join(root_dir, item)
-        print(f'Processing file: {file_path}')
 
+def __do_once(file_path):
+    result = subprocess.run(
+        [
+            'exiftool',
+            '-b', "-XMP",
+            file_path,
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+
+    xml_str = result.stdout.decode('utf-8')
+    xml_data = etree.fromstring(xml_str)
+    root = xml_data
+
+    # Find rdf:Description
+    desc = root.find(".//{http://www.w3.org/1999/02/22-rdf-syntax-ns#}Description")
+    if desc is None:
+        raise RuntimeError("No rdf:Description found")
+
+    # Your custom namespace URI (exactly as in the file)
+    REFIMG_URI = desc.nsmap.get("refimg")  # -> "refimg/"
+    if not REFIMG_URI:
+        # raise RuntimeError("refimg namespace not declared")
+        return  # nothing to do
+
+    # Collect all refimg attributes that start with "png."
+    png_kv = {}
+    for attr_name, value in desc.attrib.items():
+        # attr_name looks like "{refimg/}png.prompt"
+        if attr_name.startswith(f"{{{REFIMG_URI}}}png."):
+            key = attr_name.split("}", 1)[1]   # "png.prompt"
+            key = key.removeprefix("png.")
+            png_kv[key] = value
+
+    new_xmp = build_xmp_from_png_text(png_kv)
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".xmp") as tf:
+        tf.write(new_xmp.encode('utf-8'))
+        tmp = tf.name
+
+    try:
         result = subprocess.run(
             [
-                'exiftool',
-                '-b', "-XMP",
+                "exiftool",
+                "-overwrite_original",
+                f"-XMP<={tmp}",
                 file_path,
             ],
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
+            stderr=subprocess.PIPE,
+            text=True,
         )
 
-        xml_str = result.stdout.decode('utf-8')
-        xml_data = etree.fromstring(xml_str)
-        root = xml_data
+        print(result.stdout.strip())
+        if result.stderr.strip():
+            print("stderr:", result.stderr.strip())
 
-        # Find rdf:Description
-        desc = root.find(".//{http://www.w3.org/1999/02/22-rdf-syntax-ns#}Description")
-        if desc is None:
-            raise RuntimeError("No rdf:Description found")
+        if "0 image files updated" in result.stdout:
+            raise RuntimeError("ExifTool did not update the file")
+    finally:
+        os.unlink(tmp)
 
-        # Your custom namespace URI (exactly as in the file)
-        REFIMG_URI = desc.nsmap.get("refimg")  # -> "refimg/"
-        if not REFIMG_URI:
-            raise RuntimeError("refimg namespace not declared")
 
-        # Collect all refimg attributes that start with "png."
-        png_kv = {}
-        for attr_name, value in desc.attrib.items():
-            # attr_name looks like "{refimg/}png.prompt"
-            if attr_name.startswith(f"{{{REFIMG_URI}}}png."):
-                key = attr_name.split("}", 1)[1]   # "png.prompt"
-                key = key.removeprefix("png.")
-                png_kv[key] = value
+def main():
+    root_dir = r'F:\ComfyUI Outputs'
 
-        new_xmp = build_xmp_from_png_text(png_kv)
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".xmp") as tf:
-            tf.write(new_xmp.encode('utf-8'))
-            tmp = tf.name
-
-        try:
-            result = subprocess.run(
-                [
-                    "exiftool",
-                    "-overwrite_original",
-                    f"-XMP<={tmp}",
-                    file_path,
-                ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-
-            print(result.stdout.strip())
-            if result.stderr.strip():
-                print("stderr:", result.stderr.strip())
-
-            if "0 image files updated" in result.stdout:
-                raise RuntimeError("ExifTool did not update the file")
-        finally:
-            os.unlink(tmp)
-
-        break
+    with mp.Pool() as pool:
+        for x in pool.imap_unordered(__do_once, __gen_file_paths(root_dir)):
+            pass
 
 
 if __name__ == '__main__':
