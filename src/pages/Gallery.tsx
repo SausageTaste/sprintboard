@@ -45,11 +45,17 @@ function unlockSelection() {
     window.getSelection?.()?.removeAllRanges?.();
 }
 
-async function fetchImageList(dir: string, query: string, offset: number): Promise<ImageListResponse> {
+async function fetchImageList(
+    dir: string,
+    query: string,
+    offset: number,
+    recursive: boolean,
+): Promise<ImageListResponse> {
     const url = new URL("/api/images/list", window.location.origin);
     url.searchParams.set("dir", dir);
     url.searchParams.set("query", query);
     url.searchParams.set("offset", String(offset));
+    url.searchParams.set("recursive", recursive ? "1" : "0");
 
     const res = await fetch(url.toString());
     if (!res.ok)
@@ -107,7 +113,12 @@ export default function Gallery() {
         loadingRef.current = true;
         try {
             const offset = imgItems.length;
-            const data = await fetchImageList(curDir, settings.searchText, offset);
+            const data = await fetchImageList(
+                curDir,
+                settings.searchText,
+                offset,
+                settings.filesRecursive,
+            );
 
             setFolders(data.folders);
             setThumbnailWidth(data.thumbnailWidth || 512);
@@ -205,7 +216,12 @@ export default function Gallery() {
             loadingRef.current = true;
 
             try {
-                const data = await fetchImageList(curDir, settings.searchText, 0);
+                const data = await fetchImageList(
+                    curDir,
+                    settings.searchText,
+                    0,
+                    settings.filesRecursive,
+                );
                 // console.log("Fetched image list:", data);
 
                 setFolders(data.folders || []);

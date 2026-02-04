@@ -3,12 +3,14 @@ type ViewerSettings = {
     searchText: string;
     thumbnailSize: number;
     fillScreen: boolean;
+    filesRecursive: boolean;
 };
 
 const DEFAULT_SETTINGS: ViewerSettings = {
     searchText: "",
     thumbnailSize: 150,
     fillScreen: false,
+    filesRecursive: false,
 };
 
 
