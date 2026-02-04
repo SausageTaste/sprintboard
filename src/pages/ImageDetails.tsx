@@ -2,6 +2,10 @@ import React from "react";
 import { useSearchParams } from "react-router-dom";
 
 
+interface ComfyuiInfo {
+    workflowSrc: string;
+}
+
 interface PngInfo {
     text_chunks: Record<string, string>;
 };
@@ -16,6 +20,7 @@ interface ImageDetailsResponse {
     width: number;
     height: number;
 
+    comfyuiInfo?: ComfyuiInfo;
     pngInfo?: PngInfo;
     avifInfo?: AvifInfo;
 };
@@ -68,6 +73,28 @@ export default function ImageDetails() {
             {imageDetails?.sdPrompt.map((s, i) => (
                 <p key={i}>{s}</p>
             ))}
+
+            {imageDetails?.comfyuiInfo && (
+                <>
+                    <h2>ComfyUI Info</h2>
+                    <h3>Workflow</h3>
+                    <pre
+                        style={{
+                            maxHeight: 220,
+                            overflow: "auto",
+                            whiteSpace: "pre-wrap",
+                            padding: "10px 12px",
+                            borderRadius: 8,
+                            background: "rgba(255,255,255,0.05)",
+                            border: "1px solid rgba(255,255,255,0.1)",
+                            fontSize: 12,
+                            lineHeight: 1.5,
+                        }}
+                    >
+                        {imageDetails.comfyuiInfo.workflowSrc}
+                    </pre>
+                </>
+            )}
 
             {imageDetails?.pngInfo && (
                 <>
