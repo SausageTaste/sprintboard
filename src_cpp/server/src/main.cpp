@@ -227,8 +227,8 @@ int main() {
             return;
         }
 
-        sung::ImageDetailResponse response;
-        const auto err = response.fetch_img(*opt_full_path);
+        const auto response = sung::make_img_detail_response();
+        const auto err = response->fetch_img(*opt_full_path);
         if (err) {
             res.status = 400;
             res.set_content(
@@ -237,7 +237,7 @@ int main() {
             return;
         }
 
-        const auto json_data = response.make_json();
+        const auto json_data = response->make_json();
         const auto json_str = json_data.dump();
         res.status = 200;
         res.set_content(json_str, "application/json");

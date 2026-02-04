@@ -11,28 +11,12 @@
 
 namespace sung {
 
-    class ImageDetailResponse {
-
-    public:
-        ErrStr fetch_img(const sung::Path& img_path);
-        nlohmann::json make_json() const;
-
-    private:
-        struct PngInfo {
-            std::map<std::string, std::string> text_chunks_;
-        };
-
-        struct AvifInfo {
-            std::vector<uint8_t> xmp_;
-        };
-
-        std::optional<PngInfo> png_info_;
-        std::optional<AvifInfo> avif_info_;
-
-        std::string sd_model_name_;
-        std::vector<std::string> sd_prompt_;
-        int64_t width_;
-        int64_t height_;
+    struct IImageDetailResponse {
+        virtual ~IImageDetailResponse() = default;
+        virtual ErrStr fetch_img(const sung::Path& img_path) = 0;
+        virtual nlohmann::json make_json() const = 0;
     };
+
+    std::unique_ptr<IImageDetailResponse> make_img_detail_response();
 
 }  // namespace sung
