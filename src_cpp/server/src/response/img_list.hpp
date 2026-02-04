@@ -48,7 +48,8 @@ namespace sung {
             const sung::Path& namespace_path,
             const sung::Path& local_dir,
             const sung::Path& folder_path,
-            const std::string& query
+            const std::string& query,
+            const bool recursive
         );
 
         void sort();

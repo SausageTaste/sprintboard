@@ -156,6 +156,11 @@ int main() {
         }
         auto& param_dir = it_param_dir->second;
 
+        bool recursive = false;
+        const auto it_param_recursive = req.params.find("recursive");
+        if (it_param_recursive != req.params.end())
+            recursive = it_param_recursive->second == "1";
+
         const auto it_param_query = req.params.find("query");
         std::string query;
         if (it_param_query != req.params.end())
@@ -187,7 +192,11 @@ int main() {
             const auto& binding_info = it_binding->second;
             for (auto& local_dir : binding_info.local_dirs_) {
                 response.fetch_directory(
-                    namespace_path, local_dir, local_dir / rest_path, query
+                    namespace_path,
+                    local_dir,
+                    local_dir / rest_path,
+                    query,
+                    recursive
                 );
             }
         }
