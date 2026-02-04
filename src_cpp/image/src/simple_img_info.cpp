@@ -1,4 +1,4 @@
-#include "util/simple_img_info.hpp"
+#include "sung/image/simple_img_info.hpp"
 
 #include <imageinfo.hpp>
 
@@ -49,16 +49,23 @@ namespace sung {
     }
 
 
-    std::optional<SimpleImageInfo> get_simple_img_info(const Path& file_path) {
+    bool get_simple_img_info(const Path& file_path, SimpleImageInfo& out) {
         const auto info = imageinfo::parse<::FileReader>(file_path);
         if (!info.ok())
-            return std::nullopt;
+            return false;
 
+        out.mime_type_ = info.mimetype();
+        out.width_ = info.size().width;
+        out.height_ = info.size().height;
+        return true;
+    }
+
+    std::optional<SimpleImageInfo> get_simple_img_info(const Path& file_path) {
         SimpleImageInfo result;
-        result.mime_type_ = info.mimetype();
-        result.width_ = info.size().width;
-        result.height_ = info.size().height;
-        return result;
+        if (get_simple_img_info(file_path, result))
+            return result;
+        else
+            return std::nullopt;
     }
 
 }  // namespace sung

@@ -16,6 +16,7 @@ namespace sung {
         int64_t height_ = 0;
     };
 
+    bool get_simple_img_info(const Path& file_path, SimpleImageInfo& out);
     std::optional<SimpleImageInfo> get_simple_img_info(const Path& file_path);
 
 }  // namespace sung

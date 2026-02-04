@@ -7,8 +7,8 @@
 #include "response/img_list.hpp"
 #include "sung/auxiliary/filesys.hpp"
 #include "sung/auxiliary/server_configs.hpp"
+#include "sung/image/simple_img_info.hpp"
 #include "task/img_walker.hpp"
-#include "util/simple_img_info.hpp"
 #include "util/task.hpp"
 #include "util/wake.hpp"
 
@@ -238,7 +238,7 @@ int main() {
 
         const auto response = sung::make_img_detail_response();
         const auto err = response->fetch_img(*opt_full_path);
-        if (err) {
+        if (!err) {
             res.status = 400;
             res.set_content(
                 "Error fetching image details: " + err.error(), "text/plain"

@@ -10,8 +10,7 @@
 #include <absl/strings/str_split.h>
 #include <sung/basic/time.hpp>
 
-#include "util/comfyui_util.hpp"
-#include "util/simple_img_info.hpp"
+#include "sung/image/img_info.hpp"
 
 
 namespace {
@@ -139,30 +138,28 @@ namespace {
         if (avif_path != file_path && sung::fs::exists(avif_path))
             return std::nullopt;
 
-        const auto info = sung::get_simple_img_info(file_path);
-        if (!info)
+        sung::ImageInfo img_info{ file_path };
+        if (!img_info.load_simple_info())
             return std::nullopt;
 
-        if (!query.match_dim(info->width_, info->height_))
+        if (!query.match_dim(img_info.width(), img_info.height()))
             return std::nullopt;
         if (!query.need_metadata())
-            return info;
+            return img_info.simple();
 
-        const auto wf = sung::get_workflow_data(*info, file_path);
-        if (!wf)
+        if (!img_info.load_img_metadata())
+            return std::nullopt;
+        if (!img_info.parse_comfyui_workflow())
             return std::nullopt;
 
-        const auto nodes = wf->get_nodes();
-        const auto links = wf->get_links();
-
-        const auto model = sung::find_model(nodes, links);
-        if (!query.match_model(model))
+        img_info.parse_stable_diffusion_model();
+        if (!query.match_model(img_info.sd().model_name_))
             return std::nullopt;
 
-        const auto prompt = sung::find_prompt(nodes, links);
-        for (const auto& p : prompt) {
+        img_info.parse_stable_diffusion_prompt();
+        for (const auto& p : img_info.sd().prompt_) {
             if (query.match(p)) {
-                return info;
+                return img_info.simple();
             }
         }
 
