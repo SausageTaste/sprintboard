@@ -145,6 +145,17 @@ namespace sung {
         // PNG tXTt chunk transplanted to XMP by Sprintboard
         {
             const auto found = ::find_node_by_name(
+                xmp_doc.root(), "sprintboard:pngText_workflow"
+            );
+            if (found) {
+                const auto text = std::string_view{ found->text().as_string() };
+                return conv_str_data(text);
+            }
+        }
+
+        // PNG tXTt chunk transplanted to XMP by Sprintboard
+        {
+            const auto found = ::find_node_by_name(
                 xmp_doc.root(), "sprintboard:workflow"
             );
             if (found) {
