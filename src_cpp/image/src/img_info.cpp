@@ -44,6 +44,21 @@ namespace {
 }  // namespace
 
 
+// ComfyUiInfo
+namespace sung {
+
+    void ImageInfo::ComfyUiInfo::set_workflow(
+        const uint8_t* data, size_t size
+    ) {
+        workflow_ = sung::parse_comfyui_workflow(data, size);
+        nodes_ = workflow_.get_nodes();
+        links_ = workflow_.get_links();
+        workflow_src_.assign(reinterpret_cast<const char*>(data), size);
+    }
+
+}  // namespace sung
+
+
 // ImageInfo
 namespace sung {
 
@@ -81,18 +96,14 @@ namespace sung {
         if (png_) {
             if (auto wf = png_->metadata_.find_text_chunk("workflow")) {
                 comfyui_ = ComfyUiInfo{};
-                comfyui_->set_workflow(
-                    sung::parse_comfyui_workflow(wf->data(), wf->size())
-                );
+                comfyui_->set_workflow(wf->data(), wf->size());
                 return true;
             }
         } else if (avif_) {
             auto wf = avif_->metadata_.find_workflow_data();
             if (!wf.empty()) {
                 comfyui_ = ComfyUiInfo{};
-                comfyui_->set_workflow(
-                    sung::parse_comfyui_workflow(wf.data(), wf.size())
-                );
+                comfyui_->set_workflow(wf.data(), wf.size());
                 return true;
             }
         }

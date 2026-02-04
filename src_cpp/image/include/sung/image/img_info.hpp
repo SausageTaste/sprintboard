@@ -20,20 +20,18 @@ namespace sung {
         struct ComfyUiInfo {
 
         public:
-            void set_workflow(sung::WorkflowData&& wf) {
-                workflow_ = std::move(wf);
-                nodes_ = workflow_.get_nodes();
-                links_ = workflow_.get_links();
-            }
+            void set_workflow(const uint8_t* data, size_t size);
 
             const WorkflowData& workflow() const { return workflow_; }
             const sung::WorkflowNodes& nodes() const { return nodes_; }
             const sung::WorkflowLinks& links() const { return links_; }
+            const std::string& workflow_src() const { return workflow_src_; }
 
         private:
             WorkflowData workflow_;
             sung::WorkflowNodes nodes_;
             sung::WorkflowLinks links_;
+            std::string workflow_src_;
         };
 
         struct StableDiffusionInfo {
