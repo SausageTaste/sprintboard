@@ -90,7 +90,7 @@ namespace sung {
     }
 
     void GatedPowerRequest::check() {
-        constexpr double tolerance_sec = 15 * 60;
+        constexpr double tolerance_sec = 25 * 60;
         edge_.notify_signal(mmv_.poll_signal(tolerance_sec));
 
         const auto edge_type = edge_.check_edge();
