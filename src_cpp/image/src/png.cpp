@@ -178,8 +178,14 @@ namespace {
                 );
             }
 
-            png_read_image(png_ptr_, rows.data());
-            png_read_end(png_ptr_, nullptr);
+            try {
+                png_read_image(png_ptr_, rows.data());
+                png_read_end(png_ptr_, nullptr);
+            } catch (const std::exception& e) {
+                return std::unexpected(
+                    std::format("Failed to read PNG pixels: {}", e.what())
+                );
+            }
 
             return {};
         }
