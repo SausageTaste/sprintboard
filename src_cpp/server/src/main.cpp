@@ -1,6 +1,7 @@
 #include <fstream>
 #include <print>
 
+#define CPPHTTPLIB_OPENSSL_SUPPORT
 #include <httplib.h>
 
 #include "response/img_details.hpp"
@@ -104,6 +105,20 @@ namespace {
         return true;
     }
 
+    std::unique_ptr<httplib::Server> create_server(
+        sung::ServerConfigManager server_configs
+    ) {
+        const auto configs = server_configs.get();
+
+        if (configs->tls_certfile_.empty() || configs->tls_keyfile_.empty()) {
+            return std::make_unique<httplib::Server>();
+        }
+
+        return std::make_unique<httplib::SSLServer>(
+            configs->tls_certfile_.c_str(), configs->tls_keyfile_.c_str()
+        );
+    }
+
 
     class PowerRequestTask : public sung::ITask {
 
@@ -137,7 +152,12 @@ int main() {
         sung::AVIF_ENCODE_TIME_INTERVAL
     );
 
-    httplib::Server svr;
+    auto p_svr = ::create_server(server_configs);
+    auto& svr = *p_svr;
+    if (!svr.is_valid()) {
+        std::println("SSLServer is not valid (check OpenSSL + cert/key files)");
+        return 1;
+    }
 
     // Serve static assets from ./dist
     const bool ok = svr.set_mount_point("/", "./dist");
@@ -365,6 +385,10 @@ int main() {
             return;
         }
     );
+
+    svr.Get("/health", [](const httplib::Request&, httplib::Response& res) {
+        res.set_content("ok", "text/plain");
+    });
 
     // SPA fallback: for any non-API GET that wasn't matched by a real file,
     // return index.html so the client-side router can handle it.

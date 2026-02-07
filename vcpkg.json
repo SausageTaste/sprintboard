@@ -1,12 +1,17 @@
 {
     "dependencies": [
         "abseil",
-        "cpp-httplib",
         "imageinfo",
         "libpng",
         "nlohmann-json",
         "pugixml",
         "tbb",
+        {
+            "name": "cpp-httplib",
+            "features": [
+                "openssl"
+            ]
+        },
         {
             "name": "libavif",
             "features": [

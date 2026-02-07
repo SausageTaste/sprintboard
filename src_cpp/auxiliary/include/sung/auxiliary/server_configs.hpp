@@ -2,8 +2,8 @@
 
 #include <expected>
 #include <map>
-#include <string>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -34,6 +34,8 @@ namespace sung {
         DirBindings dir_bindings_;
 
         // Server settings
+        std::string tls_keyfile_;
+        std::string tls_certfile_;
         std::string server_host_;
         int server_port_;
 

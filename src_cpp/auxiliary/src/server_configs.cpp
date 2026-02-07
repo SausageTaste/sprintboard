@@ -84,6 +84,8 @@ namespace sung {
 
         server_host_ = DEFAULT_HOST;
         server_port_ = DEFAULT_PORT;
+        tls_keyfile_ = "";
+        tls_certfile_ = "";
 
         avif_quality_ = 70.0;
         avif_speed_ = 4;
@@ -138,6 +140,8 @@ namespace sung {
 
         server_host_ = try_get(json_data, "server_host", DEFAULT_HOST);
         server_port_ = try_get(json_data, "server_port", DEFAULT_PORT);
+        tls_keyfile_ = try_get(json_data, "tls-keyfile", std::string());
+        tls_certfile_ = try_get(json_data, "tls-certfile", std::string());
 
         avif_quality_ = try_get(json_data, "avif_quality", 70.0);
         avif_speed_ = try_get(json_data, "avif_speed", 4);
@@ -165,6 +169,8 @@ namespace sung {
 
         output["server_host"] = server_host_;
         output["server_port"] = server_port_;
+        output["tls-keyfile"] = tls_keyfile_;
+        output["tls-certfile"] = tls_certfile_;
 
         output["avif_quality"] = avif_quality_;
         output["avif_speed"] = avif_speed_;
