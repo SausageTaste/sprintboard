@@ -1,7 +1,7 @@
 import React from "react";
 import { useNavigate, useParams, useLocation, useSearchParams } from "react-router-dom";
 import { VirtuosoGrid } from "react-virtuoso";
-import PhotoSwipeLightbox from "photoswipe/lightbox";
+import PhotoSwipeLightbox, { type PhotoSwipe } from "photoswipe/lightbox";
 import "photoswipe/style.css";
 
 import Breadcrumbs from "../widgets/Breadcrumbs";
@@ -100,6 +100,51 @@ export default function Gallery() {
         setSrcInUrl(it.src, false);
         lockSelection();
         lightboxRef.current?.loadAndOpen(index);
+    }
+
+    function openDetailsPage(i: number) {
+        const it = imgItemsRef.current[i];
+        if (!it)
+            return;
+
+        const params = new URLSearchParams();
+        params.set("src", it.src);
+        params.set("dir", curDir);
+        params.set("index", String(i));
+
+        const url = `/imagedetails?${params.toString()}`;
+        window.open(url, "_blank", "noopener,noreferrer");
+    }
+
+    function downloadImage(src: string) {
+        const a = document.createElement("a");
+        a.href = src;
+        a.download = ""; // lets browser pick filename if same-origin
+        a.rel = "noopener";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+    }
+
+    async function deleteCurrentImage(pswp: PhotoSwipe) {
+        const i = pswp.currIndex;
+        const it = imgItemsRef.current[i];
+        if (!it)
+            return;
+
+        if (!window.confirm(`Are you sure you want to delete "${it.name}"? This action cannot be undone.`))
+            return;
+
+        const url = new URL("/api/images/delete", window.location.origin);
+        url.searchParams.set("path", it.src);
+        const res = await fetch(url.toString(), { method: "DELETE" });
+        if (!res.ok) {
+            alert(`Delete failed: HTTP ${res.status}`);
+            return;
+        }
+
+        setImgItems(prev => prev.filter(x => x.src !== it.src));
+        pswp.close();
     }
 
     const loadMore = React.useCallback(async () => {
@@ -250,6 +295,36 @@ export default function Gallery() {
                 if (!pswp)
                     return;
 
+                const onKeyDown = async (e: KeyboardEvent) => {
+                    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+                        return;
+                    }
+
+                    if (e.key === "Delete") {
+                        e.preventDefault();
+                        deleteCurrentImage(pswp);
+                    }
+                    else if (e.key === "d" || e.key === "D") {
+                        e.preventDefault();
+                        const i = pswp.currIndex;
+                        const it = imgItemsRef.current[i];
+                        if (it)
+                            downloadImage(it.src);
+                    }
+                    else if (e.key === "i" || e.key === "I") {
+                        e.preventDefault();
+                        openDetailsPage(pswp.currIndex);
+                    }
+                };
+
+                pswp.on("afterInit", () => {
+                    window.addEventListener("keydown", onKeyDown);
+                });
+
+                pswp.on("destroy", () => {
+                    window.removeEventListener("keydown", onKeyDown);
+                });
+
                 pswp.element?.classList.remove("pswp-menu-open")
 
                 const i = pswp.currIndex;
@@ -399,54 +474,20 @@ export default function Gallery() {
                             const action = btn.getAttribute("data-action");
                             const i = pswp.currIndex;
                             const it = imgItemsRef.current[i];
-                            if (!it) return;
+                            if (!it)
+                                return;
 
                             if (action === "newtab") {
                                 window.open(it.src, "_blank", "noopener,noreferrer");
                             } else if (action === "download") {
-                                const a = document.createElement("a");
-                                a.href = it.src;
-                                a.download = ""; // lets browser pick filename if same-origin
-                                a.rel = "noopener";
-                                document.body.appendChild(a);
-                                a.click();
-                                a.remove();
+                                downloadImage(it.src);
                             } else if (action === "copy") {
                                 try { await navigator.clipboard.writeText(it.src); } catch { }
                             } else if (action === "details") {
-                                const i = pswp.currIndex;
-                                const it = imgItemsRef.current[i];
-                                if (!it)
-                                    return;
-
-                                const params = new URLSearchParams();
-                                params.set("src", it.src);
-                                params.set("dir", curDir);
-                                params.set("index", String(i));
-
-                                const url = `/imagedetails?${params.toString()}`;
-                                window.open(url, "_blank", "noopener,noreferrer");
+                                openDetailsPage(pswp.currIndex);
                             }
                             else if (action === "delete") {
-                                const i = pswp.currIndex;
-                                const it = imgItemsRef.current[i];
-                                if (!it)
-                                    return;
-
-                                if (!window.confirm(`Are you sure you want to delete "${it.name}"? This action cannot be undone.`))
-                                    return;
-
-                                const url = new URL("/api/images/delete", window.location.origin);
-                                url.searchParams.set("path", it.src);
-                                await fetch(url.toString(), { method: "DELETE" });
-
-                                // Remove from list
-                                setImgItems(prev => {
-                                    const next = prev.filter((_, idx) => idx !== i);
-                                    return next;
-                                });
-
-                                pswp.close();
+                                deleteCurrentImage(pswp);
                             }
 
                             root.classList.remove("pswp-menu-open");
