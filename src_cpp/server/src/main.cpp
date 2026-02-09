@@ -16,6 +16,10 @@
 
 namespace {
 
+    using HttpReq = httplib::Request;
+    using HttpRes = httplib::Response;
+
+
     std::pair<sung::Path, sung::Path> split_namespace(const sung::Path& p) {
         sung::Path namespace_path;
         sung::Path rest_path;
@@ -53,7 +57,7 @@ namespace {
     }
 
     bool serve_file_streaming(
-        const sung::Path& path, const char* mime, httplib::Response& res
+        const sung::Path& path, const char* mime, HttpRes& res
     ) {
         std::error_code ec;
         const auto size = sung::fs::file_size(path, ec);
@@ -170,7 +174,7 @@ int main() {
         std::println("Warning: cannot serve static files from ./dist");
     }
 
-    svr.Get("/api/images/list", [&](const httplib::Request& req, auto& res) {
+    svr.Get("/api/images/list", [&](const HttpReq& req, HttpRes& res) {
         sung::ScopedWakeLock wake_lock{ power_req->get() };
 
         const auto it_param_dir = req.params.find("dir");
@@ -234,7 +238,7 @@ int main() {
         return;
     });
 
-    svr.Get("/api/images/details", [&](const httplib::Request& req, auto& res) {
+    svr.Get("/api/images/details", [&](const HttpReq& req, HttpRes& res) {
         sung::ScopedWakeLock wake_lock{ power_req->get() };
 
         const auto it_param_path = req.params.find("path");
@@ -278,60 +282,56 @@ int main() {
         return;
     });
 
-    svr.Delete(
-        "/api/images/delete", [&](const httplib::Request& req, auto& res) {
-            sung::ScopedWakeLock wake_lock{ power_req->get() };
+    svr.Delete("/api/images/delete", [&](const HttpReq& req, HttpRes& res) {
+        sung::ScopedWakeLock wake_lock{ power_req->get() };
 
-            const auto it_param_path = req.params.find("path");
-            if (it_param_path == req.params.end()) {
-                res.status = 400;
-                res.set_content("Missing 'path' parameter", "text/plain");
-                return;
-            }
-
-            auto param_path = it_param_path->second;
-            if (param_path.starts_with("/img/")) {
-                param_path = param_path.substr(5);
-            }
-            const auto [ns, rest] = ::split_namespace(
-                sung::fs::u8path(param_path)
-            );
-
-            const auto server_cfg_ptr = server_configs.get();
-            const auto& server_cfg = *server_cfg_ptr;
-            const auto opt_full_path = server_cfg.resolve_paths(ns / rest);
-            if (!opt_full_path) {
-                res.status = 400;
-                res.set_content(
-                    "Cannot resolve path in 'path' parameter", "text/plain"
-                );
-                return;
-            }
-
-            auto file_path = *opt_full_path;
-            if (sung::fs::exists(file_path)) {
-                sung::fs::remove(file_path);
-                std::println("Deleted file: {}", sung::tostr(file_path));
-            }
-
-            file_path.replace_extension(".avif");
-            if (sung::fs::exists(file_path)) {
-                sung::fs::remove(file_path);
-                std::println("Deleted file: {}", sung::tostr(file_path));
-            }
-
-            file_path.replace_extension(".png");
-            if (sung::fs::exists(file_path)) {
-                sung::fs::remove(file_path);
-                std::println("Deleted file: {}", sung::tostr(file_path));
-            }
-
-            res.status = 200;
-            res.set_content("File deleted", "text/plain");
+        const auto it_param_path = req.params.find("path");
+        if (it_param_path == req.params.end()) {
+            res.status = 400;
+            res.set_content("Missing 'path' parameter", "text/plain");
+            return;
         }
-    );
 
-    svr.Get("/api/wake", [&](const httplib::Request& req, auto& res) {
+        auto param_path = it_param_path->second;
+        if (param_path.starts_with("/img/")) {
+            param_path = param_path.substr(5);
+        }
+        const auto [ns, rest] = ::split_namespace(sung::fs::u8path(param_path));
+
+        const auto server_cfg_ptr = server_configs.get();
+        const auto& server_cfg = *server_cfg_ptr;
+        const auto opt_full_path = server_cfg.resolve_paths(ns / rest);
+        if (!opt_full_path) {
+            res.status = 400;
+            res.set_content(
+                "Cannot resolve path in 'path' parameter", "text/plain"
+            );
+            return;
+        }
+
+        auto file_path = *opt_full_path;
+        if (sung::fs::exists(file_path)) {
+            sung::fs::remove(file_path);
+            std::println("Deleted file: {}", sung::tostr(file_path));
+        }
+
+        file_path.replace_extension(".avif");
+        if (sung::fs::exists(file_path)) {
+            sung::fs::remove(file_path);
+            std::println("Deleted file: {}", sung::tostr(file_path));
+        }
+
+        file_path.replace_extension(".png");
+        if (sung::fs::exists(file_path)) {
+            sung::fs::remove(file_path);
+            std::println("Deleted file: {}", sung::tostr(file_path));
+        }
+
+        res.status = 200;
+        res.set_content("File deleted", "text/plain");
+    });
+
+    svr.Get("/api/wake", [&](const HttpReq& req, HttpRes& res) {
         auto response = nlohmann::json::object();
         response["wake_on"] = power_req->get().is_active();
         response["idle_time"] = sung::get_idle_time();
@@ -341,7 +341,7 @@ int main() {
         return;
     });
 
-    svr.Get("/api/wakeup", [&](const httplib::Request& req, auto& res) {
+    svr.Get("/api/wakeup", [&](const HttpReq& req, HttpRes& res) {
         sung::ScopedWakeLock wake_lock{ power_req->get() };
         auto response = nlohmann::json::object();
         response["wake_on"] = power_req->get().is_active();
@@ -352,53 +352,49 @@ int main() {
         return;
     });
 
-    svr.Get(
-        R"(/img/(.*))",
-        [&](const httplib::Request& req, httplib::Response& res) {
-            sung::ScopedWakeLock wake_lock{ power_req->get() };
+    svr.Get(R"(/img/(.*))", [&](const HttpReq& req, HttpRes& res) {
+        sung::ScopedWakeLock wake_lock{ power_req->get() };
 
-            const auto [namespace_path, rest_path] = ::split_namespace(
-                sung::fs::u8path(req.path.substr(5))
+        const auto [namespace_path, rest_path] = ::split_namespace(
+            sung::fs::u8path(req.path.substr(5))
+        );
+
+        const auto server_cfg_ptr = server_configs.get();
+        const auto& server_cfg = *server_cfg_ptr;
+        const auto it_binding = server_cfg.dir_bindings_.find(
+            sung::tostr(namespace_path)
+        );
+        if (it_binding == server_cfg.dir_bindings_.end()) {
+            res.status = 400;
+            res.set_content(
+                "Invalid namespace in 'dir' parameter", "text/plain"
             );
-
-            const auto server_cfg_ptr = server_configs.get();
-            const auto& server_cfg = *server_cfg_ptr;
-            const auto it_binding = server_cfg.dir_bindings_.find(
-                sung::tostr(namespace_path)
-            );
-            if (it_binding == server_cfg.dir_bindings_.end()) {
-                res.status = 400;
-                res.set_content(
-                    "Invalid namespace in 'dir' parameter", "text/plain"
-                );
-                return;
-            }
-
-            const auto& binding_info = it_binding->second;
-            for (auto& local_dir : binding_info.local_dirs_) {
-                const auto file_path = local_dir / rest_path;
-                const auto mime = ::determine_mime(file_path);
-
-                if (serve_file_streaming(file_path, mime, res)) {
-                    res.status = 200;
-                    return;
-                }
-            }
-
-            res.status = 404;
-            res.set_content("Not found", "text/plain");
             return;
         }
-    );
 
-    svr.Get("/health", [](const httplib::Request&, httplib::Response& res) {
+        const auto& binding_info = it_binding->second;
+        for (auto& local_dir : binding_info.local_dirs_) {
+            const auto file_path = local_dir / rest_path;
+            const auto mime = ::determine_mime(file_path);
+
+            if (serve_file_streaming(file_path, mime, res)) {
+                res.status = 200;
+                return;
+            }
+        }
+
+        res.status = 404;
+        res.set_content("Not found", "text/plain");
+        return;
+    });
+
+    svr.Get("/health", [](const HttpReq&, HttpRes& res) {
         res.set_content("ok", "text/plain");
     });
 
     // SPA fallback: for any non-API GET that wasn't matched by a real file,
     // return index.html so the client-side router can handle it.
-    svr.set_error_handler([&](const httplib::Request& req,
-                              httplib::Response& res) {
+    svr.set_error_handler([&](const HttpReq& req, HttpRes& res) {
         sung::ScopedWakeLock wake_lock{ power_req->get() };
 
         if (req.method != "GET") {
