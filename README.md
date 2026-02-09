@@ -119,7 +119,8 @@ Failed to reload server configs: [json.exception.parse_error.101] parse error at
 
 If everything went well, you should now be able to see your images.
 
-There are optional parameters.
+Below, it is table of immutable variables.
+If you modify their values, you must restart the server to apply the changes.
 
 |Key |Description
 |- |-
@@ -128,18 +129,16 @@ There are optional parameters.
 |`tls-certfile` |The file path to the TLS certificate file used to enable HTTPS mode.
 |`tls-keyfile` |The file path to the TLS key file used to enable HTTPS mode.
 
-These are immutable variables.
-If you modify their values, you must restart the server to apply the changes.
+Next is table of mutable variables.
+If you modify these values, the changes will take effect as soon as possible, without restarting the server.
 
 |Key |Description
 |- |-
-|`avif_gen` |Generate an AVIF image for each source image. If an AVIF file with the same filename already exists, the server will serve that file instead.
+|`avif_gen` |Generate an AVIF image for each source image. If an AVIF file with the same filename exists, the server will serve that file instead.
 |`avif_gen_remove_src` |Currently not implemented
 |`avif_quality` |Quality option for AVIF encoder.
 |`avif_speed` |Speed option for AVIF encoder.
-|`dir_bindings` |Add folder entries here. Each key will appear as a folder in the root directory, and all contents in local_dirs will be placed inside it. You can use both absolute and relative paths for local_dirs. Although you can set multiple directories for a single binding, I strongly recommend using only one.
-
-If you modify these values, the changes will take effect as soon as possible, without restarting the server.
+|`dir_bindings` |Add folder entries here. Each key will appear as a folder in the root directory, and all contents in `local_dirs` will be placed inside it. You can use both absolute and relative paths for `local_dirs`. Although you can set multiple directories for a single binding, I strongly recommend using only one.
 
 # Guide to Viewing Images on Mobile Phone
 
