@@ -1,7 +1,13 @@
 # Sprintboard
 
-This is React based image viewer as a local server.
-You can view images in your storage via web browser from local machine, as well as from any devices connected to the same LAN.
+I generate many images on ComfyUI everyday.
+They are all stored in my Windows PC.
+But I want to view and manage them on my iPhone.
+Therefore, I made this.
+
+This is React based image viewer.
+You can view images in your local storage via web browser.
+Any devices connected to the same LAN can use it.
 I made this mainly to manage my Stable Diffusion outputs from ComfyUI so most features are optimized for them.
 
 # Features
