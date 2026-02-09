@@ -126,8 +126,10 @@ namespace {
         sung::ErrStr parse_pixels(sung::PngData& out) {
             // ---- normalize to 8-bit RGBA
             // 16-bit -> 8-bit
-            if (out.bit_depth == 16)
+            if (out.bit_depth == 16) {
                 png_set_strip_16(png_ptr_);
+                out.bit_depth = 8;
+            }
 
             // Palette -> RGB
             if (out.color_type == PNG_COLOR_TYPE_PALETTE)
