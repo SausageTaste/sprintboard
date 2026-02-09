@@ -8,6 +8,11 @@ I made this mainly to manage my Stable Diffusion outputs from ComfyUI so most fe
 
 ## View thousands of images on your PC and mobile phones
 
+<p style="text-align: center">
+  <img src="doc/img/IMG_6690.avif" width="45%" />
+  <img src="doc/img/IMG_6691.avif" width="45%" />
+</p>
+
 The server is written in C++ so it can handle thousands of images fast.
 Start the server on your desktop PC, and access those images from any devices that have a web browser and are connected to the same Wi-Fi (LAN).
 
