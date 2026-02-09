@@ -61,7 +61,13 @@ export default function ImageDetails() {
     return (
         <div style={{ padding: 16, fontFamily: "system-ui" }}>
             <h2>Image details</h2>
-            <a href={imgSrc} target="_blank" rel="noopener noreferrer">{imgSrc}</a>
+            <a href={imgSrc} target="_blank" rel="noopener noreferrer">
+                <img
+                    src={imgSrc}
+                    alt="Detailed"
+                    style={{ maxWidth: "500px", width: "100%", borderRadius: 10, marginBottom: 16 }}
+                />
+            </a>
             <p>Dimensions: {imageDetails?.width} x {imageDetails?.height}</p>
 
             <h2>Stable Diffusion</h2>
