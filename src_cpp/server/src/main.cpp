@@ -156,7 +156,7 @@ int main() {
     tasks.add_periodic_task([&server_configs]() { server_configs.tick(); }, 1);
 
     tasks.add_periodic_task(
-        sung::create_img_walker_task(server_configs),
+        sung::create_img_walker_task(server_configs, power_req->get()),
         sung::AVIF_ENCODE_TIME_INTERVAL
     );
 
@@ -175,7 +175,7 @@ int main() {
     }
 
     svr.Get("/api/images/list", [&](const HttpReq& req, HttpRes& res) {
-        sung::ScopedWakeLock wake_lock{ power_req->get() };
+        const sung::ScopedWakeLock wake_lock{ power_req->get() };
 
         const auto it_param_dir = req.params.find("dir");
         if (it_param_dir == req.params.end()) {
@@ -242,7 +242,7 @@ int main() {
     });
 
     svr.Get("/api/images/details", [&](const HttpReq& req, HttpRes& res) {
-        sung::ScopedWakeLock wake_lock{ power_req->get() };
+        const sung::ScopedWakeLock wake_lock{ power_req->get() };
 
         const auto it_param_path = req.params.find("path");
         if (it_param_path == req.params.end()) {
@@ -282,7 +282,7 @@ int main() {
     });
 
     svr.Delete("/api/images/delete", [&](const HttpReq& req, HttpRes& res) {
-        sung::ScopedWakeLock wake_lock{ power_req->get() };
+        const sung::ScopedWakeLock wake_lock{ power_req->get() };
 
         const auto it_param_path = req.params.find("path");
         if (it_param_path == req.params.end()) {
@@ -337,7 +337,7 @@ int main() {
     });
 
     svr.Get("/api/wakeup", [&](const HttpReq& req, HttpRes& res) {
-        sung::ScopedWakeLock wake_lock{ power_req->get() };
+        const sung::ScopedWakeLock wake_lock{ power_req->get() };
         auto response = nlohmann::json::object();
         response["wake_on"] = power_req->get().is_active();
         response["idle_time"] = sung::get_idle_time();
@@ -348,7 +348,7 @@ int main() {
     });
 
     svr.Get(R"(/img/(.*))", [&](const HttpReq& req, HttpRes& res) {
-        sung::ScopedWakeLock wake_lock{ power_req->get() };
+        const sung::ScopedWakeLock wake_lock{ power_req->get() };
 
         const auto [namespace_path, rest_path] = ::split_namespace(
             sung::fs::u8path(req.path.substr(5))

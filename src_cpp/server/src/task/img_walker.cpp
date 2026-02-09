@@ -197,7 +197,11 @@ namespace {
     class Task : public sung::ITask {
 
     public:
-        Task(const sung::ServerConfigManager& cfg) : cfg_(cfg) {}
+        Task(
+            const sung::ServerConfigManager& cfg,
+            sung::GatedPowerRequest& power_req
+        )
+            : cfg_(cfg), power_req_(power_req) {}
 
         ~Task() noexcept override { tg_.wait(); }
 
@@ -210,7 +214,8 @@ namespace {
             for (const auto& p : ::gen_png_files(svrcfg->dir_bindings_)) {
                 ++count;
 
-                tg_.run([p, &svrcfg]() {
+                tg_.run([p, &svrcfg, this]() {
+                    const sung::ScopedWakeLock wake_lock{ power_req_ };
                     sung::MonotonicRealtimeTimer one_timer;
 
                     const auto png_data = sung::read_png(p);
@@ -258,6 +263,7 @@ namespace {
 
     private:
         const sung::ServerConfigManager& cfg_;
+        sung::GatedPowerRequest& power_req_;
         tbb::task_group tg_;
     };
 
@@ -267,9 +273,9 @@ namespace {
 namespace sung {
 
     std::shared_ptr<ITask> create_img_walker_task(
-        const ServerConfigManager& cfg
+        const ServerConfigManager& cfg, sung::GatedPowerRequest& power_req
     ) {
-        return std::make_shared<::Task>(cfg);
+        return std::make_shared<::Task>(cfg, power_req);
     }
 
 }  // namespace sung
