@@ -21,6 +21,15 @@ Start the server on your desktop PC, and access those images from any devices th
 The server can parse metadata in PNG files and fetch some useful data.
 You can apply filters based on this info.
 
+Each token is comma seprated so if you input `looking at viewer, (one, two)`, they are parsed as 3 tokens: `looking at viewer`, `(one`, `two)`
+Currently the server only checks if each token exists in prompt string as a whole.
+
+There are special tokens.
+
+* `dim:ver` - Only show vertical images
+* `dim:hor` - Only show horizontal images
+* `model:<text>` - Only show images with model name that has `<text>` as a substring
+
 ## Use AVIF to save storage
 
 The server can be configured to generate AVIF images out of PNG source images.
