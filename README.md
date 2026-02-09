@@ -167,3 +167,32 @@ For better security, I strongly recommend using [WireGuard](https://www.wireguar
 
 Since ComfyUI is also a web app, you can set it up to use it on your phone or even over the internet.
 I’ve built this setup and carry a laptop with WireGuard installed, so I can generate and manage images anywhere.
+
+# How to Build
+
+Clone the repository via `git clone https://github.com/SausageTaste/sprintboard`.
+
+## React Frontend
+
+First, make sure you have node.js installed.
+
+```
+>node --version
+v25.2.1
+```
+
+Open the Command Prompt and run following commands:
+
+* `npm ci` - Download dependencies and initialize React project.
+* `npm run build` - Generate `dist` foder which backend server can serve.
+* `npm run dev` - Run React web app server in dev mode.
+
+## C++ Backend
+
+You need following tools
+
+* Microsoft [Visual Studio](https://visualstudio.microsoft.com/downloads) or [Build Tools](https://visualstudio.microsoft.com/downloads/?q=build+tools#build-tools-for-visual-studio-2026).
+* [CMake](https://cmake.org/download/)
+* [vcpkg](https://github.com/microsoft/vcpkg) with environment variable `VCPKG_ROOT` set.
+
+Build CMake target `sprintboard` to obtain `sprintboard.exe` file.
