@@ -27,12 +27,10 @@ namespace {
                     if (part.empty())
                         continue;
 
-                    auto part_str = absl::AsciiStrToLower(part);
-
-                    if (part_str.starts_with("model:")) {
-                        model_ = part_str.substr(6);
-                    } else if (part_str.starts_with("dim:")) {
-                        const auto dim_str = part_str.substr(4);
+                    if (part.starts_with("model:")) {
+                        model_ = part.substr(6);
+                    } else if (part.starts_with("dim:")) {
+                        const auto dim_str = part.substr(4);
                         if (dim_str == "ver") {
                             opt_ver_ = true;
                             opt_hor_ = false;
@@ -41,7 +39,7 @@ namespace {
                             opt_ver_ = false;
                         }
                     } else {
-                        terms_.push_back(part_str);
+                        terms_.push_back(std::string{ part });
                     }
                 }
             }
