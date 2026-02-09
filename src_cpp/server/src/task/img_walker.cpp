@@ -4,6 +4,7 @@
 #include <generator>
 #include <print>
 
+#include <absl/strings/ascii.h>
 #include <tbb/task_group.h>
 #include <pugixml.hpp>
 #include <sung/basic/time.hpp>
@@ -173,7 +174,9 @@ namespace {
 
                 for (const auto& entry :
                      sung::fs::recursive_directory_iterator(local_dir)) {
-                    if (entry.path().extension() != ".png")
+                    auto ext_str = sung::tostr(entry.path().extension());
+                    ext_str = absl::AsciiStrToLower(ext_str);
+                    if (ext_str != ".png")
                         continue;
 
                     const auto avif = sung::replace_ext(entry.path(), ".avif");
