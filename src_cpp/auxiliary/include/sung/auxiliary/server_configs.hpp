@@ -13,6 +13,11 @@
 
 namespace sung {
 
+    std::optional<Path> concat_path_safely(
+        const Path& base_path, const Path& relative_path
+    );
+
+
     class ServerConfigs {
 
     public:
@@ -25,7 +30,12 @@ namespace sung {
     public:
         void fill_default();
 
-        std::optional<Path> resolve_paths(const Path& base_dir) const;
+        const BindingInfo* find_binding(const std::string& namespace_str) const;
+        const BindingInfo* find_binding(const Path& namespace_path) const;
+
+        std::expected<Path, std::string> resolve_paths(
+            const Path& base_dir
+        ) const;
 
         void import_json(const nlohmann::json& json_data);
         nlohmann::json export_json() const;

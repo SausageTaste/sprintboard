@@ -207,10 +207,8 @@ int main() {
             const auto dir_path = sung::fs::u8path(param_dir);
             auto [namespace_path, rest_path] = ::split_namespace(dir_path);
 
-            const auto it_binding = server_cfg.dir_bindings_.find(
-                sung::tostr(namespace_path)
-            );
-            if (it_binding == server_cfg.dir_bindings_.end()) {
+            const auto binding = server_cfg.find_binding(namespace_path);
+            if (!binding) {
                 res.status = 400;
                 res.set_content(
                     "Invalid namespace in 'dir' parameter", "text/plain"
@@ -218,14 +216,20 @@ int main() {
                 return;
             }
 
-            const auto& binding_info = it_binding->second;
-            for (auto& local_dir : binding_info.local_dirs_) {
+            for (auto& local_dir : binding->local_dirs_) {
+                const auto full_path = sung::concat_path_safely(
+                    local_dir, rest_path
+                );
+                if (!full_path) {
+                    res.status = 400;
+                    res.set_content(
+                        "Invalid path in 'dir' parameter", "text/plain"
+                    );
+                    return;
+                }
+
                 response.fetch_directory(
-                    namespace_path,
-                    local_dir,
-                    local_dir / rest_path,
-                    query,
-                    recursive
+                    namespace_path, local_dir, *full_path, query, recursive
                 );
             }
         }
@@ -252,21 +256,20 @@ int main() {
         if (param_path.starts_with("/img/")) {
             param_path = param_path.substr(5);
         }
-        const auto [ns, rest] = ::split_namespace(sung::fs::u8path(param_path));
 
         const auto server_cfg_ptr = server_configs.get();
         const auto& server_cfg = *server_cfg_ptr;
-        const auto opt_full_path = server_cfg.resolve_paths(ns / rest);
-        if (!opt_full_path) {
+        const auto full_path = server_cfg.resolve_paths(
+            sung::fromstr(param_path)
+        );
+        if (!full_path) {
             res.status = 400;
-            res.set_content(
-                "Cannot resolve path in 'path' parameter", "text/plain"
-            );
+            res.set_content(full_path.error(), "text/plain");
             return;
         }
 
         const auto response = sung::make_img_detail_response();
-        const auto err = response->fetch_img(*opt_full_path);
+        const auto err = response->fetch_img(*full_path);
         if (!err) {
             res.status = 400;
             res.set_content(
@@ -296,20 +299,19 @@ int main() {
         if (param_path.starts_with("/img/")) {
             param_path = param_path.substr(5);
         }
-        const auto [ns, rest] = ::split_namespace(sung::fs::u8path(param_path));
 
         const auto server_cfg_ptr = server_configs.get();
         const auto& server_cfg = *server_cfg_ptr;
-        const auto opt_full_path = server_cfg.resolve_paths(ns / rest);
-        if (!opt_full_path) {
+        const auto full_path = server_cfg.resolve_paths(
+            sung::fromstr(param_path)
+        );
+        if (!full_path) {
             res.status = 400;
-            res.set_content(
-                "Cannot resolve path in 'path' parameter", "text/plain"
-            );
+            res.set_content(full_path.error(), "text/plain");
             return;
         }
 
-        auto file_path = *opt_full_path;
+        auto file_path = *full_path;
         if (sung::fs::exists(file_path)) {
             sung::fs::remove(file_path);
             std::println("Deleted file: {}", sung::tostr(file_path));

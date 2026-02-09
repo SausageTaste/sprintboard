@@ -74,6 +74,7 @@ namespace {
 }  // namespace
 
 
+// ServerConfigs
 namespace sung {
 
     void ServerConfigs::fill_default() {
@@ -93,23 +94,44 @@ namespace sung {
         avif_gen_remove_src_ = false;
     }
 
-    std::optional<Path> ServerConfigs::resolve_paths(
+    const ServerConfigs::BindingInfo* ServerConfigs::find_binding(
+        const std::string& namespace_str
+    ) const {
+        const auto it = dir_bindings_.find(namespace_str);
+        if (it == dir_bindings_.end())
+            return nullptr;
+        return &it->second;
+    }
+
+    const ServerConfigs::BindingInfo* ServerConfigs::find_binding(
+        const Path& namespace_path
+    ) const {
+        return this->find_binding(sung::tostr(namespace_path));
+    }
+
+    std::expected<Path, std::string> ServerConfigs::resolve_paths(
         const Path& base_dir
     ) const {
         const auto [ns, rest] = ::split_namespace(base_dir);
 
         const auto it = dir_bindings_.find(sung::tostr(ns));
         if (it == dir_bindings_.end())
-            return std::nullopt;
+            return std::unexpected("Namespace not found: " + sung::tostr(ns));
 
         for (const auto& local_dir : it->second.local_dirs_) {
-            const auto full_path = local_dir / rest;
-            if (sung::fs::exists(full_path)) {
-                return full_path;
+            const auto full_path = concat_path_safely(local_dir, rest);
+            if (!full_path) {
+                return std::unexpected(
+                    "Invalid path in local_dirs: " + sung::tostr(local_dir)
+                );
+            }
+
+            if (sung::fs::exists(*full_path)) {
+                return *full_path;
             }
         }
 
-        return std::nullopt;
+        return std::unexpected("No valid path found in local_dirs");
     }
 
     void ServerConfigs::import_json(const nlohmann::json& json_data) {
@@ -264,6 +286,23 @@ namespace sung {
             last_write_time_ = sung::fs::last_write_time(config_path_);
         } catch (fs::filesystem_error& e) {
         }
+    }
+
+}  // namespace sung
+
+
+// Free functions
+namespace sung {
+
+    std::optional<Path> concat_path_safely(
+        const Path& base_path, const Path& relative_path
+    ) {
+        const auto concated = base_path / relative_path;
+        const auto normalized = concated.lexically_normal();
+        if (normalized.string().find("..") != std::string::npos) {
+            return std::nullopt;
+        }
+        return normalized;
     }
 
 }  // namespace sung
