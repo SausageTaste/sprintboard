@@ -614,7 +614,7 @@ export default function Gallery() {
                     ☰
                 </button>
 
-                <h2 style={{ margin: 0 }}>Virtuoso Infinite</h2>
+                <h2 style={{ margin: 0 }}>Sprintboard Images</h2>
             </div>
 
             <div style={{ height: 12 }} />
