@@ -72,10 +72,6 @@ namespace {
         }
 
         sung::ErrStr parse_info() {
-            if (setjmp(png_jmpbuf(png_ptr_))) {
-                return std::unexpected("libpng error while reading info");
-            }
-
             try {
                 png_read_info(png_ptr_, info_ptr_);
             } catch (const std::exception& e) {
