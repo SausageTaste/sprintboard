@@ -124,23 +124,23 @@ First, open command prompt and type `ipconfig`.
 There must be something like this.
 
 ```
-Ethernet adapter Apple:
+Ethernet adapter Ethernet:
 
    Connection-specific DNS Suffix  . :
-   IPv4 Address. . . . . . . . . . . : 192.168.0.2
+   IPv4 Address. . . . . . . . . . . : 192.168.0.201
    Subnet Mask . . . . . . . . . . . : 255.255.255.0
    Default Gateway . . . . . . . . . : 192.168.0.1
 ```
 
-In this case, `192.168.0.2` is your PC's LAN address.
+In this case, `192.168.0.201` is your PC's LAN address.
 
 Modify `server_host` in `server_configs.json` to `"0.0.0.0"`, and restart the server.
-Now you may open web browser on your phone, and in the address bar type `http://192.168.0.2:8787`
+Now you may open web browser on your phone, and in the address bar type `http://192.168.0.201:8787`
 If it works, good for you.
 Everything else works just like it would on desktop web browser.
-For safety, change `server_host` value from `"0.0.0.0"` to `"192.168.0.2"`.
+For safety, change `server_host` value from `"0.0.0.0"` to `"192.168.0.201"`.
 
-If you understand how this works, you can even browse your images anywhere you go. It is possible to expose 8787 port via port forwarding, and access it via Internet. Though it's very dangerous for your privacy so I recommend to use WireGuard or OpenVPN.
+If you understand how this works, you can even browse your images anywhere you go. It is possible to expose `8787` port via port forwarding, and access it via Internet. Though it's very dangerous for your privacy so I recommend to use [WireGuard](https://www.wireguard.com/) or [OpenVPN](https://openvpn.net/).
 
 Since ComfyUI is also a web app, you can configure it to use it on your phone and even via Internet.
 I set up this environment and carry a laptop computer with WireGuard installed, so I can generate and manage images anywhere I go.
