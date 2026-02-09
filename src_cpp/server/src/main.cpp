@@ -110,16 +110,16 @@ namespace {
     }
 
     std::unique_ptr<httplib::Server> create_server(
-        sung::ServerConfigManager server_configs
+        sung::ServerConfigManager& server_configs
     ) {
-        const auto configs = server_configs.get();
+        const auto svrcfg = server_configs.get();
 
-        if (configs->tls_certfile_.empty() || configs->tls_keyfile_.empty()) {
+        if (svrcfg->tls_keyfile_.empty() || svrcfg->tls_certfile_.empty()) {
             return std::make_unique<httplib::Server>();
         }
 
         return std::make_unique<httplib::SSLServer>(
-            configs->tls_certfile_.c_str(), configs->tls_keyfile_.c_str()
+            svrcfg->tls_certfile_.c_str(), svrcfg->tls_keyfile_.c_str()
         );
     }
 
@@ -195,19 +195,18 @@ int main() {
         if (it_param_query != req.params.end())
             query = it_param_query->second;
 
-        const auto server_cfg_ptr = server_configs.get();
-        const auto& server_cfg = *server_cfg_ptr;
+        const auto svrcfg = server_configs.get();
         sung::ImageListResponse response;
 
         if (param_dir.empty()) {
-            for (auto [dir, bindings] : server_cfg.dir_bindings_) {
+            for (auto [dir, bindings] : svrcfg->dir_bindings_) {
                 response.add_dir(dir, sung::fs::u8path(dir));
             }
         } else {
             const auto dir_path = sung::fs::u8path(param_dir);
             auto [namespace_path, rest_path] = ::split_namespace(dir_path);
 
-            const auto binding = server_cfg.find_binding(namespace_path);
+            const auto binding = svrcfg->find_binding(namespace_path);
             if (!binding) {
                 res.status = 400;
                 res.set_content(
@@ -257,11 +256,8 @@ int main() {
             param_path = param_path.substr(5);
         }
 
-        const auto server_cfg_ptr = server_configs.get();
-        const auto& server_cfg = *server_cfg_ptr;
-        const auto full_path = server_cfg.resolve_paths(
-            sung::fromstr(param_path)
-        );
+        const auto svrcfg = server_configs.get();
+        const auto full_path = svrcfg->resolve_paths(sung::fromstr(param_path));
         if (!full_path) {
             res.status = 400;
             res.set_content(full_path.error(), "text/plain");
@@ -300,11 +296,8 @@ int main() {
             param_path = param_path.substr(5);
         }
 
-        const auto server_cfg_ptr = server_configs.get();
-        const auto& server_cfg = *server_cfg_ptr;
-        const auto full_path = server_cfg.resolve_paths(
-            sung::fromstr(param_path)
-        );
+        const auto svrcfg = server_configs.get();
+        const auto full_path = svrcfg->resolve_paths(sung::fromstr(param_path));
         if (!full_path) {
             res.status = 400;
             res.set_content(full_path.error(), "text/plain");
@@ -361,12 +354,11 @@ int main() {
             sung::fs::u8path(req.path.substr(5))
         );
 
-        const auto server_cfg_ptr = server_configs.get();
-        const auto& server_cfg = *server_cfg_ptr;
-        const auto it_binding = server_cfg.dir_bindings_.find(
+        const auto svrcfg = server_configs.get();
+        const auto it_binding = svrcfg->dir_bindings_.find(
             sung::tostr(namespace_path)
         );
-        if (it_binding == server_cfg.dir_bindings_.end()) {
+        if (it_binding == svrcfg->dir_bindings_.end()) {
             res.status = 400;
             res.set_content(
                 "Invalid namespace in 'dir' parameter", "text/plain"
@@ -420,10 +412,14 @@ int main() {
         }
     });
 
-    const auto http_type = ::is_https_server(svr) ? "https" : "http";
-    const auto host = server_configs.get()->server_host_;
-    const auto port = server_configs.get()->server_port_;
-    std::println("Starting server at {}://{}:{}", http_type, host, port);
-    svr.listen(host, port);
+    {
+        const auto svrcfg = server_configs.get();
+        const auto http_type = ::is_https_server(svr) ? "https" : "http";
+        const auto& host = svrcfg->server_host_;
+        const auto& port = svrcfg->server_port_;
+        std::println("Starting server at {}://{}:{}", http_type, host, port);
+        svr.listen(host, port);
+    }
+
     return 0;
 }

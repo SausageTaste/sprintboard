@@ -62,16 +62,17 @@ namespace sung {
     public:
         ServerConfigManager(const Path& config_path);
         void tick();
+        bool is_ready() const;
 
-        bool is_ready() const { return configs_ != nullptr; }
-        std::shared_ptr<ServerConfigs> get() const { return configs_; }
+        [[nodiscard]]
+        std::shared_ptr<const ServerConfigs> get() const;
 
     private:
         void update_last_write_time();
 
         Path config_path_;
         fs::file_time_type last_write_time_;
-        std::shared_ptr<ServerConfigs> configs_;
+        std::atomic<std::shared_ptr<const ServerConfigs>> configs_;
     };
 
 }  // namespace sung

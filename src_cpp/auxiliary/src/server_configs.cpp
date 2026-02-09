@@ -214,7 +214,7 @@ namespace sung {
     }
 
     void ServerConfigManager::tick() {
-        if (!configs_) {
+        if (!configs_.load(std::memory_order_acquire)) {
             auto configs = std::make_shared<ServerConfigs>();
             const auto res = ::load_or_create_new_server_configs(
                 config_path_, *configs
@@ -227,7 +227,7 @@ namespace sung {
                 return;
             }
 
-            configs_ = std::move(configs);
+            configs_.store(std::move(configs), std::memory_order_release);
             this->update_last_write_time();
         } else {
             if (!sung::fs::exists(config_path_)) {
@@ -238,7 +238,7 @@ namespace sung {
 
                 auto configs = std::make_shared<ServerConfigs>();
                 configs->fill_default();
-                configs_ = std::move(configs);
+                configs_.store(std::move(configs), std::memory_order_release);
                 this->update_last_write_time();
             } else {
                 const auto current_write_time = sung::fs::last_write_time(
@@ -261,7 +261,7 @@ namespace sung {
                     return;
                 }
 
-                configs_ = std::move(configs);
+                configs_.store(std::move(configs), std::memory_order_release);
                 this->update_last_write_time();
                 std::println("Server configs reloaded from file.");
             }
@@ -269,7 +269,11 @@ namespace sung {
 
         std::ofstream ofs(config_path_);
         if (ofs) {
-            const auto json_data = configs_->export_json();
+            const auto cfg = configs_.load(std::memory_order_acquire);
+            if (!cfg)
+                return;
+
+            const auto json_data = cfg->export_json();
             ofs << json_data.dump(2);
             ofs << '\n';
             ofs.close();
@@ -279,6 +283,16 @@ namespace sung {
                 "Failed to create config file: {}", sung::tostr(config_path_)
             );
         }
+    }
+
+    bool ServerConfigManager::is_ready() const {
+        return configs_.load(std::memory_order_acquire) != nullptr;
+    }
+
+    std::shared_ptr<const ServerConfigs> ServerConfigManager::get() const {
+        auto p = configs_.load(std::memory_order_acquire);
+        assert(p);
+        return p;
     }
 
     void ServerConfigManager::update_last_write_time() {

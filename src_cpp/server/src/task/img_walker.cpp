@@ -202,15 +202,15 @@ namespace {
         ~Task() noexcept override { tg_.wait(); }
 
         void run() override {
-            auto configs = cfg_.get();
-            if (!configs->avif_gen_)
+            const auto svrcfg = cfg_.get();
+            if (!svrcfg->avif_gen_)
                 return;
 
             size_t count = 0;
-            for (const auto& p : ::gen_png_files(configs->dir_bindings_)) {
+            for (const auto& p : ::gen_png_files(svrcfg->dir_bindings_)) {
                 ++count;
 
-                tg_.run([p, configs]() {
+                tg_.run([p, &svrcfg]() {
                     sung::MonotonicRealtimeTimer one_timer;
 
                     const auto png_data = sung::read_png(p);
@@ -218,8 +218,8 @@ namespace {
                         return;
 
                     sung::AvifEncodeParams avif_params;
-                    avif_params.set_quality(configs->avif_quality_);
-                    avif_params.set_speed(configs->avif_speed_);
+                    avif_params.set_quality(svrcfg->avif_quality_);
+                    avif_params.set_speed(svrcfg->avif_speed_);
                     avif_params.set_xmp(::make_xmp_packet(*png_data));
 
                     const auto avif_blob = encode_avif(*png_data, avif_params);
