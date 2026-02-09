@@ -14,14 +14,18 @@ I created it mainly to manage my Stable Diffusion outputs from ComfyUI, so most 
 ## View Thousands of Images on Your PC and Mobile Phones
 
 <p style="text-align: center">
-  <img src="doc/img/IMG_6693.avif" width="48%" />
-  <img src="doc/img/IMG_6691.avif" width="48%" />
+  <img src="doc/img/IMG_6695.avif" width="48%" />
+  <img src="doc/img/IMG_6697.avif" width="48%" />
 </p>
 
 The server is written in C++, so it can handle thousands of images quickly.
 Start the server on your desktop PC, and you can access those images from any device with a web browser that’s connected to the same Wi-Fi network (LAN).
 
 ## ComfyUI Specific Metadata
+
+<p style="text-align: center">
+  <img src="doc/img/IMG_6696.avif" width="500px" />
+</p>
 
 The server can parse metadata from PNG files and extract useful information.
 You can use this data to apply filters.
