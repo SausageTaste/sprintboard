@@ -220,13 +220,19 @@ namespace {
                     avif_params.set_xmp(::make_xmp_packet(*png_data));
 
                     const auto avif_blob = encode_avif(*png_data, avif_params);
-                    if (!avif_blob)
+                    if (!avif_blob) {
+                        std::println(
+                            "ImgWalker: AVIF encoding failed for {}: {}",
+                            sung::tostr(p),
+                            avif_blob.error()
+                        );
                         return;
+                    }
 
                     const auto avif_path = sung::replace_ext(p, ".avif");
                     if (!sung::fs::exists(p)) {
                         std::println(
-                            "Source PNG missing, skipping AVIF generation: {}",
+                            "ImgWalker: Source PNG missing, skipping: {}",
                             sung::tostr(p)
                         );
                         return;
