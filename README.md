@@ -24,7 +24,7 @@ Start the server on your desktop PC, and you can access those images from any de
 ## ComfyUI Specific Metadata
 
 <p style="text-align: center">
-  <img src="doc/img/IMG_6696.avif" width="500px" />
+  <img src="doc/img/IMG_6700.avif" width="500px" />
 </p>
 
 The server can parse metadata from PNG files and extract useful information.
