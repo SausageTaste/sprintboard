@@ -119,6 +119,10 @@ namespace {
         );
     }
 
+    bool is_https_server(const httplib::Server& server) {
+        return dynamic_cast<const httplib::SSLServer*>(&server) != nullptr;
+    }
+
 
     class PowerRequestTask : public sung::ITask {
 
@@ -160,10 +164,11 @@ int main() {
     }
 
     // Serve static assets from ./dist
-    const bool ok = svr.set_mount_point("/", "./dist");
-    std::println("mount ./dist ok? {}", ok);
-    std::println("CWD: {}", std::filesystem::current_path().string());
-    std::println("./dist exists? {}", std::filesystem::exists("./dist"));
+    if (svr.set_mount_point("/", "./dist")) {
+        std::println("Serving static files from ./dist");
+    } else {
+        std::println("Warning: cannot serve static files from ./dist");
+    }
 
     svr.Get("/api/images/list", [&](const httplib::Request& req, auto& res) {
         sung::ScopedWakeLock wake_lock{ power_req->get() };
@@ -417,9 +422,10 @@ int main() {
         }
     });
 
+    const auto http_type = ::is_https_server(svr) ? "https" : "http";
     const auto host = server_configs.get()->server_host_;
     const auto port = server_configs.get()->server_port_;
-    std::println("Server started at http://{}:{}", host, port);
+    std::println("Starting server at {}://{}:{}", http_type, host, port);
     svr.listen(host, port);
     return 0;
 }
