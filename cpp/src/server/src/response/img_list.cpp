@@ -224,20 +224,23 @@ namespace {
         ) {
             task_q_ = &q;
             query_ = &query;
-            local_dir_ = local_dir;
-            api_path_prefix_ = api_path_prefix;
+            local_dir_ = local_dir.lexically_normal();
+            api_path_prefix_ = api_path_prefix.lexically_normal();
         }
 
         void operator()() {
             sung::Path path;
             while (task_q_->pop(path)) {
                 if (auto info = ::is_file_eligible(path, *query_)) {
+                    path = path.lexically_normal();
+
+                    const auto cwd = sung::fs::current_path();
                     const auto rel_path = path.lexically_relative(local_dir_);
                     const auto api_path = api_path_prefix_ / rel_path;
 
                     auto& file_info = results_.emplace_back();
                     file_info.name_ = sung::tostr(path.filename());
-                    file_info.path_ = api_path;
+                    file_info.path_ = api_path.lexically_normal();
                     file_info.width_ = static_cast<int>(info->width_);
                     file_info.height_ = static_cast<int>(info->height_);
                 }
