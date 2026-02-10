@@ -350,31 +350,20 @@ int main() {
     svr.Get(R"(/img/(.*))", [&](const HttpReq& req, HttpRes& res) {
         const sung::ScopedWakeLock wake_lock{ power_req->get() };
 
-        const auto [namespace_path, rest_path] = ::split_namespace(
-            sung::fs::u8path(req.path.substr(5))
-        );
-
+        const auto param_path = sung::fromstr(req.path.substr(5));
         const auto svrcfg = server_configs.get();
-        const auto it_binding = svrcfg->dir_bindings_.find(
-            sung::tostr(namespace_path)
-        );
-        if (it_binding == svrcfg->dir_bindings_.end()) {
+        const auto full_path = svrcfg->resolve_paths(param_path);
+        if (!full_path) {
             res.status = 400;
-            res.set_content(
-                "Invalid namespace in 'dir' parameter", "text/plain"
-            );
+            res.set_content(full_path.error(), "text/plain");
             return;
         }
 
-        const auto& binding_info = it_binding->second;
-        for (auto& local_dir : binding_info.local_dirs_) {
-            const auto file_path = local_dir / rest_path;
-            const auto mime = ::determine_mime(file_path);
+        const auto mime = ::determine_mime(*full_path);
 
-            if (serve_file_streaming(file_path, mime, res)) {
-                res.status = 200;
-                return;
-            }
+        if (serve_file_streaming(*full_path, mime, res)) {
+            res.status = 200;
+            return;
         }
 
         res.status = 404;
