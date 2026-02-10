@@ -32,8 +32,8 @@ find_package(PNG REQUIRED)
 find_package(pugixml CONFIG REQUIRED)
 find_package(TBB CONFIG REQUIRED)
 
-add_subdirectory(src_cpp)
+add_subdirectory(cpp/src)
 
 if (SUNG_TEST)
-    add_subdirectory(test_cpp)
+    add_subdirectory(cpp/test)
 endif()

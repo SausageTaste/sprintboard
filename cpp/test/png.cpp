@@ -10,8 +10,9 @@
 
 int main() {
     const auto current_loc = std::source_location::current();
-    const auto source_path = sung::fs::u8path(current_loc.file_name());
-    const auto img_dir = source_path.parent_path().parent_path() / "testimg";
+    const auto source_path = sung::fromstr(current_loc.file_name());
+    const auto img_dir = source_path.parent_path().parent_path().parent_path() /
+                         "fixture" / "img";
 
     for (auto& entry : sung::fs::directory_iterator(img_dir)) {
         if (!entry.is_regular_file())
