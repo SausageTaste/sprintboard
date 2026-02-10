@@ -32,10 +32,10 @@ int main() {
             file_content.data(), file_content.size()
         );
 
-        const auto xml_path = sung::path_concat(
-            sung::remove_ext(avif_path), ".xml"
-        );
-        if (!sung::fs::exists(xml_path)) {
+        {
+            const auto xml_path = sung::path_concat(
+                sung::remove_ext(avif_path), ".xml"
+            );
             std::ofstream ofs(xml_path);
             ofs.write(
                 reinterpret_cast<const char*>(avif_meta.xmp_data_.data()),
