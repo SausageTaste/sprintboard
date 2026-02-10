@@ -205,3 +205,11 @@ Build CMake target `sprintboard` to obtain `sprintboard.exe` file.
 
 Now that you have `dist` folder that contains HTML, CSS, and Javascript files, and `sprintboard.exe` executable files with bunch of `.dll`s, you are ready to start the server.
 Put them in a same folder and run `sprintboard.exe`.
+
+If you are using vscode, put this in `.vscode/settings.json` file:
+
+```json
+"cmake.debugConfig": {
+    "cwd": "${workspaceFolder}"
+}
+```
