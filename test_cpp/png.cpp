@@ -48,15 +48,12 @@ int main() {
                 const auto nodes = workflow_data.get_nodes();
                 const auto links = workflow_data.get_links();
 
-                const auto prompt = sung::find_prompt(nodes, links);
-                std::println(
-                    "Prompt for {}: {}", sung::tostr(png_path), prompt
-                );
-
-                sung::PromptParser prompt_parser;
-                prompt_parser.parse(prompt.data(), prompt.size());
-                for (auto& token : prompt_parser) {
-                    std::println("  - {}", token);
+                for (auto& prompt : sung::find_prompt(nodes, links)) {
+                    sung::PromptParser prompt_parser;
+                    prompt_parser.parse(prompt.data(), prompt.size());
+                    for (auto& token : prompt_parser) {
+                        std::println("  - {}", token);
+                    }
                 }
 
                 const auto model = sung::find_model(nodes, links);
