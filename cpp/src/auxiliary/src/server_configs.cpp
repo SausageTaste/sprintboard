@@ -313,7 +313,7 @@ namespace sung {
     ) {
         const auto concated = base_path / relative_path;
         const auto normalized = concated.lexically_normal();
-        if (normalized.string().find("..") != std::string::npos) {
+        if (sung::tostr(normalized).contains("..")) {
             return std::nullopt;
         }
         return normalized;
