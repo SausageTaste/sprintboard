@@ -35,5 +35,5 @@ find_package(TBB CONFIG REQUIRED)
 add_subdirectory(cpp/src)
 
 if (SUNG_TEST)
-    add_subdirectory(cpp/test)
+    add_subdirectory(cpp/tests)
 endif()
