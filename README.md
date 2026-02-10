@@ -30,6 +30,7 @@ Start the server on your desktop PC, and you can access those images from any de
 The server can parse metadata from PNG files and extract useful information.
 You can use this data to apply filters.
 
+Type filtering keywords in the search box.
 Each token is separated by commas, so if you input `looking at viewer, (one, two)`, it will be parsed into three tokens: `looking at viewer`, `(one`, and `two)`.
 Currently, the server only checks whether each token exists as a whole in the prompt string.
 
@@ -199,3 +200,8 @@ You need following tools
 * [vcpkg](https://github.com/microsoft/vcpkg) with environment variable `VCPKG_ROOT` set.
 
 Build CMake target `sprintboard` to obtain `sprintboard.exe` file.
+
+## Put Things Together
+
+Now that you have `dist` folder that contains HTML, CSS, and Javascript files, and `sprintboard.exe` executable files with bunch of `.dll`s, you are ready to start the server.
+Put them in a same folder and run `sprintboard.exe`.
