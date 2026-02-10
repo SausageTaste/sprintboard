@@ -80,7 +80,8 @@ namespace sung {
     void ServerConfigs::fill_default() {
         {
             auto& binding = dir_bindings_["example"];
-            binding.local_dirs_.push_back(sung::fromstr("./test_cpp/images"));
+            binding.local_dirs_.push_back(sung::fromstr("./docs/images"));
+            binding.local_dirs_.push_back(sung::fromstr("./fixtures/images"));
         }
 
         server_host_ = DEFAULT_HOST;
