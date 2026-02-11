@@ -91,6 +91,25 @@ namespace {
         return out;
     }
 
+    avifPixelFormat conv_pix_format(
+        sung::ServerConfigs::AvifPixelFormat pix_format
+    ) {
+        using AvifPixelFormat = sung::ServerConfigs::AvifPixelFormat;
+
+        switch (pix_format) {
+            case AvifPixelFormat::yuv444:
+                return AVIF_PIXEL_FORMAT_YUV444;
+            case AvifPixelFormat::yuv422:
+                return AVIF_PIXEL_FORMAT_YUV422;
+            case AvifPixelFormat::yuv420:
+                return AVIF_PIXEL_FORMAT_YUV420;
+            case AvifPixelFormat::yuv400:
+                return AVIF_PIXEL_FORMAT_YUV400;
+        }
+
+        throw std::runtime_error("Unsupported pixel format");
+    }
+
     std::expected<std::vector<uint8_t>, std::string> encode_avif(
         const sung::PngData& src, const sung::AvifEncodeParams& params
     ) {
@@ -226,6 +245,9 @@ namespace {
                     avif_params.set_quality(svrcfg->avif_quality_);
                     avif_params.set_speed(svrcfg->avif_speed_);
                     avif_params.set_xmp(::make_xmp_packet(*png_data));
+                    avif_params.set_yuv_format(
+                        ::conv_pix_format(svrcfg->avif_pix_format_)
+                    );
 
                     const auto avif_blob = encode_avif(*png_data, avif_params);
                     if (!avif_blob) {

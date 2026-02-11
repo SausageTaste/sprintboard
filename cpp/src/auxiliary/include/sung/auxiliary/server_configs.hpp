@@ -21,6 +21,13 @@ namespace sung {
     class ServerConfigs {
 
     public:
+        enum class AvifPixelFormat {
+            yuv444,
+            yuv422,
+            yuv420,
+            yuv400,
+        };
+
         struct BindingInfo {
             std::vector<Path> local_dirs_;
         };
@@ -50,6 +57,7 @@ namespace sung {
         int server_port_;
 
         // AVIF encoding settings
+        AvifPixelFormat avif_pix_format_;
         double avif_quality_;
         int avif_speed_;
         bool avif_gen_;

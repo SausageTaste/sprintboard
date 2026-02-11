@@ -11,6 +11,35 @@ namespace {
     const std::string DEFAULT_HOST = "127.0.0.1";
     constexpr int DEFAULT_PORT = 8787;
 
+
+    const std::map<sung::ServerConfigs::AvifPixelFormat, std::string>
+        AVIF_PIXEL_FORMAT_STRINGS = {
+            { sung::ServerConfigs::AvifPixelFormat::yuv444, "yuv444" },
+            { sung::ServerConfigs::AvifPixelFormat::yuv422, "yuv422" },
+            { sung::ServerConfigs::AvifPixelFormat::yuv420, "yuv420" },
+            { sung::ServerConfigs::AvifPixelFormat::yuv400, "yuv400" },
+        };
+
+    std::string_view tostr(sung::ServerConfigs::AvifPixelFormat pix_format) {
+        const auto it = AVIF_PIXEL_FORMAT_STRINGS.find(pix_format);
+        if (it == AVIF_PIXEL_FORMAT_STRINGS.end())
+            return "unknown";
+        return it->second;
+    }
+
+    sung::ServerConfigs::AvifPixelFormat fromstr_avif_pix_format(
+        std::string_view str
+    ) {
+        for (const auto& [key, value] : AVIF_PIXEL_FORMAT_STRINGS) {
+            if (value == str)
+                return key;
+        }
+        throw std::runtime_error(
+            "Invalid AvifPixelFormat string: " + std::string(str)
+        );
+    }
+
+
     template <typename T>
     T try_get(
         const nlohmann::json& j, const char* key, const T& default_value
@@ -89,6 +118,7 @@ namespace sung {
         tls_keyfile_ = "";
         tls_certfile_ = "";
 
+        avif_pix_format_ = ServerConfigs::AvifPixelFormat::yuv444;
         avif_quality_ = 70.0;
         avif_speed_ = 4;
         avif_gen_ = false;
@@ -166,6 +196,16 @@ namespace sung {
         tls_keyfile_ = try_get(json_data, "tls-keyfile", std::string());
         tls_certfile_ = try_get(json_data, "tls-certfile", std::string());
 
+        try {
+            const auto pix_format_str = try_get(
+                json_data, "avif_pix_format", std::string()
+            );
+            avif_pix_format_ = ::fromstr_avif_pix_format(pix_format_str);
+        } catch (const std::exception& e) {
+            std::println("Invalid value for `avif_pix_format`: {}", e.what());
+            avif_pix_format_ = sung::ServerConfigs::AvifPixelFormat::yuv444;
+        }
+
         avif_quality_ = try_get(json_data, "avif_quality", 70.0);
         avif_speed_ = try_get(json_data, "avif_speed", 4);
         avif_gen_ = try_get(json_data, "avif_gen", false);
@@ -195,6 +235,7 @@ namespace sung {
         output["tls-keyfile"] = tls_keyfile_;
         output["tls-certfile"] = tls_certfile_;
 
+        output["avif_pix_format"] = ::tostr(avif_pix_format_);
         output["avif_quality"] = avif_quality_;
         output["avif_speed"] = avif_speed_;
         output["avif_gen"] = avif_gen_;
