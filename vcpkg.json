@@ -1,10 +1,12 @@
 {
     "dependencies": [
+        "argparse",
         "abseil",
         "imageinfo",
         "libpng",
         "nlohmann-json",
         "pugixml",
+        "spdlog",
         "tbb",
         {
             "name": "cpp-httplib",
@@ -13,9 +15,25 @@
             ]
         },
         {
+            "name": "exiv2",
+            "features": [
+                "bmff",
+                "png",
+                "xmp"
+            ]
+        },
+        {
             "name": "libavif",
             "features": [
                 "aom"
+            ]
+        },
+        {
+            "name": "opencv",
+            "features": [
+                "jpeg",
+                "png",
+                "webp"
             ]
         }
     ],

@@ -1,0 +1,3 @@
+[submodule "submodules/ImageRefinery"]
+	path = submodules/ImageRefinery
+	url = https://github.com/SausageTaste/ImageRefinery.git

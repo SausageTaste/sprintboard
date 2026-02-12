@@ -9,18 +9,9 @@ project(sprintboard
     LANGUAGES CXX
 )
 
-include(FetchContent)
-
 option(SUNG_TEST "Build test exe projects" On)
 
-
-FetchContent_Declare(
-    fetch_sungtools
-    GIT_REPOSITORY  https://github.com/SausageTaste/sungtools
-    GIT_TAG         main
-)
-
-FetchContent_MakeAvailable(fetch_sungtools)
+set(submodules_dir "${CMAKE_CURRENT_SOURCE_DIR}/submodules")
 
 
 find_package(absl CONFIG REQUIRED)
@@ -31,6 +22,8 @@ find_package(nlohmann_json CONFIG REQUIRED)
 find_package(PNG REQUIRED)
 find_package(pugixml CONFIG REQUIRED)
 find_package(TBB CONFIG REQUIRED)
+
+add_subdirectory("${submodules_dir}/ImageRefinery")
 
 add_subdirectory(cpp/src)
 
