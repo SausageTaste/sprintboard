@@ -129,7 +129,7 @@ namespace {
         }
     }
 
-    std::optional<sung::SimpleImageInfo> is_file_eligible(
+    std::optional<refimg::SimpleImageInfo> is_file_eligible(
         const sung::Path& file_path, const ::Query& query
     ) {
         const auto avif_path = sung::replace_ext(file_path, ".avif");

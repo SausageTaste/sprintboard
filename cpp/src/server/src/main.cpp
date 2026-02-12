@@ -3,12 +3,12 @@
 
 #define CPPHTTPLIB_OPENSSL_SUPPORT
 #include <httplib.h>
+#include <refimg/image/simple_img_info.hpp>
 
 #include "response/img_details.hpp"
 #include "response/img_list.hpp"
 #include "sung/auxiliary/filesys.hpp"
 #include "sung/auxiliary/server_configs.hpp"
-#include "sung/image/simple_img_info.hpp"
 #include "task/img_walker.hpp"
 #include "util/task.hpp"
 #include "util/wake.hpp"
@@ -36,7 +36,7 @@ namespace {
     }
 
     const char* determine_mime(const sung::Path& file_path) {
-        if (const auto info = sung::get_simple_img_info(file_path))
+        if (const auto info = refimg::get_simple_img_info(file_path))
             return info->mime_type_;
 
         const auto ext = file_path.extension().string();

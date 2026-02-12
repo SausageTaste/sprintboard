@@ -8,7 +8,7 @@ namespace {
     bool parse_comfyui_workflow(
         sung::WorkflowData& out,
         const sung::Path& file_path,
-        const sung::SimpleImageInfo& simple
+        const refimg::SimpleImageInfo& simple
     ) {
         if (simple.is_png()) {
             const auto exp_meta = sung::read_png_metadata_only(file_path);

@@ -5,14 +5,14 @@
 #include <string>
 #include <vector>
 
+#include <refimg/image/simple_img_info.hpp>
+
 #include "sung/auxiliary/comfyui_workflow.hpp"
 #include "sung/image/avif.hpp"
 #include "sung/image/png.hpp"
-#include "sung/image/simple_img_info.hpp"
 
 
 namespace sung {
-
 
     class ImageInfo {
 
@@ -57,7 +57,7 @@ namespace sung {
         bool parse_stable_diffusion_model();
         bool parse_stable_diffusion_prompt();
 
-        const SimpleImageInfo& simple() const { return simple_; }
+        const refimg::SimpleImageInfo& simple() const { return simple_; }
         int64_t width() const { return simple_.width_; }
         int64_t height() const { return simple_.height_; }
 
@@ -69,7 +69,7 @@ namespace sung {
 
     private:
         sung::Path file_path_;
-        SimpleImageInfo simple_;
+        refimg::SimpleImageInfo simple_;
         StableDiffusionInfo sd_;
 
         std::optional<PngInfo> png_;
