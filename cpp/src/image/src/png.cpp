@@ -9,24 +9,6 @@
 
 namespace {
 
-    struct PngIStream {
-        std::ifstream* stream;
-    };
-
-
-    void png_istream_read(png_structp png_ptr, png_bytep out, png_size_t size) {
-        auto* io = static_cast<::PngIStream*>(png_get_io_ptr(png_ptr));
-
-        if (!io || !io->stream || !io->stream->read((char*)out, size)) {
-            png_error(png_ptr, "Read error");
-        }
-    }
-
-    void png_throw_error(png_structp png_ptr, png_const_charp msg) {
-        throw std::runtime_error(msg ? msg : "libpng error");
-    }
-
-
     class PngReader {
 
     public:
@@ -54,72 +36,90 @@ namespace {
             // ---- Init libpng ----
 
             png_ptr_ = png_create_read_struct(
-                PNG_LIBPNG_VER_STRING, nullptr, png_throw_error, nullptr
+                PNG_LIBPNG_VER_STRING,
+                &err_ctx_,
+                this->png_error_fn,
+                this->png_warn_fn
             );
             if (!png_ptr_)
                 return std::unexpected("png_create_read_struct failed");
 
             info_ptr_ = png_create_info_struct(png_ptr_);
-            if (!info_ptr_)
+            if (!info_ptr_) {
+                this->destroy();
                 return std::unexpected("png_create_info_struct failed");
+            }
 
             // Hook ifstream into libpng
             io_.stream = &file_;
-            png_set_read_fn(png_ptr_, &io_, png_istream_read);
+            png_set_read_fn(png_ptr_, &io_, this->png_istream_read);
             png_set_sig_bytes(png_ptr_, 8);
 
-            return {};
-        }
-
-        sung::ErrStr parse_info() {
-            try {
-                png_read_info(png_ptr_, info_ptr_);
-            } catch (const std::exception& e) {
+            err_ctx_.msg_.clear();
+            if (setjmp(png_jmpbuf(png_ptr_))) {
+                this->destroy();
                 return std::unexpected(
-                    std::format("Failed to parse PNG info: {}", e.what())
+                    std::format("Failed to open PNG file: {}", err_ctx_.msg_)
                 );
             }
 
+            png_read_info(png_ptr_, info_ptr_);
+            open_success_ = true;
             return {};
         }
 
-        sung::ErrStr get_metadata(sung::PngMeta& meta) const {
-            try {
-                meta.width = png_get_image_width(png_ptr_, info_ptr_);
-                meta.height = png_get_image_height(png_ptr_, info_ptr_);
-                meta.bit_depth = png_get_bit_depth(png_ptr_, info_ptr_);
-                meta.color_type = png_get_color_type(png_ptr_, info_ptr_);
+        sung::ErrStr get_metadata(sung::PngMeta& meta) {
+            if (!this->is_open())
+                return std::unexpected("PNG not opened");
 
-                png_textp text_ptr = nullptr;
-                int num_text = 0;
-                const auto result = png_get_text(
-                    png_ptr_, info_ptr_, &text_ptr, &num_text
-                );
-
-                if (result > 0) {
-                    meta.text.reserve((size_t)num_text);
-
-                    for (int i = 0; i < num_text; ++i) {
-                        const char* key = text_ptr[i].key ? text_ptr[i].key
-                                                          : "";
-                        const char* val = text_ptr[i].text ? text_ptr[i].text
-                                                           : "";
-
-                        meta.text.push_back(
-                            { std::string(key), std::string(val) }
-                        );
-                    }
-                }
-            } catch (const std::exception& e) {
+            err_ctx_.msg_.clear();
+            if (setjmp(png_jmpbuf(png_ptr_))) {
                 return std::unexpected(
-                    std::format("Failed to get PNG metadata: {}", e.what())
+                    std::format("Failed to get PNG metadata: {}", err_ctx_.msg_)
                 );
+            }
+
+            meta.width = png_get_image_width(png_ptr_, info_ptr_);
+            meta.height = png_get_image_height(png_ptr_, info_ptr_);
+            meta.bit_depth = png_get_bit_depth(png_ptr_, info_ptr_);
+            meta.color_type = png_get_color_type(png_ptr_, info_ptr_);
+
+            png_textp text_ptr = nullptr;
+            int num_text = 0;
+            const auto result = png_get_text(
+                png_ptr_, info_ptr_, &text_ptr, &num_text
+            );
+
+            if (result > 0) {
+                meta.text.reserve((size_t)num_text);
+
+                for (int i = 0; i < num_text; ++i) {
+                    const char* key = text_ptr[i].key ? text_ptr[i].key : "";
+                    const char* val = text_ptr[i].text ? text_ptr[i].text : "";
+
+                    meta.text.push_back({ std::string(key), std::string(val) });
+                }
             }
 
             return {};
         }
 
         sung::ErrStr parse_pixels(sung::PngData& out) {
+            if (!this->is_open())
+                return std::unexpected("PNG not opened");
+
+            err_ctx_.msg_.clear();
+            if (setjmp(png_jmpbuf(png_ptr_))) {
+                return std::unexpected(
+                    std::format("Failed to read PNG pixels: {}", err_ctx_.msg_)
+                );
+            }
+
+            out.width = png_get_image_width(png_ptr_, info_ptr_);
+            out.height = png_get_image_height(png_ptr_, info_ptr_);
+            out.bit_depth = png_get_bit_depth(png_ptr_, info_ptr_);
+            out.color_type = png_get_color_type(png_ptr_, info_ptr_);
+
             // ---- normalize to 8-bit RGBA
             // 16-bit -> 8-bit
             if (out.bit_depth == 16) {
@@ -148,17 +148,28 @@ namespace {
             // After the conversions above:
             // - RGB becomes RGBA
             // - RGBA stays RGBA
-            if (!(png_get_color_type(png_ptr_, info_ptr_) &
-                  PNG_COLOR_MASK_ALPHA))
+            const bool has_alpha = (out.color_type & PNG_COLOR_MASK_ALPHA) ||
+                                   png_get_valid(
+                                       png_ptr_, info_ptr_, PNG_INFO_tRNS
+                                   );
+            if (!has_alpha)
                 png_set_add_alpha(png_ptr_, 0xFF, PNG_FILLER_AFTER);
 
             // Update info after transforms
             png_read_update_info(png_ptr_, info_ptr_);
 
+            const int channels = png_get_channels(png_ptr_, info_ptr_);
+            const int depth = png_get_bit_depth(png_ptr_, info_ptr_);
+            if (channels != 4 || depth != 8)
+                return std::unexpected("Failed to convert PNG to RGBA8");
+
+            out.bit_depth = 8;
+            out.color_type = PNG_COLOR_TYPE_RGBA;
+
             const png_size_t rowbytes = png_get_rowbytes(png_ptr_, info_ptr_);
             // Expect 4 bytes per pixel now
-            if (rowbytes != out.width * 4) {
-                throw std::runtime_error(
+            if (rowbytes != static_cast<png_size_t>(out.width) * 4) {
+                return std::unexpected(
                     "Unexpected row size after conversion (expected RGBA8)."
                 );
             }
@@ -169,26 +180,25 @@ namespace {
             );
 
             // Row pointers for libpng
-            std::vector<png_bytep> rows(out.height);
+            rows_.resize(out.height);
             for (png_uint_32 y = 0; y < out.height; ++y) {
-                rows[y] = reinterpret_cast<png_bytep>(
+                rows_[y] = reinterpret_cast<png_bytep>(
                     out.pixels.data() + (static_cast<size_t>(y) * out.width * 4)
                 );
             }
 
-            try {
-                png_read_image(png_ptr_, rows.data());
-                png_read_end(png_ptr_, nullptr);
-            } catch (const std::exception& e) {
-                return std::unexpected(
-                    std::format("Failed to read PNG pixels: {}", e.what())
-                );
-            }
-
+            png_read_image(png_ptr_, rows_.data());
+            png_read_end(png_ptr_, nullptr);
             return {};
         }
 
+        bool is_open() const {
+            return png_ptr_ != nullptr && info_ptr_ != nullptr && open_success_;
+        }
+
         void destroy() {
+            open_success_ = false;
+
             if (png_ptr_ || info_ptr_) {
                 png_destroy_read_struct(&png_ptr_, &info_ptr_, nullptr);
                 png_ptr_ = nullptr;
@@ -197,15 +207,55 @@ namespace {
             io_.stream = nullptr;
             if (file_.is_open())
                 file_.close();
+
+            std::vector<png_bytep>().swap(rows_);
         }
 
     private:
+        struct PngIStream {
+            std::ifstream* stream;
+        };
+
+        struct PngErrorCtx {
+            std::string msg_;
+        };
+
+        static void png_error_fn(png_structp png_ptr, png_const_charp msg) {
+            auto* ctx = static_cast<PngErrorCtx*>(png_get_error_ptr(png_ptr));
+            if (ctx)
+                ctx->msg_ = msg ? msg : "libpng error";
+            longjmp(png_jmpbuf(png_ptr), 1);  // jump back to setjmp site
+        }
+
+        static void png_warn_fn(png_structp png_ptr, png_const_charp msg) {
+            // optional: ignore or log
+        }
+
+        static void png_istream_read(
+            png_structp png_ptr, png_bytep out, png_size_t size
+        ) {
+            auto* io = static_cast<PngIStream*>(png_get_io_ptr(png_ptr));
+
+            if (!io || !io->stream)
+                png_error(png_ptr, "Read error (no stream)");
+
+            if (!(*io->stream))
+                png_error(png_ptr, "Read error (stream bad)");
+
+            io->stream->read(reinterpret_cast<char*>(out), size);
+            if (io->stream->gcount() != static_cast<std::streamsize>(size)) {
+                png_error(png_ptr, "Read error");
+            }
+        }
+
         std::ifstream file_;
+        std::vector<png_bytep> rows_;
+        PngErrorCtx err_ctx_;
         PngIStream io_{ nullptr };
         png_structp png_ptr_ = nullptr;
         png_infop info_ptr_ = nullptr;
+        bool open_success_ = false;
     };
-
 
 }  // namespace
 
@@ -222,10 +272,6 @@ namespace sung {
             return std::unexpected(exp_open.error());
 
         // ---- Parse header & metadata ----
-
-        const auto exp_parse_info = reader.parse_info();
-        if (!exp_parse_info)
-            return std::unexpected(exp_parse_info.error());
 
         PngMeta png_data;
         const auto exp_metadata = reader.get_metadata(png_data);
@@ -246,10 +292,6 @@ namespace sung {
             return std::unexpected(exp_open.error());
 
         // ---- Parse header & metadata ----
-
-        const auto exp_parse_info = reader.parse_info();
-        if (!exp_parse_info)
-            return std::unexpected(exp_parse_info.error());
 
         PngData png_data;
         const auto exp_metadata = reader.get_metadata(png_data);
