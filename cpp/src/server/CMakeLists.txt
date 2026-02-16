@@ -35,5 +35,4 @@ target_link_libraries(${target_name} PRIVATE
     sprintboard_img
     TBB::tbb
     TBB::tbbmalloc
-    TBB::tbbmalloc_proxy
 )
