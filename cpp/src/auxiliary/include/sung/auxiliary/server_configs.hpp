@@ -2,6 +2,7 @@
 
 #include <expected>
 #include <map>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -65,6 +66,25 @@ namespace sung {
     };
 
 
+    class ServerConfigsHolder {
+
+    public:
+        std::shared_ptr<const ServerConfigs> get() const {
+            std::lock_guard lock(mut_);
+            return configs_;
+        }
+
+        void store(std::shared_ptr<const ServerConfigs> new_configs) {
+            std::lock_guard lock(mut_);
+            configs_ = std::move(new_configs);
+        }
+
+    private:
+        mutable std::mutex mut_;
+        std::shared_ptr<const ServerConfigs> configs_;
+    };
+
+
     class ServerConfigManager {
 
     public:
@@ -80,7 +100,7 @@ namespace sung {
 
         Path config_path_;
         fs::file_time_type last_write_time_;
-        std::atomic<std::shared_ptr<const ServerConfigs>> configs_;
+        ServerConfigsHolder configs_;
     };
 
 }  // namespace sung

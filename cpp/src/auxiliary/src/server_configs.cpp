@@ -256,7 +256,7 @@ namespace sung {
     }
 
     void ServerConfigManager::tick() {
-        if (!configs_.load(std::memory_order_acquire)) {
+        if (!configs_.get()) {
             auto configs = std::make_shared<ServerConfigs>();
             const auto res = ::load_or_create_new_server_configs(
                 config_path_, *configs
@@ -269,7 +269,7 @@ namespace sung {
                 return;
             }
 
-            configs_.store(std::move(configs), std::memory_order_release);
+            configs_.store(std::move(configs));
             this->update_last_write_time();
         } else {
             if (!sung::fs::exists(config_path_)) {
@@ -280,7 +280,7 @@ namespace sung {
 
                 auto configs = std::make_shared<ServerConfigs>();
                 configs->fill_default();
-                configs_.store(std::move(configs), std::memory_order_release);
+                configs_.store(std::move(configs));
                 this->update_last_write_time();
             } else {
                 const auto current_write_time = sung::fs::last_write_time(
@@ -303,7 +303,7 @@ namespace sung {
                     return;
                 }
 
-                configs_.store(std::move(configs), std::memory_order_release);
+                configs_.store(std::move(configs));
                 this->update_last_write_time();
                 std::println("Server configs reloaded from file.");
             }
@@ -311,7 +311,7 @@ namespace sung {
 
         std::ofstream ofs(config_path_);
         if (ofs) {
-            const auto cfg = configs_.load(std::memory_order_acquire);
+            const auto cfg = configs_.get();
             if (!cfg)
                 return;
 
@@ -328,11 +328,11 @@ namespace sung {
     }
 
     bool ServerConfigManager::is_ready() const {
-        return configs_.load(std::memory_order_acquire) != nullptr;
+        return configs_.get() != nullptr;
     }
 
     std::shared_ptr<const ServerConfigs> ServerConfigManager::get() const {
-        auto p = configs_.load(std::memory_order_acquire);
+        auto p = configs_.get();
         assert(p);
         return p;
     }
