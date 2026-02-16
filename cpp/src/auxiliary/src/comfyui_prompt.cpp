@@ -1,6 +1,5 @@
 #include "sung/auxiliary/comfyui_prompt.hpp"
 
-#include <generator>
 #include <iostream>
 #include <print>
 #include <ranges>
@@ -29,17 +28,19 @@ namespace {
         return str;
     }
 
-    std::generator<std::string_view> split_tags(
+    std::vector<std::string_view> split_tags(
         const std::string_view str, char delimiter
     ) {
+        std::vector<std::string_view> result;
         for (auto word : str | std::views::split(',')) {
             auto sv = std::string_view{ word };
             sv = ::strip(sv, " \t\n\r");
             sv = ::remove_tag_weight(sv);
             if (sv.empty())
                 continue;
-            co_yield sv;
+            result.push_back(sv);
         }
+        return result;
     }
 
 }  // namespace
