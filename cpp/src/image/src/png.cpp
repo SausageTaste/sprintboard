@@ -1,6 +1,7 @@
 #include "sung/image/png.hpp"
 
 #include <cstring>
+#include <format>
 #include <fstream>
 #include <stdexcept>
 

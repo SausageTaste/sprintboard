@@ -1,5 +1,7 @@
 #include "response/img_details.hpp"
 
+#include <sstream>
+
 #include <nlohmann/json.hpp>
 #include <print>
 #include <pugixml.hpp>
