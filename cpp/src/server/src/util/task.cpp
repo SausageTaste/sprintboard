@@ -1,5 +1,7 @@
 #include "util/task.hpp"
 
+#include <cassert>
+
 
 // TaskManager
 namespace sung {
@@ -54,6 +56,7 @@ namespace sung {
 
         for (auto& entry : periodic_tasks_) {
             if (entry.timer_.check_if_elapsed(entry.interval_)) {
+                assert(entry.task_ != nullptr);
                 entry.task_->run();
                 entry.timer_.check();
                 return;
