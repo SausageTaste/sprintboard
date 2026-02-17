@@ -1,16 +1,23 @@
 #include "response/img_list.hpp"
 
 #include <atomic>
-#include <generator>
 #include <mutex>
 #include <print>
 #include <queue>
 #include <thread>
 
 #include <absl/strings/str_split.h>
+#include <sung/basic/os_detect.hpp>
 #include <sung/basic/time.hpp>
 
 #include "sung/image/img_info.hpp"
+
+#if defined(__cpp_lib_generator) && __cpp_lib_generator >= SUNG__cplusplus
+    #include <generator>
+    #define HAS_GENERATOR 1
+#else
+    #define HAS_GENERATOR 0
+#endif
 
 
 namespace {
@@ -112,21 +119,45 @@ namespace {
         }
     }
 
+#if HAS_GENERATOR
     std::generator<sung::fs::directory_entry> iter_dir(
+#else
+    std::vector<sung::fs::directory_entry> iter_dir(
+#endif
         const sung::Path& path, bool recursive
     ) {
+#if !HAS_GENERATOR
+        std::vector<sung::fs::directory_entry> result;
+#endif
+
         if (!sung::fs::is_directory(path))
+#if HAS_GENERATOR
             co_return;
+#else
+            return {};
+#endif
 
         if (recursive) {
             for (auto& e : sung::fs::recursive_directory_iterator(path)) {
+#if HAS_GENERATOR
                 co_yield e;
+#else
+                result.push_back(e);
+#endif
             }
         } else {
             for (auto& e : sung::fs::directory_iterator(path)) {
+#if HAS_GENERATOR
                 co_yield e;
+#else
+                result.push_back(e);
+#endif
             }
         }
+
+#if !HAS_GENERATOR
+        return result;
+#endif
     }
 
     std::optional<refimg::SimpleImageInfo> is_file_eligible(

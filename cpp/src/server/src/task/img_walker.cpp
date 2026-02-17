@@ -1,17 +1,24 @@
 #include "task/img_walker.hpp"
 
 #include <fstream>
-#include <generator>
 #include <print>
 
 #include <absl/strings/ascii.h>
 #include <tbb/task_group.h>
 #include <pugixml.hpp>
+#include <sung/basic/os_detect.hpp>
 #include <sung/basic/time.hpp>
 
 #include "sung/auxiliary/filesys.hpp"
 #include "sung/image/avif.hpp"
 #include "sung/image/png.hpp"
+
+#if defined(__cpp_lib_generator) && __cpp_lib_generator >= SUNG__cplusplus
+    #include <generator>
+    #define HAS_GENERATOR 1
+#else
+    #define HAS_GENERATOR 0
+#endif
 
 
 namespace {
@@ -183,9 +190,17 @@ namespace {
         return outData;
     }
 
+#if HAS_GENERATOR
     std::generator<sung::Path> gen_png_files(
+#else
+    std::vector<sung::Path> gen_png_files(
+#endif
         const sung::ServerConfigs::DirBindings& dir_bindings
     ) {
+#if !HAS_GENERATOR
+        std::vector<sung::Path> result;
+#endif
+
         for (const auto& [name, binding_info] : dir_bindings) {
             for (const auto& local_dir : binding_info.local_dirs_) {
                 if (!sung::fs::is_directory(local_dir))
@@ -202,10 +217,18 @@ namespace {
                     if (sung::fs::exists(avif))
                         continue;
 
+#if HAS_GENERATOR
                     co_yield entry.path();
+#else
+                    result.push_back(entry.path());
+#endif
                 }
             }
         }
+
+#if !HAS_GENERATOR
+        return result;
+#endif
     }
 
 }  // namespace
