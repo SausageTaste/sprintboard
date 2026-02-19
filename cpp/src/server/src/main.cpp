@@ -407,7 +407,11 @@ int main() {
         const auto& host = svrcfg->server_host_;
         const auto& port = svrcfg->server_port_;
         std::println("Starting server at {}://{}:{}", http_type, host, port);
-        svr.listen(host, port);
+        if (svr.listen(host, port)) {
+            std::println("Server stopped");
+        } else {
+            std::println("Error starting server");
+        }
     }
 
     return 0;
