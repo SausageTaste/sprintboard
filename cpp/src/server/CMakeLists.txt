@@ -36,3 +36,10 @@ target_link_libraries(${target_name} PRIVATE
     TBB::tbb
     TBB::tbbmalloc
 )
+
+if (APPLE)
+    target_link_libraries(${target_name} PRIVATE
+        "-framework CoreFoundation"
+        "-framework IOKit"
+    )
+endif()

@@ -7,16 +7,26 @@
 
 namespace sung {
 
+    struct PowerRequestBackend {
+        virtual ~PowerRequestBackend() = default;
+
+        virtual bool set_system() = 0;
+        virtual bool set_display() = 0;
+        virtual bool clear_system() = 0;
+        virtual bool clear_display() = 0;
+    };
+
+
     class PowerRequest {
 
     public:
-        PowerRequest(const wchar_t* reason);
+        PowerRequest(std::string_view reason);
         ~PowerRequest();
 
         bool ok() const;
 
-        bool set_system_required(bool on);
-        bool set_display_required(bool on);
+        bool set_system_required();
+        bool set_display_required();
         bool clear_system_required();
         bool clear_display_required();
 
@@ -24,6 +34,7 @@ namespace sung {
         bool is_display_required() const { return display_required_; }
 
     private:
+        std::unique_ptr<PowerRequestBackend> backend_;
         void* handle_ = nullptr;
         bool system_required_ = false;
         bool display_required_ = false;
