@@ -118,10 +118,12 @@ namespace sung {
 
     PowerRequest::PowerRequest(std::string_view reason) {
 #ifdef _WIN32
+        std::wstring reason_w(reason.begin(), reason.end());
+
         REASON_CONTEXT rc{};
         rc.Version = POWER_REQUEST_CONTEXT_VERSION;
         rc.Flags = POWER_REQUEST_CONTEXT_SIMPLE_STRING;
-        rc.Reason.SimpleReasonString = const_cast<wchar_t*>(reason);
+        rc.Reason.SimpleReasonString = reason_w.data();
 
         handle_ = PowerCreateRequest(&rc);
 
