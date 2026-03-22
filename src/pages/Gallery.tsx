@@ -23,13 +23,6 @@ type FolderInfo = {
     path: string;
 };
 
-type LightboxItem = {
-    src: string;
-    w: number;
-    h: number;
-    msrc: string;
-};
-
 interface ImageListResponse {
     folders: FolderInfo[];
     imageFiles: ImageFileInfo[];
@@ -68,15 +61,6 @@ async function fetchImageList(
     if (!res.ok)
         throw new Error(`HTTP ${res.status}`);
     return (await res.json()) as ImageListResponse;
-}
-
-function toLightboxDataSource(items: ImageFileInfo[]): LightboxItem[] {
-    return items.map((it) => ({
-        src: it.src,
-        w: it.w ?? 512,
-        h: it.h ?? 512,
-        msrc: it.thumb ?? it.src,
-    }));
 }
 
 
@@ -159,31 +143,8 @@ export default function Gallery() {
             return;
         }
 
-        const nextItems = imgItemsRef.current.filter(x => x.src !== it.src);
-        const nextIndex = Math.min(i, nextItems.length - 1);
-        const nextItem = nextItems[nextIndex];
-        const nextDataSource = toLightboxDataSource(nextItems);
-
-        lightboxRef.current!.options.dataSource = nextDataSource;
-        pswp.options.dataSource = nextDataSource;
-
-        setImgItems(nextItems);
-
-        if (!nextItem) {
-            pswp.close();
-            return;
-        }
-
-        lastIndexRef.current = nextIndex;
-        setSrcInUrl(nextItem.src, true);
-
-        if (pswp.currIndex !== nextIndex)
-            pswp.goTo(nextIndex);
-
-        for (const slideIndex of [nextIndex - 1, nextIndex, nextIndex + 1]) {
-            if (slideIndex >= 0 && slideIndex < nextItems.length)
-                pswp.refreshSlideContent(slideIndex);
-        }
+        setImgItems(prev => prev.filter(x => x.src !== it.src));
+        pswp.close();
     }
 
     const loadMore = React.useCallback(async () => {
@@ -545,7 +506,12 @@ export default function Gallery() {
 
         lbOptions.initialZoomLevel = settings.fillScreen ? "fill" : "fit";
         lbOptions.secondaryZoomLevel = settings.fillScreen ? "fit" : "fill";
-        lbOptions.dataSource = toLightboxDataSource(imgItems);
+        lbOptions.dataSource = imgItems.map((it) => ({
+            src: it.src,
+            w: it.w ?? 512,
+            h: it.h ?? 512,
+            msrc: it.thumb ?? it.src, // thumb used in animation (optional)
+        }));
 
         return () => {
             // don't destroy on every imgItems change; destroy only on unmount
