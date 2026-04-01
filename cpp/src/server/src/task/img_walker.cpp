@@ -206,22 +206,35 @@ namespace {
                 if (!sung::fs::is_directory(local_dir))
                     continue;
 
-                for (const auto& entry :
-                     sung::fs::recursive_directory_iterator(local_dir)) {
-                    auto ext_str = sung::tostr(entry.path().extension());
-                    ext_str = absl::AsciiStrToLower(ext_str);
-                    if (ext_str != ".png")
-                        continue;
+                try {
+                    const auto iterator =
+                        sung::fs::recursive_directory_iterator(local_dir);
 
-                    const auto avif = sung::replace_ext(entry.path(), ".avif");
-                    if (sung::fs::exists(avif))
-                        continue;
+                    for (const auto& entry : iterator) {
+                        auto ext_str = sung::tostr(entry.path().extension());
+                        ext_str = absl::AsciiStrToLower(ext_str);
+                        if (ext_str != ".png")
+                            continue;
+
+                        const auto avif = sung::replace_ext(
+                            entry.path(), ".avif"
+                        );
+                        if (sung::fs::exists(avif))
+                            continue;
 
 #if HAS_GENERATOR
-                    co_yield entry.path();
+                        co_yield entry.path();
 #else
-                    result.push_back(entry.path());
+                        result.push_back(entry.path());
 #endif
+                    }
+                } catch (std::filesystem::filesystem_error& e) {
+                    std::println(
+                        "ImgWalker: Failed to access directory {}: {}",
+                        sung::tostr(local_dir),
+                        e.what()
+                    );
+                    throw;
                 }
             }
         }
