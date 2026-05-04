@@ -312,7 +312,7 @@ namespace {
                     );
                 });
 
-                if (count > 10)
+                if (count > 32)
                     break;
             }
 
