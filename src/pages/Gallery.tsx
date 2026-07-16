@@ -32,6 +32,21 @@ interface ImageListResponse {
 };
 
 
+const folderNameCollator = new Intl.Collator(undefined, { numeric: true });
+
+function sortFoldersNaturallyDescending(folders: FolderInfo[]): FolderInfo[] {
+    return [...folders].sort((a, b) => {
+        const naturalOrder = folderNameCollator.compare(b.name, a.name);
+        if (naturalOrder !== 0)
+            return naturalOrder;
+
+        if (a.name === b.name)
+            return 0;
+        return a.name < b.name ? 1 : -1;
+    });
+}
+
+
 function lockSelection() {
     document.documentElement.classList.add("pswp-open-noselect");
     document.body.classList.add("pswp-open-noselect");
@@ -60,7 +75,12 @@ async function fetchImageList(
     const res = await fetch(url.toString());
     if (!res.ok)
         throw new Error(`HTTP ${res.status}`);
-    return (await res.json()) as ImageListResponse;
+
+    const data = (await res.json()) as ImageListResponse;
+    return {
+        ...data,
+        folders: sortFoldersNaturallyDescending(data.folders ?? []),
+    };
 }
 
 
