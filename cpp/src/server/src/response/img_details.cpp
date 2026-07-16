@@ -43,21 +43,18 @@ namespace {
             if (!this->load_simple_info())
                 return std::unexpected("Failed to load simple image info");
 
+            // Metadata is optional. Images without supported metadata should
+            // still return their basic details instead of failing the request.
             if (!this->load_img_metadata())
-                return std::unexpected("Failed to load image metadata");
+                return {};
 
+            // A PNG or AVIF can have metadata without containing a ComfyUI
+            // workflow. Preserve that metadata and leave the SD fields empty.
             if (!this->parse_comfyui_workflow())
-                return std::unexpected("Failed to parse ComfyUI workflow");
+                return {};
 
-            if (!this->parse_stable_diffusion_model())
-                return std::unexpected(
-                    "Failed to parse Stable Diffusion model"
-                );
-
-            if (!this->parse_stable_diffusion_prompt())
-                return std::unexpected(
-                    "Failed to parse Stable Diffusion prompt"
-                );
+            this->parse_stable_diffusion_model();
+            this->parse_stable_diffusion_prompt();
 
             return {};
         }

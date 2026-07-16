@@ -31,8 +31,12 @@ async function fetchImageDetails(path: string): Promise<ImageDetailsResponse> {
     url.searchParams.set("path", path);
 
     const res = await fetch(url.toString());
-    if (!res.ok)
-        throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+        const details = await res.text();
+        throw new Error(
+            `HTTP ${res.status}${details ? `: ${details}` : ""}`
+        );
+    }
     return (await res.json()) as ImageDetailsResponse;
 }
 
