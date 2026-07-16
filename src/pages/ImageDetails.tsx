@@ -40,6 +40,19 @@ async function fetchImageDetails(path: string): Promise<ImageDetailsResponse> {
     return (await res.json()) as ImageDetailsResponse;
 }
 
+function downloadImage(src: string) {
+    if (!src)
+        return;
+
+    const link = document.createElement("a");
+    link.href = src;
+    link.download = "";
+    link.rel = "noopener";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+}
+
 
 export default function ImageDetails() {
     const [imageDetails, setImageDetails] = React.useState<ImageDetailsResponse | null>(null);
@@ -72,6 +85,15 @@ export default function ImageDetails() {
                     style={{ maxWidth: "500px", width: "100%", borderRadius: 10, marginBottom: 16 }}
                 />
             </a>
+            <div style={{ marginBottom: 16 }}>
+                <button
+                    type="button"
+                    onClick={() => downloadImage(imgSrc)}
+                    disabled={!imgSrc}
+                >
+                    Download image
+                </button>
+            </div>
             <p>Dimensions: {imageDetails?.width} x {imageDetails?.height}</p>
 
             <h2>Stable Diffusion</h2>
