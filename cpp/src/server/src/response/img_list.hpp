@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <expected>
 #include <string_view>
 #include <vector>
@@ -17,8 +18,9 @@ namespace sung {
         struct FileInfo {
             std::string name_;
             sung::Path path_;
-            int width_;
-            int height_;
+            int width_ = 0;
+            int height_ = 0;
+            int64_t sort_time_ns_ = 0;
         };
 
     public:
@@ -28,14 +30,16 @@ namespace sung {
             const std::string& name,
             const sung::Path& path,
             int width,
-            int height
+            int height,
+            int64_t sort_time_ns = 0
         );
 
         void add_file(
             const sung::Path& name,
             const sung::Path& path,
             int width,
-            int height
+            int height,
+            int64_t sort_time_ns = 0
         );
 
         void add_files(std::vector<FileInfo>&& infos) {
@@ -55,6 +59,7 @@ namespace sung {
         );
 
         void sort();
+        static bool file_before(const FileInfo& a, const FileInfo& b);
         nlohmann::json make_json(size_t offset, size_t limit) const;
         std::expected<nlohmann::json, std::string> make_json(
             std::string_view cursor, size_t limit

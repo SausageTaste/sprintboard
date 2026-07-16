@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -12,6 +13,14 @@
 
 
 namespace sung {
+
+    namespace detail {
+
+        int64_t select_image_sort_time(
+            int64_t creation_time_ns, int64_t modified_time_ns
+        );
+
+    }  // namespace detail
 
     struct ImageIndexRefreshStats {
         size_t files_scanned_ = 0;

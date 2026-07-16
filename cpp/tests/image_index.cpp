@@ -31,10 +31,131 @@ namespace {
         return response.make_json(0, 100)["totalImageCount"].get<size_t>();
     }
 
+    bool downgrade_database_to_version_one(const sung::Path& database_path) {
+        sqlite3* database = nullptr;
+        const auto path = sung::tostr(database_path);
+        if (sqlite3_open(path.c_str(), &database) != SQLITE_OK) {
+            sqlite3_close(database);
+            return false;
+        }
+
+        const auto result = sqlite3_exec(
+            database,
+            "BEGIN IMMEDIATE;"
+            "ALTER TABLE image_metadata RENAME TO image_metadata_v2;"
+            "CREATE TABLE image_metadata ("
+            "physical_path TEXT PRIMARY KEY,"
+            "file_size INTEGER NOT NULL,"
+            "modified_time INTEGER NOT NULL,"
+            "eligible INTEGER NOT NULL,"
+            "width INTEGER NOT NULL,"
+            "height INTEGER NOT NULL,"
+            "model TEXT NOT NULL,"
+            "prompts_json TEXT NOT NULL"
+            ");"
+            "INSERT INTO image_metadata "
+            "SELECT physical_path, file_size, modified_time, eligible, width, "
+            "height, model, prompts_json FROM image_metadata_v2;"
+            "DROP TABLE image_metadata_v2;"
+            "PRAGMA user_version=1;"
+            "COMMIT;",
+            nullptr,
+            nullptr,
+            nullptr
+        );
+        sqlite3_close(database);
+        return result == SQLITE_OK;
+    }
+
+    bool has_version_two_sort_times(
+        const sung::Path& database_path, const size_t expected_count
+    ) {
+        sqlite3* database = nullptr;
+        const auto path = sung::tostr(database_path);
+        if (sqlite3_open(path.c_str(), &database) != SQLITE_OK) {
+            sqlite3_close(database);
+            return false;
+        }
+
+        int schema_version = 0;
+        size_t timestamp_count = 0;
+        sqlite3_stmt* statement = nullptr;
+        if (sqlite3_prepare_v2(
+                database, "PRAGMA user_version;", -1, &statement, nullptr
+            ) == SQLITE_OK &&
+            sqlite3_step(statement) == SQLITE_ROW) {
+            schema_version = sqlite3_column_int(statement, 0);
+        }
+        sqlite3_finalize(statement);
+
+        statement = nullptr;
+        if (sqlite3_prepare_v2(
+                database,
+                "SELECT COUNT(*) FROM image_metadata WHERE sort_time_ns > 0;",
+                -1,
+                &statement,
+                nullptr
+            ) == SQLITE_OK &&
+            sqlite3_step(statement) == SQLITE_ROW) {
+            timestamp_count = static_cast<size_t>(
+                sqlite3_column_int64(statement, 0)
+            );
+        }
+        sqlite3_finalize(statement);
+        sqlite3_close(database);
+        return schema_version == 2 && timestamp_count == expected_count;
+    }
+
+    bool set_sort_time(
+        const sung::Path& database_path,
+        const std::string_view filename,
+        const int64_t sort_time_ns
+    ) {
+        sqlite3* database = nullptr;
+        const auto path = sung::tostr(database_path);
+        if (sqlite3_open(path.c_str(), &database) != SQLITE_OK) {
+            sqlite3_close(database);
+            return false;
+        }
+
+        sqlite3_stmt* statement = nullptr;
+        auto success = sqlite3_prepare_v2(
+                           database,
+                           "UPDATE image_metadata SET sort_time_ns=? WHERE "
+                           "physical_path LIKE ?;",
+                           -1,
+                           &statement,
+                           nullptr
+                       ) == SQLITE_OK;
+        const auto pattern = "%/" + std::string{ filename };
+        if (success) {
+            sqlite3_bind_int64(statement, 1, sort_time_ns);
+            sqlite3_bind_text(
+                statement, 2, pattern.c_str(), -1, SQLITE_TRANSIENT
+            );
+            success = sqlite3_step(statement) == SQLITE_DONE &&
+                      sqlite3_changes(database) == 1;
+        }
+        sqlite3_finalize(statement);
+        sqlite3_close(database);
+        return success;
+    }
+
 }  // namespace
 
 
 int main() {
+    if (!check(
+            sung::detail::select_image_sort_time(100, 200) == 100,
+            "prefers filesystem creation time"
+        ) ||
+        !check(
+            sung::detail::select_image_sort_time(0, 200) == 200,
+            "falls back to filesystem modification time"
+        )) {
+        return 1;
+    }
+
     const auto source_path = sung::fromstr(
         std::source_location::current().file_name()
     );
@@ -122,6 +243,14 @@ int main() {
         }
     }
 
+    if (!check(
+            downgrade_database_to_version_one(database_path),
+            "creates a version-one migration fixture"
+        )) {
+        sung::fs::remove_all(temp);
+        return 1;
+    }
+
     {
         sung::ImageIndex index{ database_path };
         const auto reopened = index.initialize(configs);
@@ -130,6 +259,10 @@ int main() {
             ) ||
             !check(
                 reopened.metadata_indexed_ == 0, "avoids repeated image reads"
+            ) ||
+            !check(
+                has_version_two_sort_times(database_path, 2),
+                "migrates and backfills sort timestamps without image reads"
             )) {
             sung::fs::remove_all(temp);
             return 1;
@@ -307,6 +440,62 @@ int main() {
                 !fallback.persistent_, "falls back when SQLite cannot open"
             ) ||
             !check(image_count(index) == 3, "memory fallback remains usable")) {
+            sung::fs::remove_all(temp);
+            return 1;
+        }
+    }
+
+    const auto ordering_root = temp / "ordering-images";
+    const auto ordering_database = temp / "ordering.sqlite3";
+    sung::fs::create_directories(ordering_root / "nested");
+    sung::fs::copy_file(source_avif, ordering_root / "z-old.avif");
+    sung::fs::copy_file(source_avif, ordering_root / "a-new.avif");
+    sung::fs::copy_file(
+        source_png, ordering_root / "nested" / "nested-new.png"
+    );
+    const auto ordering_configs = make_configs(ordering_root);
+    {
+        sung::ImageIndex index{ ordering_database };
+        index.initialize(ordering_configs);
+    }
+    if (!check(
+            set_sort_time(ordering_database, "z-old.avif", 100),
+            "sets the oldest ordering fixture"
+        ) ||
+        !check(
+            set_sort_time(ordering_database, "a-new.avif", 300),
+            "sets the newest direct ordering fixture"
+        ) ||
+        !check(
+            set_sort_time(ordering_database, "nested-new.png", 400),
+            "sets the newest recursive ordering fixture"
+        )) {
+        sung::fs::remove_all(temp);
+        return 1;
+    }
+    {
+        sung::ImageIndex index{ ordering_database };
+        const auto reopened = index.initialize(ordering_configs);
+        const auto direct = index.query(sung::fromstr("test"), "", false)
+                                .make_json(0, 100)["imageFiles"];
+        const auto recursive = index.query(sung::fromstr("test"), "", true)
+                                   .make_json(0, 100)["imageFiles"];
+        if (!check(
+                reopened.metadata_reused_ == 3 &&
+                    reopened.metadata_indexed_ == 0,
+                "reuses metadata while loading persisted sort timestamps"
+            ) ||
+            !check(
+                direct[0]["name"] == "a-new.avif" &&
+                    direct[1]["name"] == "z-old.avif",
+                "sorts direct galleries by newest timestamp"
+            ) ||
+            !check(
+                recursive[0]["name"] == "nested-new.png" &&
+                    recursive[1]["name"] == "a-new.avif" &&
+                    recursive[2]["name"] == "z-old.avif",
+                "sorts recursive galleries globally by newest timestamp"
+            )) {
             sung::fs::remove_all(temp);
             return 1;
         }

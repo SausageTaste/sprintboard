@@ -14,14 +14,152 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_split.h>
 #include <sqlite3.h>
+#include <sung/basic/os_detect.hpp>
 #include <sung/basic/time.hpp>
 
 #include "sung/image/img_info.hpp"
 
+#if defined(SUNG_OS_WINDOWS)
+    #ifndef NOMINMAX
+        #define NOMINMAX
+    #endif
+    #include <windows.h>
+#else
+    #include <sys/stat.h>
+#endif
+
+#if defined(SUNG_OS_LINUX)
+    #include <fcntl.h>
+    #include <linux/stat.h>
+    #include <sys/syscall.h>
+    #include <unistd.h>
+#endif
+
+
+namespace sung::detail {
+
+    int64_t select_image_sort_time(
+        const int64_t creation_time_ns, const int64_t modified_time_ns
+    ) {
+        if (creation_time_ns > 0)
+            return creation_time_ns;
+        return std::max<int64_t>(modified_time_ns, 0);
+    }
+
+}  // namespace sung::detail
+
 
 namespace {
 
-    constexpr int DATABASE_SCHEMA_VERSION = 1;
+    constexpr int DATABASE_SCHEMA_VERSION = 2;
+    constexpr int64_t NANOSECONDS_PER_SECOND = 1'000'000'000;
+
+
+    int64_t make_timestamp_ns(
+        const int64_t seconds, const int64_t nanoseconds
+    ) {
+        if (seconds <= 0)
+            return 0;
+        const auto clamped_nanoseconds = std::clamp<int64_t>(
+            nanoseconds, 0, NANOSECONDS_PER_SECOND - 1
+        );
+        const auto max_seconds = std::numeric_limits<int64_t>::max() /
+                                 NANOSECONDS_PER_SECOND;
+        const auto remaining_nanoseconds = std::numeric_limits<int64_t>::max() %
+                                           NANOSECONDS_PER_SECOND;
+        if (seconds > max_seconds ||
+            (seconds == max_seconds &&
+             clamped_nanoseconds > remaining_nanoseconds)) {
+            return std::numeric_limits<int64_t>::max();
+        }
+        return seconds * NANOSECONDS_PER_SECOND + clamped_nanoseconds;
+    }
+
+    int64_t get_image_sort_time(const sung::Path& path) {
+#if defined(SUNG_OS_WINDOWS)
+        WIN32_FILE_ATTRIBUTE_DATA attributes{};
+        if (!GetFileAttributesExW(
+                path.c_str(), GetFileExInfoStandard, &attributes
+            )) {
+            return 0;
+        }
+
+        const auto to_unix_ns = [](const FILETIME& value) {
+            constexpr uint64_t WINDOWS_TO_UNIX_EPOCH = 116'444'736'000'000'000;
+            const auto ticks = (static_cast<uint64_t>(value.dwHighDateTime)
+                                << 32) |
+                               value.dwLowDateTime;
+            if (ticks <= WINDOWS_TO_UNIX_EPOCH)
+                return int64_t{ 0 };
+            const auto unix_ticks = ticks - WINDOWS_TO_UNIX_EPOCH;
+            if (unix_ticks > static_cast<uint64_t>(
+                                 std::numeric_limits<int64_t>::max() / 100
+                             )) {
+                return std::numeric_limits<int64_t>::max();
+            }
+            return static_cast<int64_t>(unix_ticks * 100);
+        };
+
+        return sung::detail::select_image_sort_time(
+            to_unix_ns(attributes.ftCreationTime),
+            to_unix_ns(attributes.ftLastWriteTime)
+        );
+#elif defined(SUNG_OS_MACOS)
+        struct stat attributes{};
+        if (::stat(path.c_str(), &attributes) != 0)
+            return 0;
+        return sung::detail::select_image_sort_time(
+            make_timestamp_ns(
+                attributes.st_birthtimespec.tv_sec,
+                attributes.st_birthtimespec.tv_nsec
+            ),
+            make_timestamp_ns(
+                attributes.st_mtimespec.tv_sec, attributes.st_mtimespec.tv_nsec
+            )
+        );
+#elif defined(SUNG_OS_LINUX)
+    #if defined(SYS_statx) && defined(STATX_BTIME)
+        struct statx attributes{};
+        if (::syscall(
+                SYS_statx,
+                AT_FDCWD,
+                path.c_str(),
+                AT_STATX_SYNC_AS_STAT,
+                STATX_BTIME | STATX_MTIME,
+                &attributes
+            ) == 0) {
+            const auto creation_time = (attributes.stx_mask & STATX_BTIME) != 0
+                                           ? make_timestamp_ns(
+                                                 attributes.stx_btime.tv_sec,
+                                                 attributes.stx_btime.tv_nsec
+                                             )
+                                           : 0;
+            const auto modified_time = (attributes.stx_mask & STATX_MTIME) != 0
+                                           ? make_timestamp_ns(
+                                                 attributes.stx_mtime.tv_sec,
+                                                 attributes.stx_mtime.tv_nsec
+                                             )
+                                           : 0;
+            return sung::detail::select_image_sort_time(
+                creation_time, modified_time
+            );
+        }
+    #endif
+
+        struct stat fallback_attributes{};
+        if (::stat(path.c_str(), &fallback_attributes) != 0)
+            return 0;
+        return make_timestamp_ns(
+            fallback_attributes.st_mtim.tv_sec,
+            fallback_attributes.st_mtim.tv_nsec
+        );
+#else
+        struct stat attributes{};
+        if (::stat(path.c_str(), &attributes) != 0)
+            return 0;
+        return make_timestamp_ns(attributes.st_mtime, 0);
+#endif
+    }
 
 
     class Query {
@@ -94,6 +232,7 @@ namespace {
         std::string physical_path_;
         int64_t file_size_ = 0;
         int64_t modified_time_ = 0;
+        int64_t sort_time_ns_ = 0;
         bool eligible_ = false;
         int width_ = 0;
         int height_ = 0;
@@ -127,9 +266,7 @@ namespace {
 
 
     bool file_before(const IndexedFile& a, const IndexedFile& b) {
-        if (a.info_.name_ != b.info_.name_)
-            return a.info_.name_ > b.info_.name_;
-        return sung::tostr(a.info_.path_) > sung::tostr(b.info_.path_);
+        return sung::ImageListResponse::file_before(a.info_, b.info_);
     }
 
     std::string make_root_key(
@@ -165,12 +302,16 @@ namespace {
     }
 
     CachedMetadata inspect_file(
-        const sung::Path& path, const int64_t size, const int64_t modified
+        const sung::Path& path,
+        const int64_t size,
+        const int64_t modified,
+        const int64_t sort_time_ns
     ) {
         CachedMetadata output;
         output.physical_path_ = sung::tostr(path);
         output.file_size_ = size;
         output.modified_time_ = modified;
+        output.sort_time_ns_ = sort_time_ns;
 
         sung::ImageInfo info{ path };
         if (!info.load_simple_info())
@@ -270,7 +411,20 @@ public:
         }
         sqlite3_finalize(statement);
 
-        if (schema_version != DATABASE_SCHEMA_VERSION) {
+        if (schema_version == 1) {
+            if (!execute_sql(
+                    database_,
+                    "BEGIN IMMEDIATE;"
+                    "ALTER TABLE image_metadata ADD COLUMN sort_time_ns "
+                    "INTEGER NOT NULL DEFAULT 0;"
+                    "PRAGMA user_version=2;"
+                    "COMMIT;"
+                )) {
+                sqlite3_close(database_);
+                database_ = nullptr;
+                return;
+            }
+        } else if (schema_version != DATABASE_SCHEMA_VERSION) {
             if (!execute_sql(
                     database_,
                     "BEGIN;"
@@ -279,13 +433,14 @@ public:
                     "physical_path TEXT PRIMARY KEY,"
                     "file_size INTEGER NOT NULL,"
                     "modified_time INTEGER NOT NULL,"
+                    "sort_time_ns INTEGER NOT NULL,"
                     "eligible INTEGER NOT NULL,"
                     "width INTEGER NOT NULL,"
                     "height INTEGER NOT NULL,"
                     "model TEXT NOT NULL,"
                     "prompts_json TEXT NOT NULL"
                     ");"
-                    "PRAGMA user_version=1;"
+                    "PRAGMA user_version=2;"
                     "COMMIT;"
                 )) {
                 sqlite3_close(database_);
@@ -298,6 +453,7 @@ public:
                        "physical_path TEXT PRIMARY KEY,"
                        "file_size INTEGER NOT NULL,"
                        "modified_time INTEGER NOT NULL,"
+                       "sort_time_ns INTEGER NOT NULL,"
                        "eligible INTEGER NOT NULL,"
                        "width INTEGER NOT NULL,"
                        "height INTEGER NOT NULL,"
@@ -320,8 +476,9 @@ public:
         sqlite3_stmt* statement = nullptr;
         if (sqlite3_prepare_v2(
                 database_,
-                "SELECT physical_path, file_size, modified_time, eligible, "
-                "width, height, model, prompts_json FROM image_metadata;",
+                "SELECT physical_path, file_size, modified_time, sort_time_ns, "
+                "eligible, width, height, model, prompts_json FROM "
+                "image_metadata;",
                 -1,
                 &statement,
                 nullptr
@@ -339,16 +496,17 @@ public:
             );
             metadata.file_size_ = sqlite3_column_int64(statement, 1);
             metadata.modified_time_ = sqlite3_column_int64(statement, 2);
-            metadata.eligible_ = sqlite3_column_int(statement, 3) != 0;
-            metadata.width_ = sqlite3_column_int(statement, 4);
-            metadata.height_ = sqlite3_column_int(statement, 5);
+            metadata.sort_time_ns_ = sqlite3_column_int64(statement, 3);
+            metadata.eligible_ = sqlite3_column_int(statement, 4) != 0;
+            metadata.width_ = sqlite3_column_int(statement, 5);
+            metadata.height_ = sqlite3_column_int(statement, 6);
             metadata.model_ = reinterpret_cast<const char*>(
-                sqlite3_column_text(statement, 6)
+                sqlite3_column_text(statement, 7)
             );
 
             try {
                 const auto* prompts_text = reinterpret_cast<const char*>(
-                    sqlite3_column_text(statement, 7)
+                    sqlite3_column_text(statement, 8)
                 );
                 metadata.prompts_ = nlohmann::json::parse(prompts_text)
                                         .get<std::vector<std::string>>();
@@ -382,11 +540,13 @@ public:
         sqlite3_stmt* erase = nullptr;
         const auto upsert_sql =
             "INSERT INTO image_metadata "
-            "(physical_path, file_size, modified_time, eligible, width, "
-            "height, model, prompts_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "(physical_path, file_size, modified_time, sort_time_ns, eligible, "
+            "width, height, model, prompts_json) VALUES (?, ?, ?, ?, ?, ?, ?, "
+            "?, ?) "
             "ON CONFLICT(physical_path) DO UPDATE SET "
             "file_size=excluded.file_size, "
             "modified_time=excluded.modified_time, "
+            "sort_time_ns=excluded.sort_time_ns, "
             "eligible=excluded.eligible, width=excluded.width, "
             "height=excluded.height, model=excluded.model, "
             "prompts_json=excluded.prompts_json;";
@@ -411,13 +571,14 @@ public:
             );
             sqlite3_bind_int64(upsert, 2, item.file_size_);
             sqlite3_bind_int64(upsert, 3, item.modified_time_);
-            sqlite3_bind_int(upsert, 4, item.eligible_ ? 1 : 0);
-            sqlite3_bind_int(upsert, 5, item.width_);
-            sqlite3_bind_int(upsert, 6, item.height_);
+            sqlite3_bind_int64(upsert, 4, item.sort_time_ns_);
+            sqlite3_bind_int(upsert, 5, item.eligible_ ? 1 : 0);
+            sqlite3_bind_int(upsert, 6, item.width_);
+            sqlite3_bind_int(upsert, 7, item.height_);
             sqlite3_bind_text(
-                upsert, 7, item.model_.c_str(), -1, SQLITE_TRANSIENT
+                upsert, 8, item.model_.c_str(), -1, SQLITE_TRANSIENT
             );
-            sqlite3_bind_text(upsert, 8, prompts.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(upsert, 9, prompts.c_str(), -1, SQLITE_TRANSIENT);
             success = sqlite3_step(upsert) == SQLITE_DONE;
             sqlite3_reset(upsert);
             sqlite3_clear_bindings(upsert);
@@ -595,9 +756,18 @@ public:
                         metadata_it->second.file_size_ == size &&
                         metadata_it->second.modified_time_ == modified) {
                         ++stats.metadata_reused_;
+                        if (metadata_it->second.sort_time_ns_ == 0) {
+                            metadata_it->second.sort_time_ns_ =
+                                get_image_sort_time(physical_path);
+                            if (metadata_it->second.sort_time_ns_ > 0)
+                                changed.push_back(metadata_it->second);
+                        }
                     } else {
+                        const auto sort_time_ns = get_image_sort_time(
+                            physical_path
+                        );
                         auto metadata = inspect_file(
-                            physical_path, size, modified
+                            physical_path, size, modified, sort_time_ns
                         );
                         metadata_[path_str] = metadata;
                         changed.push_back(std::move(metadata));
@@ -647,6 +817,7 @@ public:
                         sung::fromstr(api_path),
                         metadata.width_,
                         metadata.height_,
+                        metadata.sort_time_ns_,
                     };
                     entry.model_ = metadata.model_;
                     entry.prompts_ = metadata.prompts_;
@@ -754,7 +925,8 @@ public:
                 file.info_.name_,
                 file.info_.path_,
                 file.info_.width_,
-                file.info_.height_
+                file.info_.height_,
+                file.info_.sort_time_ns_
             );
         }
 

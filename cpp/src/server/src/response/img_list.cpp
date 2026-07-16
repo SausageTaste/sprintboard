@@ -27,15 +27,6 @@ namespace {
         "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 
-    bool file_before(
-        const sung::ImageListResponse::FileInfo& a,
-        const sung::ImageListResponse::FileInfo& b
-    ) {
-        if (a.name_ != b.name_)
-            return a.name_ > b.name_;
-        return sung::tostr(a.path_) > sung::tostr(b.path_);
-    }
-
     std::string encode_base64url(const std::string_view input) {
         std::string output;
         output.reserve((input.size() * 4 + 2) / 3);
@@ -86,7 +77,8 @@ namespace {
         const sung::ImageListResponse::FileInfo& file_info
     ) {
         const nlohmann::json payload = {
-            { "v", 1 },
+            { "v", 2 },
+            { "time", file_info.sort_time_ns_ },
             { "name", file_info.name_ },
             { "src", sung::tostr(file_info.path_) },
         };
@@ -102,10 +94,11 @@ namespace {
 
         try {
             const auto payload = nlohmann::json::parse(*decoded);
-            if (payload.at("v").get<int>() != 1)
+            if (payload.at("v").get<int>() != 2)
                 return std::unexpected("Unsupported cursor version");
 
             sung::ImageListResponse::FileInfo output;
+            output.sort_time_ns_ = payload.at("time").get<int64_t>();
             output.name_ = payload.at("name").get<std::string>();
             output.path_ = sung::fromstr(payload.at("src").get<std::string>());
             return output;
@@ -452,15 +445,25 @@ namespace sung {
     }
 
     void ImageListResponse::add_file(
-        const std::string& name, const sung::Path& path, int width, int height
+        const std::string& name,
+        const sung::Path& path,
+        int width,
+        int height,
+        int64_t sort_time_ns
     ) {
-        files_.push_back({ name, path, width, height });
+        files_.push_back({ name, path, width, height, sort_time_ns });
     }
 
     void ImageListResponse::add_file(
-        const sung::Path& name, const sung::Path& path, int width, int height
+        const sung::Path& name,
+        const sung::Path& path,
+        int width,
+        int height,
+        int64_t sort_time_ns
     ) {
-        files_.push_back({ sung::tostr(name), path, width, height });
+        files_.push_back(
+            { sung::tostr(name), path, width, height, sort_time_ns }
+        );
     }
 
     void ImageListResponse::fetch_directory(
@@ -486,11 +489,19 @@ namespace sung {
     }
 
     void ImageListResponse::sort() {
-        std::sort(files_.begin(), files_.end(), ::file_before);
+        std::sort(files_.begin(), files_.end(), file_before);
 
         std::sort(dirs_.begin(), dirs_.end(), [](const auto& a, const auto& b) {
             return a.name_ > b.name_;
         });
+    }
+
+    bool ImageListResponse::file_before(const FileInfo& a, const FileInfo& b) {
+        if (a.sort_time_ns_ != b.sort_time_ns_)
+            return a.sort_time_ns_ > b.sort_time_ns_;
+        if (a.name_ != b.name_)
+            return a.name_ > b.name_;
+        return sung::tostr(a.path_) > sung::tostr(b.path_);
     }
 
     nlohmann::json ImageListResponse::make_json(
@@ -509,7 +520,7 @@ namespace sung {
         const auto first = static_cast<size_t>(std::distance(
             files_.begin(),
             std::upper_bound(
-                files_.begin(), files_.end(), *cursor_info, ::file_before
+                files_.begin(), files_.end(), *cursor_info, file_before
             )
         ));
         return make_json_page(first, limit);

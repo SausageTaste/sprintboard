@@ -16,25 +16,27 @@ namespace {
     sung::ImageListResponse make_response() {
         sung::ImageListResponse response;
         response.add_file(
-            std::string{ "a.png" }, sung::fromstr("/img/a.png"), 100, 200
+            std::string{ "a.png" }, sung::fromstr("/img/a.png"), 100, 200, 500
         );
         response.add_file(
             std::string{ "same.png" },
             sung::fromstr("/img/a/same.png"),
             300,
-            400
+            400,
+            300
         );
         response.add_file(
-            std::string{ "z.png" }, sung::fromstr("/img/z.png"), 500, 600
+            std::string{ "z.png" }, sung::fromstr("/img/z.png"), 500, 600, 400
         );
         response.add_file(
-            std::string{ "b.png" }, sung::fromstr("/img/b.png"), 700, 800
+            std::string{ "b.png" }, sung::fromstr("/img/b.png"), 700, 800, 200
         );
         response.add_file(
             std::string{ "same.png" },
             sung::fromstr("/img/z/same.png"),
             900,
-            1000
+            1000,
+            300
         );
         response.sort();
         return response;
@@ -71,7 +73,10 @@ int main() {
     const auto first = response.make_json(0, 2);
     if (!check_page(first, 2, 5, true) ||
         !check(first["nextOffset"] == 2, "first page has next offset") ||
-        !check(first["imageFiles"][0]["name"] == "z.png", "sorts descending") ||
+        !check(
+            first["imageFiles"][0]["name"] == "a.png",
+            "sorts newest creation time first"
+        ) ||
         !check(
             first["thumbnailWidth"] == 500,
             "thumbnail width uses the complete result"
@@ -81,8 +86,8 @@ int main() {
             "thumbnail height uses the complete result"
         ) ||
         !check(
-            first["imageFiles"][1]["src"] == "/img/z/same.png",
-            "uses descending path as filename tie-breaker"
+            first["imageFiles"][1]["src"] == "/img/z.png",
+            "creation time takes precedence over filename"
         )) {
         return 1;
     }
@@ -91,8 +96,8 @@ int main() {
     if (!check_page(middle, 2, 5, true) ||
         !check(middle["nextOffset"] == 4, "middle page has next offset") ||
         !check(
-            middle["imageFiles"][0]["src"] == "/img/a/same.png",
-            "middle page begins at requested offset"
+            middle["imageFiles"][0]["src"] == "/img/z/same.png",
+            "uses descending path when timestamps and filenames tie"
         )) {
         return 1;
     }
@@ -110,19 +115,34 @@ int main() {
 
     sung::ImageListResponse changed_response;
     changed_response.add_file(
-        std::string{ "zz.png" }, sung::fromstr("/img/zz.png"), 10, 10
+        std::string{ "zz.png" }, sung::fromstr("/img/zz.png"), 10, 10, 600
     );
     changed_response.add_file(
-        std::string{ "z.png" }, sung::fromstr("/img/z.png"), 500, 600
+        std::string{ "a.png" }, sung::fromstr("/img/a.png"), 100, 200, 500
     );
     changed_response.add_file(
-        std::string{ "same.png" }, sung::fromstr("/img/a/same.png"), 300, 400
+        std::string{ "inserted.png" },
+        sung::fromstr("/img/inserted.png"),
+        20,
+        20,
+        350
     );
     changed_response.add_file(
-        std::string{ "b.png" }, sung::fromstr("/img/b.png"), 700, 800
+        std::string{ "same.png" },
+        sung::fromstr("/img/a/same.png"),
+        300,
+        400,
+        300
     );
     changed_response.add_file(
-        std::string{ "a.png" }, sung::fromstr("/img/a.png"), 100, 200
+        std::string{ "b.png" }, sung::fromstr("/img/b.png"), 700, 800, 200
+    );
+    changed_response.add_file(
+        std::string{ "same.png" },
+        sung::fromstr("/img/z/same.png"),
+        900,
+        1000,
+        300
     );
     changed_response.sort();
     const auto changed_page = changed_response.make_json(cursor, 2);
@@ -131,8 +151,9 @@ int main() {
             "cursor remains valid when its item is deleted"
         ) ||
         !check(
-            (*changed_page)["imageFiles"][0]["src"] == "/img/a/same.png",
-            "cursor resumes after a deleted key and ignores earlier inserts"
+            (*changed_page)["imageFiles"][0]["src"] == "/img/inserted.png" &&
+                (*changed_page)["imageFiles"][1]["src"] == "/img/z/same.png",
+            "cursor handles insertion and deletion around its key"
         )) {
         return 1;
     }
@@ -140,6 +161,15 @@ int main() {
     if (!check(
             !response.make_json("not-a-cursor", 2).has_value(),
             "rejects malformed cursors"
+        )) {
+        return 1;
+    }
+
+    constexpr std::string_view version_one_cursor =
+        "eyJ2IjoxLCJuYW1lIjoiei5wbmciLCJzcmMiOiIvaW1nL3oucG5nIn0";
+    if (!check(
+            !response.make_json(version_one_cursor, 2).has_value(),
+            "rejects incompatible version-one cursors"
         )) {
         return 1;
     }
