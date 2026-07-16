@@ -53,7 +53,7 @@ namespace sung {
         );
 
         void sort();
-        nlohmann::json make_json() const;
+        nlohmann::json make_json(size_t offset, size_t limit) const;
 
     private:
         std::pair<double, double> calc_average_thumbnail_size() const;

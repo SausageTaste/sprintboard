@@ -396,7 +396,9 @@ namespace sung {
     void ImageListResponse::sort() {
         std::sort(
             files_.begin(), files_.end(), [](const auto& a, const auto& b) {
-                return a.name_ > b.name_;
+                if (a.name_ != b.name_)
+                    return a.name_ > b.name_;
+                return sung::tostr(a.path_) > sung::tostr(b.path_);
             }
         );
 
@@ -405,23 +407,34 @@ namespace sung {
         });
     }
 
-    nlohmann::json ImageListResponse::make_json() const {
+    nlohmann::json ImageListResponse::make_json(
+        const size_t offset, const size_t limit
+    ) const {
         auto output = nlohmann::json::object();
 
         {
-            auto& file_array = output["imageFiles"];
-            for (const auto& file_info : files_) {
+            auto& file_array = output["imageFiles"] = nlohmann::json::array();
+            const auto first = std::min(offset, files_.size());
+            const auto last = std::min(
+                first + std::min(limit, files_.size() - first), files_.size()
+            );
+            for (auto i = first; i < last; ++i) {
+                const auto& file_info = files_[i];
                 auto& file_obj = file_array.emplace_back();
                 file_obj["name"] = file_info.name_;
                 file_obj["src"] = sung::tostr(file_info.path_);
                 file_obj["w"] = file_info.width_;
                 file_obj["h"] = file_info.height_;
             }
-            output["totalImageCount"] = static_cast<int>(files_.size());
+            output["totalImageCount"] = files_.size();
+            output["hasMore"] = last < files_.size();
+            output["nextOffset"] = last < files_.size()
+                                       ? nlohmann::json(last)
+                                       : nlohmann::json(nullptr);
         }
 
         {
-            auto& dir_array = output["folders"];
+            auto& dir_array = output["folders"] = nlohmann::json::array();
             for (const auto& dir_info : dirs_) {
                 auto& dir_obj = dir_array.emplace_back();
                 dir_obj["name"] = dir_info.name_;

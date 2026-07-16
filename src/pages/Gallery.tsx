@@ -27,9 +27,14 @@ interface ImageListResponse {
     folders: FolderInfo[];
     imageFiles: ImageFileInfo[];
     totalImageCount: number;
+    hasMore: boolean;
+    nextOffset: number | null;
     thumbnailWidth: number;
     thumbnailHeight: number;
 };
+
+const PAGE_SIZE = 100;
+const LIGHTBOX_PREFETCH_THRESHOLD = 10;
 
 
 const folderNameCollator = new Intl.Collator(undefined, { numeric: true });
@@ -65,14 +70,16 @@ async function fetchImageList(
     query: string,
     offset: number,
     recursive: boolean,
+    signal?: AbortSignal,
 ): Promise<ImageListResponse> {
     const url = new URL("/api/images/list", window.location.origin);
     url.searchParams.set("dir", dir);
     url.searchParams.set("query", query);
     url.searchParams.set("offset", String(offset));
+    url.searchParams.set("limit", String(PAGE_SIZE));
     url.searchParams.set("recursive", recursive ? "1" : "0");
 
-    const res = await fetch(url.toString());
+    const res = await fetch(url.toString(), { signal });
     if (!res.ok)
         throw new Error(`HTTP ${res.status}`);
 
@@ -103,11 +110,15 @@ export default function Gallery() {
     const loadingRef = React.useRef(false);
     const imgItemsRef = React.useRef(imgItems);
     const pathnameRef = React.useRef("");
+    const nextOffsetRef = React.useRef<number | null>(0);
+    const requestGenerationRef = React.useRef(0);
+    const activeRequestRef = React.useRef<AbortController | null>(null);
+    const loadMoreRef = React.useRef<() => Promise<void>>(async () => { });
 
     const { "*": path } = useParams();   // catch-all route
     const navigate = useNavigate();
     const location = useLocation();
-    const [searchParams, _] = useSearchParams();
+    const [searchParams] = useSearchParams();
     const curDir = path ?? ""; // "" = root
 
     function openAt(index: number) {
@@ -163,51 +174,71 @@ export default function Gallery() {
             return;
         }
 
+        activeRequestRef.current?.abort();
+        activeRequestRef.current = null;
+        loadingRef.current = false;
         setImgItems(prev => prev.filter(x => x.src !== it.src));
+        imgItemsRef.current = imgItemsRef.current.filter(x => x.src !== it.src);
+        setTotalImgCount(prev => Math.max(0, prev - 1));
+        if (nextOffsetRef.current !== null) {
+            nextOffsetRef.current = Math.max(0, nextOffsetRef.current - 1);
+        }
         pswp.close();
     }
 
     const loadMore = React.useCallback(async () => {
-        return;
-
         if (loadingRef.current)
             return;
-        if (imgItems.length >= totalImgCount)
+        const offset = nextOffsetRef.current;
+        if (offset === null)
+            return;
+        if (totalImgCount > 0 && imgItemsRef.current.length >= totalImgCount)
             return;
 
+        const generation = requestGenerationRef.current;
+        const controller = new AbortController();
+        activeRequestRef.current = controller;
         loadingRef.current = true;
         try {
-            const offset = imgItems.length;
             const data = await fetchImageList(
                 curDir,
                 settings.searchText,
                 offset,
                 settings.filesRecursive,
+                controller.signal,
             );
+            if (generation !== requestGenerationRef.current)
+                return;
 
-            setFolders(data.folders);
-            setThumbnailWidth(data.thumbnailWidth || 512);
-            setThumbnailHeight(data.thumbnailHeight || 512);
+            nextOffsetRef.current = data.nextOffset;
+            setTotalImgCount(data.totalImageCount);
 
-            const incoming: ImageFileInfo[] = data.imageFiles ?? [];
-            setTotalImgCount(incoming.length);
-
-            // dedupe by src so it still works even if backend ignores offset/limit for now
             setImgItems(prev => {
                 const seen = new Set(prev.map(x => x.src));
                 const merged = [...prev];
-                for (const it of incoming) {
+                for (const it of data.imageFiles ?? []) {
                     if (!seen.has(it.src)) {
                         seen.add(it.src);
                         merged.push(it);
                     }
                 }
+                imgItemsRef.current = merged;
                 return merged;
             });
+        } catch (err) {
+            if (!(err instanceof DOMException && err.name === "AbortError"))
+                console.error("Failed to load more images:", err);
         } finally {
-            loadingRef.current = false;
+            if (activeRequestRef.current === controller) {
+                activeRequestRef.current = null;
+                loadingRef.current = false;
+            }
         }
-    }, [imgItems.length, totalImgCount, curDir, settings.searchText]);
+    }, [curDir, settings.filesRecursive, settings.searchText, totalImgCount]);
+
+    React.useEffect(() => {
+        loadMoreRef.current = loadMore;
+    }, [loadMore]);
 
     const setSrcInUrl = React.useCallback((src: string | null, replace: boolean) => {
         const p = new URLSearchParams(searchParams);
@@ -269,36 +300,82 @@ export default function Gallery() {
     }, [location.pathname]);
 
     React.useEffect(() => {
+        const generation = requestGenerationRef.current + 1;
+        requestGenerationRef.current = generation;
+        activeRequestRef.current?.abort();
+
+        const controller = new AbortController();
+        activeRequestRef.current = controller;
+        nextOffsetRef.current = 0;
         setFolders([]);
         setImgItems([]);
         setTotalImgCount(0);
-        loadingRef.current = false;
-        imgItemsRef.current = imgItems;
+        imgItemsRef.current = [];
+        loadingRef.current = true;
 
         (async () => {
-            if (loadingRef.current)
-                return;
-            loadingRef.current = true;
-
             try {
-                const data = await fetchImageList(
+                let data = await fetchImageList(
                     curDir,
                     settings.searchText,
                     0,
                     settings.filesRecursive,
+                    controller.signal,
                 );
-                // console.log("Fetched image list:", data);
+                if (generation !== requestGenerationRef.current)
+                    return;
+
+                const targetSrc = new URLSearchParams(window.location.search).get("src");
+                const merged: ImageFileInfo[] = [];
+                const seen = new Set<string>();
+
+                const appendPage = (page: ImageListResponse) => {
+                    for (const it of page.imageFiles ?? []) {
+                        if (!seen.has(it.src)) {
+                            seen.add(it.src);
+                            merged.push(it);
+                        }
+                    }
+                    nextOffsetRef.current = page.nextOffset;
+                    imgItemsRef.current = [...merged];
+                    setImgItems([...merged]);
+                    setTotalImgCount(page.totalImageCount);
+                };
 
                 setFolders(data.folders || []);
-                setImgItems(data.imageFiles || []);
-                setTotalImgCount(data.totalImageCount);
                 setThumbnailWidth(data.thumbnailWidth || 512);
                 setThumbnailHeight(data.thumbnailHeight || 512);
+                appendPage(data);
+
+                while (
+                    targetSrc &&
+                    !seen.has(targetSrc) &&
+                    data.nextOffset !== null
+                ) {
+                    data = await fetchImageList(
+                        curDir,
+                        settings.searchText,
+                        data.nextOffset,
+                        settings.filesRecursive,
+                        controller.signal,
+                    );
+                    if (generation !== requestGenerationRef.current)
+                        return;
+                    appendPage(data);
+                }
+            } catch (err) {
+                if (!(err instanceof DOMException && err.name === "AbortError"))
+                    console.error("Failed to load images:", err);
             } finally {
-                loadingRef.current = false;
+                if (activeRequestRef.current === controller) {
+                    activeRequestRef.current = null;
+                    loadingRef.current = false;
+                }
             }
         })();
-    }, [curDir, settings.searchText]);
+
+        return () => controller.abort();
+    }, [curDir, settings.filesRecursive, settings.searchText]);
 
     React.useEffect(() => {
         if (!lightboxRef.current) {
@@ -345,10 +422,16 @@ export default function Gallery() {
                     window.removeEventListener("keydown", onKeyDown);
                 });
 
-                pswp.element?.classList.remove("pswp-menu-open")
+                pswp.element?.classList.remove("pswp-menu-open");
 
                 const i = pswp.currIndex;
                 lastIndexRef.current = i;
+
+                if (
+                    i >= imgItemsRef.current.length - LIGHTBOX_PREFETCH_THRESHOLD
+                ) {
+                    void loadMoreRef.current();
+                }
 
                 const it = imgItemsRef.current[i];
                 if (!it)
@@ -523,15 +606,26 @@ export default function Gallery() {
 
         const lb = lightboxRef.current;
         const lbOptions = lb.options;
-
-        lbOptions.initialZoomLevel = settings.fillScreen ? "fill" : "fit";
-        lbOptions.secondaryZoomLevel = settings.fillScreen ? "fit" : "fill";
-        lbOptions.dataSource = imgItems.map((it) => ({
+        const dataSource = imgItems.map((it) => ({
             src: it.src,
             w: it.w ?? 512,
             h: it.h ?? 512,
-            msrc: it.thumb ?? it.src, // thumb used in animation (optional)
+            msrc: it.thumb ?? it.src,
         }));
+
+        lbOptions.initialZoomLevel = settings.fillScreen ? "fill" : "fit";
+        lbOptions.secondaryZoomLevel = settings.fillScreen ? "fit" : "fill";
+        lbOptions.dataSource = dataSource;
+
+        const pswp = lb.pswp;
+        if (pswp) {
+            const previousCount = pswp.getNumItems();
+            pswp.options.dataSource = dataSource;
+
+            const nextIndex = pswp.currIndex + 1;
+            if (dataSource.length > previousCount && nextIndex < dataSource.length)
+                pswp.refreshSlideContent(nextIndex);
+        }
 
         return () => {
             // don't destroy on every imgItems change; destroy only on unmount
@@ -571,6 +665,7 @@ export default function Gallery() {
     // destroy on unmount
     React.useEffect(() => {
         return () => {
+            activeRequestRef.current?.abort();
             lightboxRef.current?.destroy();
             lightboxRef.current = null;
         };
@@ -655,8 +750,7 @@ export default function Gallery() {
             <form
                 onSubmit={(e) => {
                     e.preventDefault();
-                    settings.searchText = searchBoxText;
-                    setSettings({ ...settings });
+                    setSettings(prev => ({ ...prev, searchText: searchBoxText }));
                 }}
             >
                 <input

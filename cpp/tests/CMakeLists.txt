@@ -7,3 +7,15 @@ add_executable(${PROJECT_NAME}_test_avif avif.cpp)
 add_test(NAME ${PROJECT_NAME}_test_avif COMMAND ${PROJECT_NAME}_test_avif WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 set_target_properties(${PROJECT_NAME}_test_avif PROPERTIES FOLDER "${PROJECT_NAME}/test")
 target_link_libraries(${PROJECT_NAME}_test_avif sprintboard_img)
+
+add_executable(
+    ${PROJECT_NAME}_test_img_list
+    img_list.cpp
+    ../src/server/src/response/img_list.cpp
+)
+add_test(NAME ${PROJECT_NAME}_test_img_list COMMAND ${PROJECT_NAME}_test_img_list)
+set_target_properties(${PROJECT_NAME}_test_img_list PROPERTIES FOLDER "${PROJECT_NAME}/test")
+target_include_directories(
+    ${PROJECT_NAME}_test_img_list PRIVATE ../src/server/src
+)
+target_link_libraries(${PROJECT_NAME}_test_img_list sprintboard_img)

@@ -1,5 +1,9 @@
+#include <algorithm>
+#include <charconv>
+#include <expected>
 #include <fstream>
 #include <print>
+#include <string_view>
 
 #define CPPHTTPLIB_OPENSSL_SUPPORT
 #include <httplib.h>
@@ -18,6 +22,33 @@ namespace {
 
     using HttpReq = httplib::Request;
     using HttpRes = httplib::Response;
+
+    constexpr size_t DEFAULT_PAGE_SIZE = 100;
+    constexpr size_t MAX_PAGE_SIZE = 200;
+
+
+    std::expected<size_t, std::string> parse_size_param(
+        const HttpReq& req,
+        const std::string_view name,
+        const size_t default_value,
+        const bool allow_zero
+    ) {
+        const auto it = req.params.find(std::string{ name });
+        if (it == req.params.end())
+            return default_value;
+
+        size_t value = 0;
+        const auto& text = it->second;
+        const auto [ptr, ec] = std::from_chars(
+            text.data(), text.data() + text.size(), value
+        );
+        if (ec != std::errc{} || ptr != text.data() + text.size() ||
+            (!allow_zero && value == 0)) {
+            return std::unexpected(std::format("Invalid '{}' parameter", name));
+        }
+
+        return value;
+    }
 
 
     std::pair<sung::Path, sung::Path> split_namespace(const sung::Path& p) {
@@ -195,6 +226,23 @@ int main() {
         if (it_param_query != req.params.end())
             query = it_param_query->second;
 
+        const auto offset = ::parse_size_param(req, "offset", 0, true);
+        if (!offset) {
+            res.status = 400;
+            res.set_content(offset.error(), "text/plain");
+            return;
+        }
+
+        const auto parsed_limit = ::parse_size_param(
+            req, "limit", ::DEFAULT_PAGE_SIZE, false
+        );
+        if (!parsed_limit) {
+            res.status = 400;
+            res.set_content(parsed_limit.error(), "text/plain");
+            return;
+        }
+        const auto limit = std::min(*parsed_limit, ::MAX_PAGE_SIZE);
+
         const auto svrcfg = server_configs.get();
         sung::ImageListResponse response;
 
@@ -234,7 +282,7 @@ int main() {
         }
 
         response.sort();
-        const auto json_data = response.make_json();
+        const auto json_data = response.make_json(*offset, limit);
         const auto json_str = json_data.dump();
         res.status = 200;
         res.set_content(json_str, "application/json");
