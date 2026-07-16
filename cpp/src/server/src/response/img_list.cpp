@@ -1,6 +1,7 @@
 #include "response/img_list.hpp"
 
 #include <atomic>
+#include <expected>
 #include <mutex>
 #include <print>
 #include <queue>
@@ -21,6 +22,97 @@
 
 
 namespace {
+
+    constexpr std::string_view BASE64URL_ALPHABET =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+
+    bool file_before(
+        const sung::ImageListResponse::FileInfo& a,
+        const sung::ImageListResponse::FileInfo& b
+    ) {
+        if (a.name_ != b.name_)
+            return a.name_ > b.name_;
+        return sung::tostr(a.path_) > sung::tostr(b.path_);
+    }
+
+    std::string encode_base64url(const std::string_view input) {
+        std::string output;
+        output.reserve((input.size() * 4 + 2) / 3);
+
+        uint32_t buffer = 0;
+        int bits = 0;
+        for (const auto byte : input) {
+            buffer = (buffer << 8) | static_cast<unsigned char>(byte);
+            bits += 8;
+            while (bits >= 6) {
+                bits -= 6;
+                output.push_back(BASE64URL_ALPHABET[(buffer >> bits) & 0x3f]);
+            }
+        }
+        if (bits > 0) {
+            output.push_back(BASE64URL_ALPHABET[(buffer << (6 - bits)) & 0x3f]);
+        }
+        return output;
+    }
+
+    std::expected<std::string, std::string> decode_base64url(
+        const std::string_view input
+    ) {
+        if (input.size() % 4 == 1)
+            return std::unexpected("Invalid cursor encoding");
+
+        std::string output;
+        output.reserve(input.size() * 3 / 4);
+        uint32_t buffer = 0;
+        int bits = 0;
+        for (const auto ch : input) {
+            const auto pos = BASE64URL_ALPHABET.find(ch);
+            if (pos == std::string_view::npos)
+                return std::unexpected("Invalid cursor encoding");
+            buffer = (buffer << 6) | static_cast<uint32_t>(pos);
+            bits += 6;
+            if (bits >= 8) {
+                bits -= 8;
+                output.push_back(static_cast<char>((buffer >> bits) & 0xff));
+            }
+        }
+        if (bits > 0 && (buffer & ((uint32_t{ 1 } << bits) - 1)) != 0)
+            return std::unexpected("Invalid cursor encoding");
+        return output;
+    }
+
+    std::string make_cursor(
+        const sung::ImageListResponse::FileInfo& file_info
+    ) {
+        const nlohmann::json payload = {
+            { "v", 1 },
+            { "name", file_info.name_ },
+            { "src", sung::tostr(file_info.path_) },
+        };
+        return encode_base64url(payload.dump());
+    }
+
+    std::expected<sung::ImageListResponse::FileInfo, std::string> parse_cursor(
+        const std::string_view cursor
+    ) {
+        const auto decoded = decode_base64url(cursor);
+        if (!decoded)
+            return std::unexpected(decoded.error());
+
+        try {
+            const auto payload = nlohmann::json::parse(*decoded);
+            if (payload.at("v").get<int>() != 1)
+                return std::unexpected("Unsupported cursor version");
+
+            sung::ImageListResponse::FileInfo output;
+            output.name_ = payload.at("name").get<std::string>();
+            output.path_ = sung::fromstr(payload.at("src").get<std::string>());
+            return output;
+        } catch (const std::exception&) {
+            return std::unexpected("Invalid cursor payload");
+        }
+    }
 
     class Query {
 
@@ -394,13 +486,7 @@ namespace sung {
     }
 
     void ImageListResponse::sort() {
-        std::sort(
-            files_.begin(), files_.end(), [](const auto& a, const auto& b) {
-                if (a.name_ != b.name_)
-                    return a.name_ > b.name_;
-                return sung::tostr(a.path_) > sung::tostr(b.path_);
-            }
-        );
+        std::sort(files_.begin(), files_.end(), ::file_before);
 
         std::sort(dirs_.begin(), dirs_.end(), [](const auto& a, const auto& b) {
             return a.name_ > b.name_;
@@ -410,11 +496,32 @@ namespace sung {
     nlohmann::json ImageListResponse::make_json(
         const size_t offset, const size_t limit
     ) const {
+        return make_json_page(std::min(offset, files_.size()), limit);
+    }
+
+    std::expected<nlohmann::json, std::string> ImageListResponse::make_json(
+        const std::string_view cursor, const size_t limit
+    ) const {
+        const auto cursor_info = ::parse_cursor(cursor);
+        if (!cursor_info)
+            return std::unexpected(cursor_info.error());
+
+        const auto first = static_cast<size_t>(std::distance(
+            files_.begin(),
+            std::upper_bound(
+                files_.begin(), files_.end(), *cursor_info, ::file_before
+            )
+        ));
+        return make_json_page(first, limit);
+    }
+
+    nlohmann::json ImageListResponse::make_json_page(
+        const size_t first, const size_t limit
+    ) const {
         auto output = nlohmann::json::object();
 
         {
             auto& file_array = output["imageFiles"] = nlohmann::json::array();
-            const auto first = std::min(offset, files_.size());
             const auto last = std::min(
                 first + std::min(limit, files_.size() - first), files_.size()
             );
@@ -430,6 +537,11 @@ namespace sung {
             output["hasMore"] = last < files_.size();
             output["nextOffset"] = last < files_.size()
                                        ? nlohmann::json(last)
+                                       : nlohmann::json(nullptr);
+            output["nextCursor"] = last < files_.size() && last > first
+                                       ? nlohmann::json(
+                                             ::make_cursor(files_[last - 1])
+                                         )
                                        : nlohmann::json(nullptr);
         }
 

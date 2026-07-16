@@ -29,6 +29,7 @@ interface ImageListResponse {
     totalImageCount: number;
     hasMore: boolean;
     nextOffset: number | null;
+    nextCursor: string | null;
     thumbnailWidth: number;
     thumbnailHeight: number;
 };
@@ -68,14 +69,15 @@ function unlockSelection() {
 async function fetchImageList(
     dir: string,
     query: string,
-    offset: number,
+    cursor: string | null,
     recursive: boolean,
     signal?: AbortSignal,
 ): Promise<ImageListResponse> {
     const url = new URL("/api/images/list", window.location.origin);
     url.searchParams.set("dir", dir);
     url.searchParams.set("query", query);
-    url.searchParams.set("offset", String(offset));
+    if (cursor)
+        url.searchParams.set("cursor", cursor);
     url.searchParams.set("limit", String(PAGE_SIZE));
     url.searchParams.set("recursive", recursive ? "1" : "0");
 
@@ -110,7 +112,7 @@ export default function Gallery() {
     const loadingRef = React.useRef(false);
     const imgItemsRef = React.useRef(imgItems);
     const pathnameRef = React.useRef("");
-    const nextOffsetRef = React.useRef<number | null>(0);
+    const nextCursorRef = React.useRef<string | null | undefined>(undefined);
     const requestGenerationRef = React.useRef(0);
     const activeRequestRef = React.useRef<AbortController | null>(null);
     const loadMoreRef = React.useRef<() => Promise<void>>(async () => { });
@@ -180,17 +182,14 @@ export default function Gallery() {
         setImgItems(prev => prev.filter(x => x.src !== it.src));
         imgItemsRef.current = imgItemsRef.current.filter(x => x.src !== it.src);
         setTotalImgCount(prev => Math.max(0, prev - 1));
-        if (nextOffsetRef.current !== null) {
-            nextOffsetRef.current = Math.max(0, nextOffsetRef.current - 1);
-        }
         pswp.close();
     }
 
     const loadMore = React.useCallback(async () => {
         if (loadingRef.current)
             return;
-        const offset = nextOffsetRef.current;
-        if (offset === null)
+        const cursor = nextCursorRef.current;
+        if (cursor === null || cursor === undefined)
             return;
         if (totalImgCount > 0 && imgItemsRef.current.length >= totalImgCount)
             return;
@@ -203,14 +202,14 @@ export default function Gallery() {
             const data = await fetchImageList(
                 curDir,
                 settings.searchText,
-                offset,
+                cursor,
                 settings.filesRecursive,
                 controller.signal,
             );
             if (generation !== requestGenerationRef.current)
                 return;
 
-            nextOffsetRef.current = data.nextOffset;
+            nextCursorRef.current = data.nextCursor;
             setTotalImgCount(data.totalImageCount);
 
             setImgItems(prev => {
@@ -306,7 +305,7 @@ export default function Gallery() {
 
         const controller = new AbortController();
         activeRequestRef.current = controller;
-        nextOffsetRef.current = 0;
+        nextCursorRef.current = undefined;
         setFolders([]);
         setImgItems([]);
         setTotalImgCount(0);
@@ -318,7 +317,7 @@ export default function Gallery() {
                 let data = await fetchImageList(
                     curDir,
                     settings.searchText,
-                    0,
+                    null,
                     settings.filesRecursive,
                     controller.signal,
                 );
@@ -336,7 +335,7 @@ export default function Gallery() {
                             merged.push(it);
                         }
                     }
-                    nextOffsetRef.current = page.nextOffset;
+                    nextCursorRef.current = page.nextCursor;
                     imgItemsRef.current = [...merged];
                     setImgItems([...merged]);
                     setTotalImgCount(page.totalImageCount);
@@ -350,12 +349,12 @@ export default function Gallery() {
                 while (
                     targetSrc &&
                     !seen.has(targetSrc) &&
-                    data.nextOffset !== null
+                    data.nextCursor !== null
                 ) {
                     data = await fetchImageList(
                         curDir,
                         settings.searchText,
-                        data.nextOffset,
+                        data.nextCursor,
                         settings.filesRecursive,
                         controller.signal,
                     );
@@ -740,7 +739,16 @@ export default function Gallery() {
                 settings={settings}
                 onChangeSettings={(updater) => setSettings(updater)}
                 onClose={() => setMenuOpen(false)}
-                onRefreshNow={() => { navigate(0); }}
+                onRefreshNow={async () => {
+                    const response = await fetch("/api/images/index/refresh", {
+                        method: "POST",
+                    });
+                    if (!response.ok) {
+                        alert(`Refresh failed: HTTP ${response.status}`);
+                        return;
+                    }
+                    navigate(0);
+                }}
             />
 
             <Breadcrumbs dir={curDir} onNavigate={p => navigate(`/images/${p}`)} />

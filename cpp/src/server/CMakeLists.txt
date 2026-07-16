@@ -35,6 +35,7 @@ target_link_libraries(${target_name} PRIVATE
     sprintboard_img
     TBB::tbb
     TBB::tbbmalloc
+    unofficial::sqlite3::sqlite3
 )
 
 if (APPLE)

@@ -9,6 +9,7 @@
 #include <httplib.h>
 #include <refimg/image/simple_img_info.hpp>
 
+#include "index/image_index.hpp"
 #include "response/img_details.hpp"
 #include "response/img_list.hpp"
 #include "sung/auxiliary/filesys.hpp"
@@ -180,11 +181,23 @@ int main() {
         return 1;
     }
 
+    sung::ImageIndex image_index{
+        sung::fromstr(".sprintboard/image-index.sqlite3")
+    };
+    image_index.initialize(server_configs.get());
+
     sung::TaskManager tasks;
     auto power_req = std::make_shared<::PowerRequestTask>();
     tasks.add_periodic_task(power_req, 3.0);
 
     tasks.add_periodic_task([&server_configs]() { server_configs.tick(); }, 1);
+
+    tasks.add_periodic_task(
+        [&image_index, &server_configs]() {
+            image_index.refresh(server_configs.get());
+        },
+        5
+    );
 
     tasks.add_periodic_task(
         sung::create_img_walker_task(server_configs, power_req->get()),
@@ -243,15 +256,22 @@ int main() {
         }
         const auto limit = std::min(*parsed_limit, ::MAX_PAGE_SIZE);
 
-        const auto svrcfg = server_configs.get();
-        sung::ImageListResponse response;
+        std::string cursor;
+        const auto it_param_cursor = req.params.find("cursor");
+        if (it_param_cursor != req.params.end())
+            cursor = it_param_cursor->second;
+        if (!cursor.empty() && req.params.contains("offset") && *offset != 0) {
+            res.status = 400;
+            res.set_content(
+                "'cursor' cannot be combined with a nonzero 'offset'",
+                "text/plain"
+            );
+            return;
+        }
 
-        if (param_dir.empty()) {
-            for (auto [dir, bindings] : svrcfg->dir_bindings_) {
-                response.add_dir(dir, sung::fs::u8path(dir));
-            }
-        } else {
-            const auto dir_path = sung::fs::u8path(param_dir);
+        const auto svrcfg = server_configs.get();
+        if (!param_dir.empty()) {
+            const auto dir_path = sung::fromstr(param_dir);
             auto [namespace_path, rest_path] = ::split_namespace(dir_path);
 
             const auto binding = svrcfg->find_binding(namespace_path);
@@ -274,19 +294,36 @@ int main() {
                     );
                     return;
                 }
-
-                response.fetch_directory(
-                    namespace_path, local_dir, *full_path, query, recursive
-                );
             }
         }
 
-        response.sort();
-        const auto json_data = response.make_json(*offset, limit);
+        sung::ImageListResponse response = image_index.query(
+            sung::fromstr(param_dir), query, recursive
+        );
+
+        nlohmann::json json_data;
+        if (cursor.empty()) {
+            json_data = response.make_json(*offset, limit);
+        } else {
+            const auto cursor_response = response.make_json(cursor, limit);
+            if (!cursor_response) {
+                res.status = 400;
+                res.set_content(cursor_response.error(), "text/plain");
+                return;
+            }
+            json_data = *cursor_response;
+        }
         const auto json_str = json_data.dump();
         res.status = 200;
         res.set_content(json_str, "application/json");
         return;
+    });
+
+    svr.Post("/api/images/index/refresh", [&](const HttpReq&, HttpRes& res) {
+        const sung::ScopedWakeLock wake_lock{ power_req->get() };
+        const auto stats = image_index.refresh(server_configs.get());
+        res.status = 200;
+        res.set_content(stats.make_json().dump(), "application/json");
     });
 
     svr.Get("/api/images/details", [&](const HttpReq& req, HttpRes& res) {
@@ -339,9 +376,12 @@ int main() {
             return;
         }
 
-        auto param_path = it_param_path->second;
+        auto api_path = it_param_path->second;
+        auto param_path = api_path;
         if (param_path.starts_with("/img/")) {
             param_path = param_path.substr(5);
+        } else {
+            api_path = "/img/" + api_path;
         }
 
         const auto svrcfg = server_configs.get();
@@ -369,6 +409,8 @@ int main() {
             sung::fs::remove(file_path);
             std::println("Deleted file: {}", sung::tostr(file_path));
         }
+
+        image_index.remove_api_path(api_path);
 
         res.status = 200;
         res.set_content("File deleted", "text/plain");

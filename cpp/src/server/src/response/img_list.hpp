@@ -1,5 +1,7 @@
 #pragma once
 
+#include <expected>
+#include <string_view>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -54,8 +56,12 @@ namespace sung {
 
         void sort();
         nlohmann::json make_json(size_t offset, size_t limit) const;
+        std::expected<nlohmann::json, std::string> make_json(
+            std::string_view cursor, size_t limit
+        ) const;
 
     private:
+        nlohmann::json make_json_page(size_t first, size_t limit) const;
         std::pair<double, double> calc_average_thumbnail_size() const;
 
         struct DirInfo {

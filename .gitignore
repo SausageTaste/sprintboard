@@ -27,3 +27,4 @@ dist-ssr
 /.vscode
 /build
 /server_configs.json
+/.sprintboard

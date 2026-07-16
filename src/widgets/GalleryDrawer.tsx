@@ -9,7 +9,7 @@ type Props = {
     onClose: () => void;
 
     // optional actions
-    onRefreshNow?: () => void;
+    onRefreshNow?: () => void | Promise<void>;
 };
 
 
@@ -118,8 +118,8 @@ export default function GalleryDrawer({
                         <div className="drawer-label">Actions</div>
                         <button
                             className="drawer-btn"
-                            onClick={() => {
-                                onRefreshNow?.();
+                            onClick={async () => {
+                                await onRefreshNow?.();
                                 onClose();
                             }}
                         >

@@ -19,3 +19,20 @@ target_include_directories(
     ${PROJECT_NAME}_test_img_list PRIVATE ../src/server/src
 )
 target_link_libraries(${PROJECT_NAME}_test_img_list sprintboard_img)
+
+add_executable(
+    ${PROJECT_NAME}_test_image_index
+    image_index.cpp
+    ../src/server/src/index/image_index.cpp
+    ../src/server/src/response/img_list.cpp
+)
+add_test(NAME ${PROJECT_NAME}_test_image_index COMMAND ${PROJECT_NAME}_test_image_index)
+set_target_properties(${PROJECT_NAME}_test_image_index PROPERTIES FOLDER "${PROJECT_NAME}/test")
+target_include_directories(
+    ${PROJECT_NAME}_test_image_index PRIVATE ../src/server/src
+)
+target_link_libraries(
+    ${PROJECT_NAME}_test_image_index
+    sprintboard_img
+    unofficial::sqlite3::sqlite3
+)

@@ -97,13 +97,83 @@ int main() {
         return 1;
     }
 
+    const auto cursor = first["nextCursor"].get<std::string>();
+    const auto cursor_page = response.make_json(cursor, 2);
+    if (!check(cursor_page.has_value(), "accepts a valid cursor") ||
+        !check_page(*cursor_page, 2, 5, true) ||
+        !check(
+            (*cursor_page)["imageFiles"] == middle["imageFiles"],
+            "cursor and offset return the same middle page"
+        )) {
+        return 1;
+    }
+
+    sung::ImageListResponse changed_response;
+    changed_response.add_file(
+        std::string{ "zz.png" }, sung::fromstr("/img/zz.png"), 10, 10
+    );
+    changed_response.add_file(
+        std::string{ "z.png" }, sung::fromstr("/img/z.png"), 500, 600
+    );
+    changed_response.add_file(
+        std::string{ "same.png" }, sung::fromstr("/img/a/same.png"), 300, 400
+    );
+    changed_response.add_file(
+        std::string{ "b.png" }, sung::fromstr("/img/b.png"), 700, 800
+    );
+    changed_response.add_file(
+        std::string{ "a.png" }, sung::fromstr("/img/a.png"), 100, 200
+    );
+    changed_response.sort();
+    const auto changed_page = changed_response.make_json(cursor, 2);
+    if (!check(
+            changed_page.has_value(),
+            "cursor remains valid when its item is deleted"
+        ) ||
+        !check(
+            (*changed_page)["imageFiles"][0]["src"] == "/img/a/same.png",
+            "cursor resumes after a deleted key and ignores earlier inserts"
+        )) {
+        return 1;
+    }
+
+    if (!check(
+            !response.make_json("not-a-cursor", 2).has_value(),
+            "rejects malformed cursors"
+        )) {
+        return 1;
+    }
+
     const auto final = response.make_json(4, 2);
     if (!check_page(final, 1, 5, false) ||
         !check(
             final["nextOffset"].is_null(), "final page has no next offset"
+        ) ||
+        !check(
+            final["nextCursor"].is_null(), "final page has no next cursor"
         )) {
         return 1;
     }
+
+    size_t traversed = 0;
+    std::string traversal_cursor;
+    while (true) {
+        nlohmann::json page;
+        if (traversal_cursor.empty()) {
+            page = response.make_json(0, 2);
+        } else {
+            const auto cursor_result = response.make_json(traversal_cursor, 2);
+            if (!check(cursor_result.has_value(), "traverses valid cursors"))
+                return 1;
+            page = *cursor_result;
+        }
+        traversed += page["imageFiles"].size();
+        if (page["nextCursor"].is_null())
+            break;
+        traversal_cursor = page["nextCursor"].get<std::string>();
+    }
+    if (!check(traversed == 5, "cursor traversal visits every image once"))
+        return 1;
 
     const auto out_of_range = response.make_json(20, 2);
     if (!check_page(out_of_range, 0, 5, false) ||

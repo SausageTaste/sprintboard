@@ -7,6 +7,7 @@
         "nlohmann-json",
         "pugixml",
         "spdlog",
+        "sqlite3",
         "tbb",
         {
             "name": "cpp-httplib",
