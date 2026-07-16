@@ -377,29 +377,68 @@ int main() {
 
     // SPA fallback: for any non-API GET that wasn't matched by a real file,
     // return index.html so the client-side router can handle it.
-    svr.set_error_handler([&](const HttpReq& req, HttpRes& res) {
-        sung::ScopedWakeLock wake_lock{ power_req->get() };
+    svr.set_error_handler(
+        [&](const HttpReq& req, HttpRes& res) {
+            using HandlerResponse = httplib::Server::HandlerResponse;
 
-        if (req.method != "GET") {
-            std::println(
-                "Non-GET request not found: {} {}", req.method, req.path
-            );
-            return;
-        }
-        if (req.path.rfind("/api/", 0) == 0 || req.path == "/api") {
-            std::println("API route not found: {} {}", req.method, req.path);
-            return;
-        }
+            sung::ScopedWakeLock wake_lock{ power_req->get() };
 
-        std::string html;
-        if (sung::read_file("./dist/index.html", html)) {
-            res.status = 200;
-            res.set_content(std::move(html), "text/html; charset=utf-8");
-        } else {
-            res.status = 500;
-            res.set_content("Internal Server Error", "text/plain");
+            // cpp-httplib invokes the error handler for every response with a
+            // status >= 400, including malformed requests and errors returned
+            // by successfully matched routes.
+            if (req.method.empty() || req.path.empty()) {
+                std::println(
+                    "Malformed request from {}:{} (status {})",
+                    req.remote_addr,
+                    req.remote_port,
+                    res.status
+                );
+                return HandlerResponse::Unhandled;
+            }
+
+            if (!req.matched_route.empty()) {
+                std::println(
+                    "Request failed: {} {} matched {} (status {})",
+                    req.method,
+                    req.path,
+                    req.matched_route,
+                    res.status
+                );
+                return HandlerResponse::Unhandled;
+            }
+
+            if (res.status != 404) {
+                std::println(
+                    "Request failed before routing: {} {} (status {})",
+                    req.method,
+                    req.path,
+                    res.status
+                );
+                return HandlerResponse::Unhandled;
+            }
+
+            if (req.method != "GET") {
+                std::println(
+                    "Non-GET route not found: {} {}", req.method, req.path
+                );
+                return HandlerResponse::Unhandled;
+            }
+            if (req.path.rfind("/api/", 0) == 0 || req.path == "/api") {
+                std::println("API route not found: {} {}", req.method, req.path);
+                return HandlerResponse::Unhandled;
+            }
+
+            std::string html;
+            if (sung::read_file("./dist/index.html", html)) {
+                res.status = 200;
+                res.set_content(std::move(html), "text/html; charset=utf-8");
+            } else {
+                res.status = 500;
+                res.set_content("Internal Server Error", "text/plain");
+            }
+            return HandlerResponse::Handled;
         }
-    });
+    );
 
     {
         const auto svrcfg = server_configs.get();
