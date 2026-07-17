@@ -110,13 +110,18 @@ img,
   background: rgba(0, 0, 0, 0.45);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 160ms ease;
+  /* visibility:hidden once faded out, so iOS Safari stops compositing the
+     closed backdrop and cannot leave stale paint behind */
+  visibility: hidden;
+  transition: opacity 160ms ease, visibility 0s 160ms;
   z-index: 9998;
 }
 
 .drawer-backdrop.open {
   opacity: 1;
   pointer-events: auto;
+  visibility: visible;
+  transition: opacity 160ms ease;
 }
 
 .drawer {
@@ -128,7 +133,10 @@ img,
   background: rgba(24, 24, 24, 0.98);
   border-right: 1px solid rgba(255, 255, 255, 0.12);
   transform: translateX(-105%);
-  transition: transform 200ms ease;
+  /* visibility:hidden once slid out, so iOS Safari stops compositing the
+     closed drawer and cannot leave stale paint behind */
+  visibility: hidden;
+  transition: transform 200ms ease, visibility 0s 200ms;
   z-index: 9999;
 
   /* iOS safe area */
@@ -142,6 +150,8 @@ img,
 
 .drawer.open {
   transform: translateX(0);
+  visibility: visible;
+  transition: transform 200ms ease;
 }
 
 .drawer-header {

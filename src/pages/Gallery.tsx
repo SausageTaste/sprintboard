@@ -1183,10 +1183,35 @@ export default function Gallery() {
     React.useEffect(() => {
         if (!menuOpen) return;
 
-        const prev = document.body.style.overflow;
-        document.body.style.overflow = "hidden";
+        // iPhone Safari re-letterboxes an edge-to-edge page around its chrome
+        // when the document stops being scrollable, and can leave it that way
+        // after the drawer closes. Pin the scroll position and swallow
+        // background touch scrolling instead of toggling body overflow there.
+        const lockedScroll = { x: window.scrollX, y: window.scrollY };
+
+        const preventBackgroundTouchScroll = (event: TouchEvent) => {
+            if (event.target instanceof Element && event.target.closest(".drawer"))
+                return;
+            event.preventDefault();
+        };
+
+        const restoreScroll = () => {
+            if (window.scrollX !== lockedScroll.x || window.scrollY !== lockedScroll.y)
+                window.scrollTo(lockedScroll.x, lockedScroll.y);
+        };
+
+        const lockBodyOverflow = !usesIPhoneDocumentViewportWorkaround();
+        const prevOverflow = document.body.style.overflow;
+        if (lockBodyOverflow)
+            document.body.style.overflow = "hidden";
+        document.addEventListener("touchmove", preventBackgroundTouchScroll, { passive: false });
+        window.addEventListener("scroll", restoreScroll);
+
         return () => {
-            document.body.style.overflow = prev;
+            document.removeEventListener("touchmove", preventBackgroundTouchScroll);
+            window.removeEventListener("scroll", restoreScroll);
+            if (lockBodyOverflow)
+                document.body.style.overflow = prevOverflow;
         };
     }, [menuOpen]);
 
