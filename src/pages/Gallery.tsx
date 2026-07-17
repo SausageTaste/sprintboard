@@ -44,6 +44,11 @@ type SafeAreaInsets = {
     left: number;
 };
 
+type ImageDimensions = {
+    width: number;
+    height: number;
+};
+
 const NO_SAFE_AREA_INSETS: SafeAreaInsets = { top: 0, right: 0, bottom: 0, left: 0 };
 
 function usesIPhoneDocumentViewportWorkaround(): boolean {
@@ -186,6 +191,7 @@ export default function Gallery() {
     const loadMoreRef = React.useRef<() => Promise<void>>(async () => { });
     const safeAreaProbeRef = React.useRef<HTMLDivElement | null>(null);
     const safeAreaInsetsRef = React.useRef<SafeAreaInsets>(NO_SAFE_AREA_INSETS);
+    const naturalDimensionsRef = React.useRef(new Map<string, ImageDimensions>());
 
     const { "*": path } = useParams();   // catch-all route
     const navigate = useNavigate();
@@ -502,6 +508,36 @@ export default function Gallery() {
                     positionEdgeToEdgeOverlay(element);
             });
 
+            lb.on("loadComplete", ({ content, slide, isError }) => {
+                const image = content.element;
+                if (isError || !slide || !(image instanceof HTMLImageElement))
+                    return;
+
+                const width = image.naturalWidth;
+                const height = image.naturalHeight;
+                if (!width || !height)
+                    return;
+
+                const src = String(content.data.src ?? "");
+                if (src)
+                    naturalDimensionsRef.current.set(src, { width, height });
+
+                if (slide.width === width && slide.height === height)
+                    return;
+
+                Object.assign(content.data, { w: width, h: height, width, height });
+                Object.assign(slide.data, { w: width, h: height, width, height });
+                content.width = width;
+                content.height = height;
+                slide.width = width;
+                slide.height = height;
+
+                // PhotoSwipe lays out a slide from the dimensions supplied before
+                // the image loads. Recalculate once the browser has decoded the
+                // image so zoom, pan bounds, and centering use its real boundary.
+                slide.resize();
+            });
+
             lb.on("change", () => {
                 const pswp = lb.pswp;
                 if (!pswp)
@@ -721,12 +757,15 @@ export default function Gallery() {
 
         const lb = lightboxRef.current;
         const lbOptions = lb.options;
-        const dataSource = imgItems.map((it) => ({
-            src: it.src,
-            w: it.w ?? 512,
-            h: it.h ?? 512,
-            msrc: it.thumb ?? it.src,
-        }));
+        const dataSource = imgItems.map((it) => {
+            const naturalDimensions = naturalDimensionsRef.current.get(it.src);
+            return {
+                src: it.src,
+                w: naturalDimensions?.width ?? it.w ?? 512,
+                h: naturalDimensions?.height ?? it.h ?? 512,
+                msrc: it.thumb ?? it.src,
+            };
+        });
 
         lbOptions.initialZoomLevel = settings.fillScreen
             ? (zoomLevel) => {
