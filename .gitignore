@@ -24,7 +24,8 @@ dist-ssr
 *.sw?
 
 # C++
+/.claude
+/.sprintboard
 /.vscode
 /build
 /server_configs.json
-/.sprintboard
