@@ -11,7 +11,7 @@ const DEFAULT_SETTINGS: ViewerSettings = {
     searchText: "",
     thumbnailSize: 150,
     fillScreen: false,
-    edgeToEdge: false,
+    edgeToEdge: true,
     filesRecursive: false,
 };
 
