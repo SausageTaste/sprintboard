@@ -56,19 +56,23 @@ function usesIPhoneDocumentViewportWorkaround(): boolean {
         && window.matchMedia("(display-mode: browser)").matches;
 }
 
+// The layout viewport is not vertically centered on the physical screen: the
+// status area above it is shorter than the address bar + home indicator below
+// it. Share measured from an iOS 26 Safari screenshot (~82pt of 182pt chrome).
+const IPHONE_TOP_CHROME_SHARE = 0.45;
+
 function getIPhoneScreenViewport() {
     const isPortrait = window.innerHeight >= window.innerWidth;
     const screenLongSide = Math.max(window.screen.width, window.screen.height);
     const screenShortSide = Math.min(window.screen.width, window.screen.height);
-    const screenWidth = isPortrait ? screenShortSide : screenLongSide;
-    const screenHeight = isPortrait ? screenLongSide : screenShortSide;
 
-    // `screen` dimensions and Safari layout dimensions use different CSS
-    // coordinate scales when browser chrome is visible. Use the layout width
-    // as the common scale, then preserve the physical screen aspect ratio.
+    // Safari insets the page canvas horizontally (innerWidth < screen.width)
+    // but keeps CSS pixels 1:1 with screen points, so take the screen height
+    // as-is instead of rescaling it by the width ratio. The inset side strips
+    // are unreachable, so the width stays capped at the layout width.
     const width = window.innerWidth;
-    const height = width * screenHeight / screenWidth;
-    const topInset = Math.max(0, (height - window.innerHeight) / 2);
+    const height = isPortrait ? screenLongSide : screenShortSide;
+    const topInset = Math.max(0, (height - window.innerHeight) * IPHONE_TOP_CHROME_SHARE);
 
     return { width, height, topInset };
 }
@@ -160,6 +164,65 @@ function startViewerGeometryDiagnostics(pswp: PhotoSwipe): () => void {
     setOutline(root, "#ff2bd6");
     setOutline(pswp.scrollWrap, "#00e5ff");
 
+    // Ruler ticks labelled in layout-viewport coordinates. A device
+    // screenshot then reveals exactly where the layout viewport sits on the
+    // physical screen and whether CSS pixels map 1:1 onto screen points.
+    const ruler = document.createElement("div");
+    ruler.setAttribute("aria-hidden", "true");
+    Object.assign(ruler.style, {
+        position: "absolute",
+        inset: "0",
+        zIndex: "2147483646",
+        pointerEvents: "none",
+        userSelect: "none",
+        font: "8px/1 ui-monospace, SFMono-Regular, Menlo, monospace",
+    });
+    root.appendChild(ruler);
+
+    let rulerOrigin = { x: NaN, y: NaN };
+
+    const addRulerElement = (left: number, top: number, style: Partial<CSSStyleDeclaration>, text?: string) => {
+        const el = document.createElement(text === undefined ? "div" : "span");
+        if (text !== undefined)
+            el.textContent = text;
+        Object.assign(el.style, {
+            position: "absolute",
+            left: `${left}px`,
+            top: `${top}px`,
+            background: "#00ff6a",
+            ...style,
+        });
+        ruler.appendChild(el);
+    };
+
+    const rebuildRuler = (rootRect: DOMRect) => {
+        rulerOrigin = { x: rootRect.x, y: rootRect.y };
+        ruler.replaceChildren();
+
+        const labelStyle: Partial<CSSStyleDeclaration> = {
+            padding: "1px 2px",
+            background: "rgba(0,0,0,0.7)",
+            color: "#00ff6a",
+        };
+
+        for (let viewportY = -300; viewportY <= 1500; viewportY += 50) {
+            const localY = viewportY - rootRect.y;
+            if (localY < 0 || localY > rootRect.height)
+                continue;
+            addRulerElement(0, localY, { width: "40px", height: "1px" });
+            addRulerElement(44, localY - 4, labelStyle, `y${viewportY}`);
+        }
+
+        const xRulerLocalY = 620 - rootRect.y;
+        for (let viewportX = -100; viewportX <= 600; viewportX += 50) {
+            const localX = viewportX - rootRect.x;
+            if (localX < 0 || localX > rootRect.width)
+                continue;
+            addRulerElement(localX, xRulerLocalY, { width: "1px", height: "24px" });
+            addRulerElement(localX + 2, xRulerLocalY + 26, labelStyle, `x${viewportX}`);
+        }
+    };
+
     let animationFrame = 0;
     let lastUpdate = 0;
     let stopped = false;
@@ -184,10 +247,17 @@ function startViewerGeometryDiagnostics(pswp: PhotoSwipe): () => void {
             const rootStyle = window.getComputedStyle(root);
             const bounds = slide?.bounds;
 
+            const rootRect = root.getBoundingClientRect();
+            if (rootRect.x !== rulerOrigin.x || rootRect.y !== rulerOrigin.y)
+                rebuildRuler(rootRect);
+
+            const screenAny = window.screen as unknown as Record<string, number | undefined>;
+
             debugPanel.textContent = [
                 "VIEWER GEOMETRY (magenta=root cyan=wrap yellow=image)",
                 `screen ${screen.width}x${screen.height} avail ${screen.availWidth}x${screen.availHeight} dpr ${window.devicePixelRatio}`,
                 `outer ${window.outerWidth}x${window.outerHeight}`,
+                `screenXY ${formatDebugNumber(window.screenX)},${formatDebugNumber(window.screenY)} availTL ${formatDebugNumber(screenAny.availLeft ?? NaN)},${formatDebugNumber(screenAny.availTop ?? NaN)}`,
                 `inner ${window.innerWidth}x${window.innerHeight} client ${document.documentElement.clientWidth}x${document.documentElement.clientHeight}`,
                 `scroll ${formatDebugNumber(window.scrollX)},${formatDebugNumber(window.scrollY)}`,
                 visualViewport
@@ -237,6 +307,7 @@ function startViewerGeometryDiagnostics(pswp: PhotoSwipe): () => void {
             element.style.outlineOffset = saved.outlineOffset;
         }
         outlinedElements.clear();
+        ruler.remove();
         debugPanel.remove();
     };
 }

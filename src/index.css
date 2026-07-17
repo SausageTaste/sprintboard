@@ -273,6 +273,10 @@ img,
 @media (display-mode: browser) {
   .pswp.pswp--document-viewport {
     position: absolute;
+    /* Bleed past the estimated screen rect so any estimation error shows
+       viewer background under Safari's translucent chrome instead of the
+       page underneath. Box-shadow never affects layout or scroll bounds. */
+    box-shadow: 0 0 0 200px var(--pswp-bg, #000);
   }
 }
 
