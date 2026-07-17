@@ -50,6 +50,7 @@ type ImageDimensions = {
 };
 
 const NO_SAFE_AREA_INSETS: SafeAreaInsets = { top: 0, right: 0, bottom: 0, left: 0 };
+const EDGE_TO_EDGE_IMAGE_INSETS: SafeAreaInsets = { top: 14, right: 0, bottom: 14, left: 0 };
 
 function usesIPhoneDocumentViewportWorkaround(): boolean {
     return /iPhone/i.test(window.navigator.userAgent)
@@ -652,7 +653,7 @@ export default function Gallery() {
                 loop: false,
                 maxZoomLevel: 4,
                 paddingFn: () => settings.edgeToEdge
-                    ? NO_SAFE_AREA_INSETS
+                    ? EDGE_TO_EDGE_IMAGE_INSETS
                     : safeAreaInsetsRef.current,
                 getViewportSizeFn: (_options, pswp) => {
                     const element = (pswp as PhotoSwipe).element;
@@ -961,7 +962,7 @@ export default function Gallery() {
         lbOptions.secondaryZoomLevel = settings.fillScreen ? "fit" : "fill";
         lbOptions.mainClass = settings.edgeToEdge ? "pswp--edge-to-edge" : "";
         lbOptions.paddingFn = () => settings.edgeToEdge
-            ? NO_SAFE_AREA_INSETS
+            ? EDGE_TO_EDGE_IMAGE_INSETS
             : safeAreaInsetsRef.current;
         lbOptions.getViewportSizeFn = (_options, pswpBase) => {
             const element = (pswpBase as PhotoSwipe).element;
