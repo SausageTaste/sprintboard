@@ -90,6 +90,158 @@ function positionEdgeToEdgeOverlay(element: HTMLElement): void {
     element.style.height = `${isPortrait ? screenLongSide : screenShortSide}px`;
 }
 
+function formatDebugNumber(value: number): string {
+    return Number.isFinite(value) ? value.toFixed(1) : "?";
+}
+
+function formatDebugRect(element: Element | null | undefined): string {
+    if (!element)
+        return "missing";
+
+    const rect = element.getBoundingClientRect();
+    return `${formatDebugNumber(rect.x)},${formatDebugNumber(rect.y)} ${formatDebugNumber(rect.width)}x${formatDebugNumber(rect.height)}`;
+}
+
+function startViewerGeometryDiagnostics(pswp: PhotoSwipe): () => void {
+    const root = pswp.element;
+    if (!root)
+        return () => { };
+
+    const debugPanel = document.createElement("pre");
+    debugPanel.setAttribute("aria-hidden", "true");
+    Object.assign(debugPanel.style, {
+        position: "fixed",
+        top: "96px",
+        left: "4px",
+        zIndex: "2147483647",
+        maxWidth: "calc(100vw - 8px)",
+        maxHeight: "52vh",
+        margin: "0",
+        padding: "6px",
+        overflow: "hidden",
+        border: "1px solid rgba(255,255,255,0.8)",
+        borderRadius: "4px",
+        background: "rgba(0,0,0,0.78)",
+        color: "white",
+        font: "9px/1.25 ui-monospace, SFMono-Regular, Menlo, monospace",
+        whiteSpace: "pre",
+        pointerEvents: "none",
+        userSelect: "none",
+    });
+    document.body.appendChild(debugPanel);
+
+    type SavedOutline = { outline: string; outlineOffset: string };
+    const outlinedElements = new Map<HTMLElement, SavedOutline>();
+    let currentImageElement: HTMLElement | null = null;
+
+    const setOutline = (element: HTMLElement | null | undefined, color: string) => {
+        if (!element)
+            return;
+        if (!outlinedElements.has(element)) {
+            outlinedElements.set(element, {
+                outline: element.style.outline,
+                outlineOffset: element.style.outlineOffset,
+            });
+        }
+        element.style.outline = `2px solid ${color}`;
+        element.style.outlineOffset = "-2px";
+    };
+
+    const restoreOutline = (element: HTMLElement | null) => {
+        if (!element)
+            return;
+        const saved = outlinedElements.get(element);
+        if (!saved)
+            return;
+        element.style.outline = saved.outline;
+        element.style.outlineOffset = saved.outlineOffset;
+        outlinedElements.delete(element);
+    };
+
+    setOutline(root, "#ff2bd6");
+    setOutline(pswp.scrollWrap, "#00e5ff");
+
+    let animationFrame = 0;
+    let lastUpdate = 0;
+    let stopped = false;
+
+    const update = (timestamp: number) => {
+        if (stopped)
+            return;
+
+        const slide = pswp.currSlide;
+        const imageElement = slide?.content.element instanceof HTMLElement
+            ? slide.content.element
+            : null;
+        if (imageElement !== currentImageElement) {
+            restoreOutline(currentImageElement);
+            currentImageElement = imageElement;
+            setOutline(currentImageElement, "#ffe600");
+        }
+
+        if (timestamp - lastUpdate >= 150) {
+            lastUpdate = timestamp;
+            const visualViewport = window.visualViewport;
+            const rootStyle = window.getComputedStyle(root);
+            const bounds = slide?.bounds;
+
+            debugPanel.textContent = [
+                "VIEWER GEOMETRY (magenta=root cyan=wrap yellow=image)",
+                `screen ${screen.width}x${screen.height} avail ${screen.availWidth}x${screen.availHeight} dpr ${window.devicePixelRatio}`,
+                `outer ${window.outerWidth}x${window.outerHeight}`,
+                `inner ${window.innerWidth}x${window.innerHeight} client ${document.documentElement.clientWidth}x${document.documentElement.clientHeight}`,
+                `scroll ${formatDebugNumber(window.scrollX)},${formatDebugNumber(window.scrollY)}`,
+                visualViewport
+                    ? `visual ${formatDebugNumber(visualViewport.width)}x${formatDebugNumber(visualViewport.height)} off ${formatDebugNumber(visualViewport.offsetLeft)},${formatDebugNumber(visualViewport.offsetTop)}`
+                    : "visual missing",
+                visualViewport
+                    ? `vpage ${formatDebugNumber(visualViewport.pageLeft)},${formatDebugNumber(visualViewport.pageTop)} scale ${formatDebugNumber(visualViewport.scale)}`
+                    : "",
+                `html ${formatDebugRect(document.documentElement)}`,
+                `body ${formatDebugRect(document.body)}`,
+                `root ${formatDebugRect(root)}`,
+                `root css ${rootStyle.position} top ${rootStyle.top} left ${rootStyle.left}`,
+                `wrap ${formatDebugRect(pswp.scrollWrap)}`,
+                `topbar ${formatDebugRect(pswp.topBar)}`,
+                `pswp viewport ${formatDebugNumber(pswp.viewportSize.x)}x${formatDebugNumber(pswp.viewportSize.y)} off ${formatDebugNumber(pswp.offset.x)},${formatDebugNumber(pswp.offset.y)}`,
+                `slide ${slide ? `${slide.width}x${slide.height}` : "missing"} panArea ${slide ? `${formatDebugNumber(slide.panAreaSize.x)}x${formatDebugNumber(slide.panAreaSize.y)}` : "missing"}`,
+                `image ${formatDebugRect(imageElement)}`,
+                imageElement instanceof HTMLImageElement
+                    ? `natural ${imageElement.naturalWidth}x${imageElement.naturalHeight}`
+                    : "natural missing",
+                slide
+                    ? `zoom ${formatDebugNumber(slide.currZoomLevel)} init ${formatDebugNumber(slide.zoomLevels.initial)} fit ${formatDebugNumber(slide.zoomLevels.fit)} fill ${formatDebugNumber(slide.zoomLevels.fill)}`
+                    : "zoom missing",
+                slide
+                    ? `pan ${formatDebugNumber(slide.pan.x)},${formatDebugNumber(slide.pan.y)}`
+                    : "pan missing",
+                bounds
+                    ? `boundX ${formatDebugNumber(bounds.min.x)}..${formatDebugNumber(bounds.max.x)} center ${formatDebugNumber(bounds.center.x)}`
+                    : "boundX missing",
+                bounds
+                    ? `boundY ${formatDebugNumber(bounds.min.y)}..${formatDebugNumber(bounds.max.y)} center ${formatDebugNumber(bounds.center.y)}`
+                    : "boundY missing",
+            ].filter(Boolean).join("\n");
+        }
+
+        animationFrame = window.requestAnimationFrame(update);
+    };
+
+    animationFrame = window.requestAnimationFrame(update);
+
+    return () => {
+        stopped = true;
+        window.cancelAnimationFrame(animationFrame);
+        restoreOutline(currentImageElement);
+        for (const [element, saved] of outlinedElements) {
+            element.style.outline = saved.outline;
+            element.style.outlineOffset = saved.outlineOffset;
+        }
+        outlinedElements.clear();
+        debugPanel.remove();
+    };
+}
+
 
 const folderNameCollator = new Intl.Collator(undefined, { numeric: true });
 
@@ -485,6 +637,7 @@ export default function Gallery() {
 
     React.useEffect(() => {
         if (!lightboxRef.current) {
+            let stopGeometryDiagnostics: (() => void) | null = null;
             const lb = new PhotoSwipeLightbox({
                 pswpModule: () => import("photoswipe"),
                 loop: false,
@@ -507,6 +660,23 @@ export default function Gallery() {
                 const element = lb.pswp?.element;
                 if (element)
                     positionEdgeToEdgeOverlay(element);
+            });
+
+            lb.on("afterInit", () => {
+                const pswp = lb.pswp;
+                if (!pswp?.element
+                    || !usesIPhoneDocumentViewportWorkaround()
+                    || !pswp.element.classList.contains("pswp--edge-to-edge")) {
+                    return;
+                }
+
+                stopGeometryDiagnostics?.();
+                stopGeometryDiagnostics = startViewerGeometryDiagnostics(pswp);
+            });
+
+            lb.on("destroy", () => {
+                stopGeometryDiagnostics?.();
+                stopGeometryDiagnostics = null;
             });
 
             lb.on("loadComplete", ({ content, slide, isError }) => {
