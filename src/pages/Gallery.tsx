@@ -83,6 +83,7 @@ function positionEdgeToEdgeOverlay(element: HTMLElement): void {
     const estimatedTopInset = estimateIPhoneTopInset();
 
     element.classList.add("pswp--document-viewport");
+    element.style.setProperty("--viewer-control-top-inset", `${estimatedTopInset}px`);
     element.style.top = `calc(${window.scrollY}px - max(${estimatedTopInset}px, env(safe-area-max-inset-top, env(safe-area-inset-top, 0px))))`;
     element.style.left = `${window.scrollX}px`;
     element.style.width = `${isPortrait ? screenShortSide : screenLongSide}px`;
