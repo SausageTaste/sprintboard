@@ -1,9 +1,12 @@
 #include <algorithm>
+#include <cerrno>
 #include <charconv>
+#include <cstdio>
 #include <expected>
 #include <fstream>
 #include <print>
 #include <string_view>
+#include <system_error>
 
 #define CPPHTTPLIB_OPENSSL_SUPPORT
 #include <httplib.h>
@@ -535,11 +538,47 @@ int main() {
         const auto http_type = ::is_https_server(svr) ? "https" : "http";
         const auto& host = svrcfg->server_host_;
         const auto& port = svrcfg->server_port_;
-        std::println("Starting server at {}://{}:{}", http_type, host, port);
+        const auto server_address =
+            host.find(':') == std::string::npos
+                ? std::format("{}://{}:{}", http_type, host, port)
+                : std::format("{}://[{}]:{}", http_type, host, port);
+        std::string server_error;
+        svr.set_error_logger(
+            [&server_error](const httplib::Error& error, const HttpReq*) {
+                server_error = httplib::to_string(error);
+
+#ifdef _WIN32
+                const std::error_code socket_error{ WSAGetLastError(),
+                                                    std::system_category() };
+#else
+                const std::error_code socket_error{ errno,
+                                                    std::generic_category() };
+#endif
+                if (socket_error) {
+                    server_error += std::format(
+                        ": {} (OS error {})",
+                        socket_error.message(),
+                        socket_error.value()
+                    );
+                }
+            }
+        );
+
+        std::println("Starting server at {}", server_address);
         if (svr.listen(host, port)) {
             std::println("Server stopped");
         } else {
-            std::println("Error starting server");
+            if (server_error.empty()) {
+                server_error =
+                    "check that the configured host is valid and the port is "
+                    "available";
+            }
+            std::println(
+                stderr,
+                "Error starting server at {}: {}",
+                server_address,
+                server_error
+            );
         }
     }
 
