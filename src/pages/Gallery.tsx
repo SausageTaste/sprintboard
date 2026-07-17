@@ -707,7 +707,17 @@ export default function Gallery() {
             msrc: it.thumb ?? it.src,
         }));
 
-        lbOptions.initialZoomLevel = settings.fillScreen ? "fill" : "fit";
+        lbOptions.initialZoomLevel = settings.fillScreen
+            ? (zoomLevel) => {
+                if (!zoomLevel.elementSize || !zoomLevel.panAreaSize)
+                    return zoomLevel.fill;
+
+                return Math.max(
+                    zoomLevel.panAreaSize.x / zoomLevel.elementSize.x,
+                    zoomLevel.panAreaSize.y / zoomLevel.elementSize.y,
+                );
+            }
+            : "fit";
         lbOptions.secondaryZoomLevel = settings.fillScreen ? "fit" : "fill";
         lbOptions.mainClass = settings.edgeToEdge ? "pswp--edge-to-edge" : "";
         lbOptions.paddingFn = () => settings.edgeToEdge
