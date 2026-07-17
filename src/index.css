@@ -264,16 +264,19 @@ img,
   width: calc(100% - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
 }
 
-/*
- * In browser mode, iOS anchors fixed overlays to the inset visual viewport.
- * Expand the edge-to-edge viewer back across the unsafe display regions.
- */
+/* iPhone Safari only paints document-positioned content behind its browser chrome. */
 @media (display-mode: browser) {
-  .pswp.pswp--edge-to-edge {
-    top: calc(0px - env(safe-area-inset-top, 0px));
-    left: calc(0px - env(safe-area-inset-left, 0px));
-    width: calc(100% + env(safe-area-inset-left, 0px) + env(safe-area-inset-right, 0px));
-    height: calc(100% + env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px));
+  .pswp.pswp--document-viewport {
+    position: absolute;
+  }
+
+  .pswp.pswp--document-viewport .pswp__top-bar,
+  .pswp.pswp--document-viewport .pswp-menu {
+    position: fixed;
+  }
+
+  .pswp.pswp--document-viewport .pswp-tapzone {
+    position: fixed !important;
   }
 }
 

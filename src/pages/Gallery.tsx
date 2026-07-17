@@ -46,6 +46,28 @@ type SafeAreaInsets = {
 
 const NO_SAFE_AREA_INSETS: SafeAreaInsets = { top: 0, right: 0, bottom: 0, left: 0 };
 
+function usesIPhoneDocumentViewportWorkaround(): boolean {
+    return /iPhone/i.test(window.navigator.userAgent)
+        && window.matchMedia("(display-mode: browser)").matches;
+}
+
+function positionEdgeToEdgeOverlay(element: HTMLElement): void {
+    if (!usesIPhoneDocumentViewportWorkaround()
+        || !element.classList.contains("pswp--edge-to-edge")) {
+        return;
+    }
+
+    const isPortrait = window.innerHeight >= window.innerWidth;
+    const screenLongSide = Math.max(window.screen.width, window.screen.height);
+    const screenShortSide = Math.min(window.screen.width, window.screen.height);
+
+    element.classList.add("pswp--document-viewport");
+    element.style.top = `${window.scrollY}px`;
+    element.style.left = `${window.scrollX}px`;
+    element.style.width = `${isPortrait ? screenShortSide : screenLongSide}px`;
+    element.style.height = `${isPortrait ? screenLongSide : screenShortSide}px`;
+}
+
 
 const folderNameCollator = new Intl.Collator(undefined, { numeric: true });
 
@@ -147,7 +169,11 @@ export default function Gallery() {
                 bottom: Number.parseFloat(style.paddingBottom) || 0,
                 left: Number.parseFloat(style.paddingLeft) || 0,
             };
-            lightboxRef.current?.pswp?.updateSize(true);
+
+            const pswp = lightboxRef.current?.pswp;
+            if (pswp?.element)
+                positionEdgeToEdgeOverlay(pswp.element);
+            pswp?.updateSize(true);
         };
 
         updateSafeAreaInsets();
@@ -431,6 +457,12 @@ export default function Gallery() {
                     return { x: document.documentElement.clientWidth, y: window.innerHeight };
                 },
                 bgOpacity: 1,
+            });
+
+            lb.on("firstUpdate", () => {
+                const element = lb.pswp?.element;
+                if (element)
+                    positionEdgeToEdgeOverlay(element);
             });
 
             lb.on("change", () => {
