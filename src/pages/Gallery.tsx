@@ -422,6 +422,14 @@ export default function Gallery() {
                 paddingFn: () => settings.edgeToEdge
                     ? NO_SAFE_AREA_INSETS
                     : safeAreaInsetsRef.current,
+                getViewportSizeFn: (_options, pswp) => {
+                    const element = (pswp as PhotoSwipe).element;
+                    if (settings.edgeToEdge && element) {
+                        return { x: element.clientWidth, y: element.clientHeight };
+                    }
+
+                    return { x: document.documentElement.clientWidth, y: window.innerHeight };
+                },
                 bgOpacity: 1,
             });
 
@@ -653,9 +661,18 @@ export default function Gallery() {
 
         lbOptions.initialZoomLevel = settings.fillScreen ? "fill" : "fit";
         lbOptions.secondaryZoomLevel = settings.fillScreen ? "fit" : "fill";
+        lbOptions.mainClass = settings.edgeToEdge ? "pswp--edge-to-edge" : "";
         lbOptions.paddingFn = () => settings.edgeToEdge
             ? NO_SAFE_AREA_INSETS
             : safeAreaInsetsRef.current;
+        lbOptions.getViewportSizeFn = (_options, pswpBase) => {
+            const element = (pswpBase as PhotoSwipe).element;
+            if (settings.edgeToEdge && element) {
+                return { x: element.clientWidth, y: element.clientHeight };
+            }
+
+            return { x: document.documentElement.clientWidth, y: window.innerHeight };
+        };
         lbOptions.dataSource = dataSource;
 
         const pswp = lb.pswp;

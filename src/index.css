@@ -180,13 +180,6 @@ img,
   margin-bottom: 8px;
 }
 
-.drawer-setting-note {
-  margin: -4px 0 8px;
-  font-size: 12px;
-  line-height: 1.4;
-  opacity: 0.65;
-}
-
 .drawer-value {
   font-weight: 700;
   overflow: hidden;
@@ -269,6 +262,19 @@ img,
   top: env(safe-area-inset-top, 0px);
   left: env(safe-area-inset-left, 0px);
   width: calc(100% - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+}
+
+/*
+ * In browser mode, iOS anchors fixed overlays to the inset visual viewport.
+ * Expand the edge-to-edge viewer back across the unsafe display regions.
+ */
+@media (display-mode: browser) {
+  .pswp.pswp--edge-to-edge {
+    top: calc(0px - env(safe-area-inset-top, 0px));
+    left: calc(0px - env(safe-area-inset-left, 0px));
+    width: calc(100% + env(safe-area-inset-left, 0px) + env(safe-area-inset-right, 0px));
+    height: calc(100% + env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px));
+  }
 }
 
 /* Hidden by default */
