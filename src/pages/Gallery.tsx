@@ -99,17 +99,38 @@ function sortFoldersNaturallyDescending(folders: FolderInfo[]): FolderInfo[] {
     });
 }
 
+let lockedPageScroll = { x: 0, y: 0 };
+
+function preventViewerPageScroll(event: TouchEvent) {
+    if (document.documentElement.classList.contains("pswp-open-noselect"))
+        event.preventDefault();
+}
+
+function restoreViewerPageScroll() {
+    if (!document.documentElement.classList.contains("pswp-open-noselect"))
+        return;
+
+    if (window.scrollX !== lockedPageScroll.x || window.scrollY !== lockedPageScroll.y)
+        window.scrollTo(lockedPageScroll.x, lockedPageScroll.y);
+}
+
 
 function lockSelection() {
+    lockedPageScroll = { x: window.scrollX, y: window.scrollY };
     document.documentElement.classList.add("pswp-open-noselect");
     document.body.classList.add("pswp-open-noselect");
+    document.addEventListener("touchmove", preventViewerPageScroll, { passive: false });
+    window.addEventListener("scroll", restoreViewerPageScroll);
     (document.activeElement as HTMLElement | null)?.blur?.();
     window.getSelection?.()?.removeAllRanges?.();
 }
 
 function unlockSelection() {
+    document.removeEventListener("touchmove", preventViewerPageScroll);
+    window.removeEventListener("scroll", restoreViewerPageScroll);
     document.documentElement.classList.remove("pswp-open-noselect");
     document.body.classList.remove("pswp-open-noselect");
+    window.scrollTo(lockedPageScroll.x, lockedPageScroll.y);
     window.getSelection?.()?.removeAllRanges?.();
 }
 

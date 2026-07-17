@@ -79,6 +79,11 @@ body.pswp-open-noselect * {
   -webkit-touch-callout: auto !important;
 }
 
+html.pswp-open-noselect,
+body.pswp-open-noselect {
+  overscroll-behavior: none;
+}
+
 /* iOS tap highlight (the gray/blue flash) */
 a,
 img,
