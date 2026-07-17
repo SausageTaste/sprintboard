@@ -71,6 +71,14 @@ function estimateIPhoneTopInset(): number {
     return Math.round(totalBrowserInset / 2);
 }
 
+function estimateIPhoneSideInset(): number {
+    const isPortrait = window.innerHeight >= window.innerWidth;
+    const screenLongSide = Math.max(window.screen.width, window.screen.height);
+    const screenShortSide = Math.min(window.screen.width, window.screen.height);
+    const physicalScreenWidth = isPortrait ? screenShortSide : screenLongSide;
+    return Math.max(0, (physicalScreenWidth - window.innerWidth) / 2);
+}
+
 function positionEdgeToEdgeOverlay(element: HTMLElement): void {
     if (!usesIPhoneDocumentViewportWorkaround()
         || !element.classList.contains("pswp--edge-to-edge")) {
@@ -81,11 +89,12 @@ function positionEdgeToEdgeOverlay(element: HTMLElement): void {
     const screenLongSide = Math.max(window.screen.width, window.screen.height);
     const screenShortSide = Math.min(window.screen.width, window.screen.height);
     const estimatedTopInset = estimateIPhoneTopInset();
+    const estimatedSideInset = estimateIPhoneSideInset();
 
     element.classList.add("pswp--document-viewport");
     element.style.setProperty("--viewer-control-top-inset", `${estimatedTopInset}px`);
-    element.style.top = `${window.scrollY}px`;
-    element.style.left = `${window.scrollX}px`;
+    element.style.top = `${window.scrollY - estimatedTopInset}px`;
+    element.style.left = `${window.scrollX - estimatedSideInset}px`;
     element.style.width = `${isPortrait ? screenShortSide : screenLongSide}px`;
     element.style.height = `${isPortrait ? screenLongSide : screenShortSide}px`;
 }
