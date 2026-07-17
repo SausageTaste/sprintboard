@@ -56,10 +56,29 @@ function usesIPhoneDocumentViewportWorkaround(): boolean {
         && window.matchMedia("(display-mode: browser)").matches;
 }
 
-// Share of the hidden browser chrome that sits above the layout viewport
-// (status area vs. address bar + home indicator). Measured on iOS 26 Safari:
-// ~0.51 with expanded chrome, ~0.53 with minimized chrome.
+// Share of the minimized-chrome inset (screen height minus 100lvh) that sits
+// above the layout viewport. The status area above the viewport is constant
+// (~63pt of a 120pt minimized inset on iOS 26 Safari); only the bottom bar
+// grows when expanded, so the share must be applied to the minimized inset,
+// never to the current innerHeight.
 const IPHONE_TOP_CHROME_SHARE = 0.52;
+
+function measureCssHeight(height: string): number {
+    const probe = document.createElement("div");
+    Object.assign(probe.style, {
+        position: "fixed",
+        top: "0",
+        left: "0",
+        width: "0",
+        height,
+        visibility: "hidden",
+        pointerEvents: "none",
+    });
+    document.documentElement.appendChild(probe);
+    const measured = probe.getBoundingClientRect().height;
+    probe.remove();
+    return measured;
+}
 
 function probeDeviceDimension(dimension: "width" | "height"): number {
     if (!window.matchMedia(`(min-device-${dimension}: 1px)`).matches)
@@ -113,7 +132,11 @@ function getIPhoneScreenViewport() {
         ? (isPortrait ? device.longSide : device.shortSide)
         : (isPortrait ? width * aspectRatio : width / aspectRatio);
 
-    const topInset = Math.max(0, (height - window.innerHeight) * IPHONE_TOP_CHROME_SHARE);
+    // Anchor the top inset to the large viewport (chrome minimized) so the
+    // overlay keeps the same screen position while Safari's bottom bar
+    // expands and collapses.
+    const largeViewportHeight = Math.max(window.innerHeight, measureCssHeight("100lvh"));
+    const topInset = Math.max(0, (height - largeViewportHeight) * IPHONE_TOP_CHROME_SHARE);
 
     return { width, height, topInset };
 }
@@ -306,6 +329,7 @@ function startViewerGeometryDiagnostics(pswp: PhotoSwipe): () => void {
                 `outer ${window.outerWidth}x${window.outerHeight}`,
                 `screenXY ${formatDebugNumber(window.screenX)},${formatDebugNumber(window.screenY)} availTL ${formatDebugNumber(screenAny.availLeft ?? NaN)},${formatDebugNumber(screenAny.availTop ?? NaN)}`,
                 `inner ${window.innerWidth}x${window.innerHeight} client ${document.documentElement.clientWidth}x${document.documentElement.clientHeight}`,
+                `lvh ${formatDebugNumber(measureCssHeight("100lvh"))} svh ${formatDebugNumber(measureCssHeight("100svh"))}`,
                 `scroll ${formatDebugNumber(window.scrollX)},${formatDebugNumber(window.scrollY)}`,
                 visualViewport
                     ? `visual ${formatDebugNumber(visualViewport.width)}x${formatDebugNumber(visualViewport.height)} off ${formatDebugNumber(visualViewport.offsetLeft)},${formatDebugNumber(visualViewport.offsetTop)}`
