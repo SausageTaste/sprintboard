@@ -274,15 +274,6 @@ img,
   .pswp.pswp--document-viewport {
     position: absolute;
   }
-
-  .pswp.pswp--document-viewport .pswp__top-bar,
-  .pswp.pswp--document-viewport .pswp-menu {
-    position: fixed;
-  }
-
-  .pswp.pswp--document-viewport .pswp-tapzone {
-    position: fixed !important;
-  }
 }
 
 /* Hidden by default */
