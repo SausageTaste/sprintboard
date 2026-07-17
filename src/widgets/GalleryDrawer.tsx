@@ -121,6 +121,28 @@ export default function GalleryDrawer({
                                 padding: "10px 0",
                             }}
                         >
+                            <span>Viewer debug overlay</span>
+                            <input
+                                type="checkbox"
+                                checked={settings.viewerDiagnostics}
+                                onChange={(e) =>
+                                    onChangeSettings((s) => ({
+                                        ...s,
+                                        viewerDiagnostics: e.target.checked,
+                                    }))
+                                }
+                                style={{ width: 20, height: 20 }}
+                            />
+                        </label>
+
+                        <label
+                            style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                padding: "10px 0",
+                            }}
+                        >
                             <span>Recursive images</span>
                             <input
                                 type="checkbox"

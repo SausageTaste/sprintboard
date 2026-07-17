@@ -470,6 +470,7 @@ export default function Gallery() {
 
     const [menuOpen, setMenuOpen] = React.useState(false);
     const [settings, setSettings] = React.useState<ViewerSettings>(() => loadSettings());
+    const settingsRef = React.useRef(settings);
     const [lightboxReady, setLightboxReady] = React.useState(false);
     const [searchBoxText, setSearchBoxText] = React.useState(settings.searchText || "");
 
@@ -805,11 +806,8 @@ export default function Gallery() {
 
             lb.on("afterInit", () => {
                 const pswp = lb.pswp;
-                if (!pswp?.element
-                    || !usesIPhoneDocumentViewportWorkaround()
-                    || !pswp.element.classList.contains("pswp--edge-to-edge")) {
+                if (!pswp?.element || !settingsRef.current.viewerDiagnostics)
                     return;
-                }
 
                 stopGeometryDiagnostics?.();
                 stopGeometryDiagnostics = startViewerGeometryDiagnostics(pswp);
@@ -1193,6 +1191,7 @@ export default function Gallery() {
     }, [menuOpen]);
 
     React.useEffect(() => {
+        settingsRef.current = settings;
         saveSettings(settings);
     }, [settings]);
 

@@ -5,6 +5,7 @@ type ViewerSettings = {
     fillScreen: boolean;
     edgeToEdge: boolean;
     filesRecursive: boolean;
+    viewerDiagnostics: boolean;
 };
 
 const DEFAULT_SETTINGS: ViewerSettings = {
@@ -13,6 +14,7 @@ const DEFAULT_SETTINGS: ViewerSettings = {
     fillScreen: false,
     edgeToEdge: true,
     filesRecursive: false,
+    viewerDiagnostics: false,
 };
 
 
