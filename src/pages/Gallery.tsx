@@ -51,6 +51,21 @@ function usesIPhoneDocumentViewportWorkaround(): boolean {
         && window.matchMedia("(display-mode: browser)").matches;
 }
 
+function estimateIPhoneTopInset(): number {
+    if (window.innerWidth > window.innerHeight)
+        return 0;
+
+    const screenLongSide = Math.round(Math.max(window.screen.width, window.screen.height));
+    const screenShortSide = Math.round(Math.min(window.screen.width, window.screen.height));
+
+    // iPhone 14 Pro, iPhone 15, and iPhone 15 Pro CSS viewport.
+    if (screenShortSide === 393 && screenLongSide === 852)
+        return 59;
+
+    const totalBrowserInset = Math.max(0, screenLongSide - window.innerHeight);
+    return Math.round(totalBrowserInset / 2);
+}
+
 function positionEdgeToEdgeOverlay(element: HTMLElement): void {
     if (!usesIPhoneDocumentViewportWorkaround()
         || !element.classList.contains("pswp--edge-to-edge")) {
@@ -60,9 +75,10 @@ function positionEdgeToEdgeOverlay(element: HTMLElement): void {
     const isPortrait = window.innerHeight >= window.innerWidth;
     const screenLongSide = Math.max(window.screen.width, window.screen.height);
     const screenShortSide = Math.min(window.screen.width, window.screen.height);
+    const estimatedTopInset = estimateIPhoneTopInset();
 
     element.classList.add("pswp--document-viewport");
-    element.style.top = `calc(${window.scrollY}px - env(safe-area-max-inset-top, env(safe-area-inset-top, 0px)))`;
+    element.style.top = `calc(${window.scrollY}px - max(${estimatedTopInset}px, env(safe-area-max-inset-top, env(safe-area-inset-top, 0px))))`;
     element.style.left = `${window.scrollX}px`;
     element.style.width = `${isPortrait ? screenShortSide : screenLongSide}px`;
     element.style.height = `${isPortrait ? screenLongSide : screenShortSide}px`;
