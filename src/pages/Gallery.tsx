@@ -62,7 +62,7 @@ function positionEdgeToEdgeOverlay(element: HTMLElement): void {
     const screenShortSide = Math.min(window.screen.width, window.screen.height);
 
     element.classList.add("pswp--document-viewport");
-    element.style.top = `${window.scrollY}px`;
+    element.style.top = `calc(${window.scrollY}px - env(safe-area-max-inset-top, env(safe-area-inset-top, 0px)))`;
     element.style.left = `${window.scrollX}px`;
     element.style.width = `${isPortrait ? screenShortSide : screenLongSide}px`;
     element.style.height = `${isPortrait ? screenLongSide : screenShortSide}px`;
