@@ -77,6 +77,28 @@ export default function GalleryDrawer({
                                 padding: "10px 0",
                             }}
                         >
+                            <span>Edge-to-edge viewer</span>
+                            <input
+                                type="checkbox"
+                                checked={settings.edgeToEdge}
+                                onChange={(e) =>
+                                    onChangeSettings((s) => ({
+                                        ...s,
+                                        edgeToEdge: e.target.checked,
+                                    }))
+                                }
+                                style={{ width: 20, height: 20 }}
+                            />
+                        </label>
+
+                        <label
+                            style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                padding: "10px 0",
+                            }}
+                        >
                             <span>Fill screen</span>
                             <input
                                 type="checkbox"

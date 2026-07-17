@@ -37,6 +37,15 @@ interface ImageListResponse {
 const PAGE_SIZE = 100;
 const LIGHTBOX_PREFETCH_THRESHOLD = 10;
 
+type SafeAreaInsets = {
+    top: number;
+    right: number;
+    bottom: number;
+    left: number;
+};
+
+const NO_SAFE_AREA_INSETS: SafeAreaInsets = { top: 0, right: 0, bottom: 0, left: 0 };
+
 
 const folderNameCollator = new Intl.Collator(undefined, { numeric: true });
 
@@ -116,12 +125,40 @@ export default function Gallery() {
     const requestGenerationRef = React.useRef(0);
     const activeRequestRef = React.useRef<AbortController | null>(null);
     const loadMoreRef = React.useRef<() => Promise<void>>(async () => { });
+    const safeAreaProbeRef = React.useRef<HTMLDivElement | null>(null);
+    const safeAreaInsetsRef = React.useRef<SafeAreaInsets>(NO_SAFE_AREA_INSETS);
 
     const { "*": path } = useParams();   // catch-all route
     const navigate = useNavigate();
     const location = useLocation();
     const [searchParams] = useSearchParams();
     const curDir = path ?? ""; // "" = root
+
+    React.useLayoutEffect(() => {
+        const updateSafeAreaInsets = () => {
+            const probe = safeAreaProbeRef.current;
+            if (!probe)
+                return;
+
+            const style = window.getComputedStyle(probe);
+            safeAreaInsetsRef.current = {
+                top: Number.parseFloat(style.paddingTop) || 0,
+                right: Number.parseFloat(style.paddingRight) || 0,
+                bottom: Number.parseFloat(style.paddingBottom) || 0,
+                left: Number.parseFloat(style.paddingLeft) || 0,
+            };
+            lightboxRef.current?.pswp?.updateSize(true);
+        };
+
+        updateSafeAreaInsets();
+        window.addEventListener("resize", updateSafeAreaInsets);
+        window.visualViewport?.addEventListener("resize", updateSafeAreaInsets);
+
+        return () => {
+            window.removeEventListener("resize", updateSafeAreaInsets);
+            window.visualViewport?.removeEventListener("resize", updateSafeAreaInsets);
+        };
+    }, []);
 
     function openAt(index: number) {
         lastIndexRef.current = index;
@@ -382,7 +419,9 @@ export default function Gallery() {
                 pswpModule: () => import("photoswipe"),
                 loop: false,
                 maxZoomLevel: 4,
-                padding: { top: 0, bottom: 0, left: 0, right: 0 },
+                paddingFn: () => settings.edgeToEdge
+                    ? NO_SAFE_AREA_INSETS
+                    : safeAreaInsetsRef.current,
                 bgOpacity: 1,
             });
 
@@ -470,10 +509,10 @@ export default function Gallery() {
                         el.classList.add("pswp-tapzone");
 
                         el.style.position = "absolute";
-                        el.style.left = "0";
+                        el.style.left = "env(safe-area-inset-left, 0px)";
                         el.style.top = "80%";
-                        el.style.bottom = "0";
-                        el.style.width = "50%";          // left tap zone
+                        el.style.bottom = "env(safe-area-inset-bottom, 0px)";
+                        el.style.width = "calc((100% - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)) / 2)";
                         el.style.zIndex = "9999";
                         el.style.touchAction = "manipulation";
                         el.style.pointerEvents = "auto";
@@ -507,10 +546,10 @@ export default function Gallery() {
                         el.classList.add("pswp-tapzone");
 
                         el.style.position = "absolute";
-                        el.style.right = "0";
+                        el.style.right = "env(safe-area-inset-right, 0px)";
                         el.style.top = "80%";
-                        el.style.bottom = "0";
-                        el.style.width = "50%";
+                        el.style.bottom = "env(safe-area-inset-bottom, 0px)";
+                        el.style.width = "calc((100% - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)) / 2)";
                         el.style.zIndex = "9999";
                         el.style.touchAction = "manipulation";
                         el.style.pointerEvents = "auto";
@@ -614,12 +653,16 @@ export default function Gallery() {
 
         lbOptions.initialZoomLevel = settings.fillScreen ? "fill" : "fit";
         lbOptions.secondaryZoomLevel = settings.fillScreen ? "fit" : "fill";
+        lbOptions.paddingFn = () => settings.edgeToEdge
+            ? NO_SAFE_AREA_INSETS
+            : safeAreaInsetsRef.current;
         lbOptions.dataSource = dataSource;
 
         const pswp = lb.pswp;
         if (pswp) {
             const previousCount = pswp.getNumItems();
             pswp.options.dataSource = dataSource;
+            pswp.updateSize(true);
 
             const nextIndex = pswp.currIndex + 1;
             if (dataSource.length > previousCount && nextIndex < dataSource.length)
@@ -629,7 +672,7 @@ export default function Gallery() {
         return () => {
             // don't destroy on every imgItems change; destroy only on unmount
         };
-    }, [imgItems, settings.fillScreen]);
+    }, [imgItems, settings.fillScreen, settings.edgeToEdge]);
 
     React.useEffect(() => {
         if (!lightboxReady)
@@ -707,7 +750,8 @@ export default function Gallery() {
     }, [settings]);
 
     return (
-        <div style={{ padding: 16, fontFamily: "system-ui" }}>
+        <div className="gallery-page">
+            <div ref={safeAreaProbeRef} className="safe-area-probe" aria-hidden="true" />
             <div className="headerRow" style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <button
                     className="menuBtn"
