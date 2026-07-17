@@ -58,10 +58,48 @@ function usesIPhoneDocumentViewportWorkaround(): boolean {
 
 // Share of the minimized-chrome inset (screen height minus 100lvh) that sits
 // above the layout viewport. The status area above the viewport is constant
-// (~63pt of a 120pt minimized inset on iOS 26 Safari); only the bottom bar
-// grows when expanded, so the share must be applied to the minimized inset,
-// never to the current innerHeight.
-const IPHONE_TOP_CHROME_SHARE = 0.52;
+// (measured 63.4pt of a 120pt minimized inset on iOS 26 Safari); only the
+// bottom bar grows when expanded, so the share must be applied to the
+// minimized inset, never to the current innerHeight.
+const IPHONE_TOP_CHROME_SHARE = 0.53;
+
+// Logical CSS screen sizes of iPhones able to run iOS 17+ (whose Safari can
+// spoof `window.screen`), keyed by the side that stays real: the layout
+// width. Lets the real screen height be recovered when the reported one is
+// fake. 375 is ambiguous (SE 667 vs X-class 812) and resolved by pixel
+// density; 736 (Plus models) only appears in the landscape map because those
+// devices cannot run iOS 17 and never spoof.
+function iPhoneScreenLongSideForShortSide(shortSide: number): number | null {
+    switch (shortSide) {
+        case 320: return 568;
+        case 375: return window.devicePixelRatio >= 3 ? 812 : 667;
+        case 390: return 844;
+        case 393: return 852;
+        case 402: return 874;
+        case 414: return 896;
+        case 428: return 926;
+        case 430: return 932;
+        case 440: return 956;
+        default: return null;
+    }
+}
+
+function iPhoneScreenShortSideForLongSide(longSide: number): number | null {
+    switch (longSide) {
+        case 568: return 320;
+        case 667: return 375;
+        case 736: return 414;
+        case 812: return 375;
+        case 844: return 390;
+        case 852: return 393;
+        case 874: return 402;
+        case 896: return 414;
+        case 926: return 428;
+        case 932: return 430;
+        case 956: return 440;
+        default: return null;
+    }
+}
 
 function measureCssHeight(height: string): number {
     const probe = document.createElement("div");
@@ -119,18 +157,28 @@ function getIPhoneScreenViewport() {
     // 1:1 onto them), so it anchors everything else.
     const width = window.innerWidth;
 
-    // Safari spoofs `window.screen` while fingerprinting protection is
-    // active (always in private browsing) — e.g. it reports 414x896 on a
-    // 402x874 iPhone 16 Pro. When device media queries disagree with
-    // `window.screen` they carry the real dimensions; otherwise reconstruct
-    // the height from the layout width and the reported aspect ratio, which
-    // stays within a few points of truth even when spoofed because recent
-    // iPhones share nearly the same aspect ratio.
-    const aspectRatio = screenLongSide / screenShortSide;
-    const height = device
-        && (device.longSide !== screenLongSide || device.shortSide !== screenShortSide)
-        ? (isPortrait ? device.longSide : device.shortSide)
-        : (isPortrait ? width * aspectRatio : width / aspectRatio);
+    // Safari spoofs `window.screen` and the device media queries while
+    // fingerprinting protection is active (always in private browsing) —
+    // e.g. it reports 414x896 on a 402x874 iPhone 16 Pro. Screen metrics
+    // that contradict the real layout width are fake. Recovery order:
+    // consistent window.screen → device media queries that disagree with a
+    // fake window.screen → the iPhone logical-size catalog above → aspect
+    // ratio estimate (within a few points, since recent iPhones share
+    // nearly the same aspect ratio).
+    let height: number | null;
+    if ((isPortrait ? screenShortSide : screenLongSide) === width)
+        height = isPortrait ? screenLongSide : screenShortSide;
+    else if (device && (device.longSide !== screenLongSide || device.shortSide !== screenShortSide))
+        height = isPortrait ? device.longSide : device.shortSide;
+    else
+        height = isPortrait
+            ? iPhoneScreenLongSideForShortSide(width)
+            : iPhoneScreenShortSideForLongSide(width);
+
+    if (height === null) {
+        const aspectRatio = screenLongSide / screenShortSide;
+        height = isPortrait ? width * aspectRatio : width / aspectRatio;
+    }
 
     // Anchor the top inset to the large viewport (chrome minimized) so the
     // overlay keeps the same screen position while Safari's bottom bar
