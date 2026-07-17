@@ -304,7 +304,27 @@ namespace {
                         return;
                     }
 
-                    sung::write_file(avif_path, *avif_blob);
+                    if (!sung::write_file(avif_path, *avif_blob)) {
+                        std::println(
+                            "ImgWalker: Failed to save AVIF: {}",
+                            sung::tostr(avif_path)
+                        );
+                        return;
+                    }
+
+                    const auto timestamp_error = sung::copy_file_timestamps(
+                        p, avif_path
+                    );
+                    if (timestamp_error) {
+                        std::println(
+                            "ImgWalker: Failed to copy timestamps from {} to "
+                            "{}: {}",
+                            sung::tostr(p),
+                            sung::tostr(avif_path),
+                            timestamp_error.message()
+                        );
+                    }
+
                     std::println(
                         "ImgWalker: AVIF saved: {} ({:.3f} sec)",
                         sung::tostr(avif_path),
