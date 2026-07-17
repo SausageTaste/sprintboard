@@ -90,6 +90,12 @@ export default function GalleryDrawer({
                                 style={{ width: 20, height: 20 }}
                             />
                         </label>
+                        {settings.edgeToEdge && (
+                            <div className="drawer-setting-note">
+                                On iPhone, coverage behind the status bar requires opening this site
+                                from the Home Screen as a web app.
+                            </div>
+                        )}
 
                         <label
                             style={{

@@ -180,6 +180,13 @@ img,
   margin-bottom: 8px;
 }
 
+.drawer-setting-note {
+  margin: -4px 0 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  opacity: 0.65;
+}
+
 .drawer-value {
   font-weight: 700;
   overflow: hidden;
