@@ -50,34 +50,27 @@ type ImageDimensions = {
 };
 
 const NO_SAFE_AREA_INSETS: SafeAreaInsets = { top: 0, right: 0, bottom: 0, left: 0 };
-const EDGE_TO_EDGE_IMAGE_INSETS: SafeAreaInsets = { top: 14, right: 0, bottom: 14, left: 0 };
 
 function usesIPhoneDocumentViewportWorkaround(): boolean {
     return /iPhone/i.test(window.navigator.userAgent)
         && window.matchMedia("(display-mode: browser)").matches;
 }
 
-function estimateIPhoneTopInset(): number {
-    if (window.innerWidth > window.innerHeight)
-        return 0;
-
-    const screenLongSide = Math.round(Math.max(window.screen.width, window.screen.height));
-    const screenShortSide = Math.round(Math.min(window.screen.width, window.screen.height));
-
-    // iPhone 14 Pro, iPhone 15, and iPhone 15 Pro CSS viewport.
-    if (screenShortSide === 393 && screenLongSide === 852)
-        return 59;
-
-    const totalBrowserInset = Math.max(0, screenLongSide - window.innerHeight);
-    return Math.round(totalBrowserInset / 2);
-}
-
-function estimateIPhoneSideInset(): number {
+function getIPhoneScreenViewport() {
     const isPortrait = window.innerHeight >= window.innerWidth;
     const screenLongSide = Math.max(window.screen.width, window.screen.height);
     const screenShortSide = Math.min(window.screen.width, window.screen.height);
-    const physicalScreenWidth = isPortrait ? screenShortSide : screenLongSide;
-    return Math.max(0, (physicalScreenWidth - window.innerWidth) / 2);
+    const screenWidth = isPortrait ? screenShortSide : screenLongSide;
+    const screenHeight = isPortrait ? screenLongSide : screenShortSide;
+
+    // `screen` dimensions and Safari layout dimensions use different CSS
+    // coordinate scales when browser chrome is visible. Use the layout width
+    // as the common scale, then preserve the physical screen aspect ratio.
+    const width = window.innerWidth;
+    const height = width * screenHeight / screenWidth;
+    const topInset = Math.max(0, (height - window.innerHeight) / 2);
+
+    return { width, height, topInset };
 }
 
 function positionEdgeToEdgeOverlay(element: HTMLElement): void {
@@ -86,18 +79,14 @@ function positionEdgeToEdgeOverlay(element: HTMLElement): void {
         return;
     }
 
-    const isPortrait = window.innerHeight >= window.innerWidth;
-    const screenLongSide = Math.max(window.screen.width, window.screen.height);
-    const screenShortSide = Math.min(window.screen.width, window.screen.height);
-    const estimatedTopInset = estimateIPhoneTopInset();
-    const estimatedSideInset = estimateIPhoneSideInset();
+    const viewport = getIPhoneScreenViewport();
 
     element.classList.add("pswp--document-viewport");
-    element.style.setProperty("--viewer-control-top-inset", `${estimatedTopInset}px`);
-    element.style.top = `${window.scrollY - estimatedTopInset}px`;
-    element.style.left = `${window.scrollX - estimatedSideInset}px`;
-    element.style.width = `${isPortrait ? screenShortSide : screenLongSide}px`;
-    element.style.height = `${isPortrait ? screenLongSide : screenShortSide}px`;
+    element.style.setProperty("--viewer-control-top-inset", `${viewport.topInset}px`);
+    element.style.top = `${window.scrollY - viewport.topInset}px`;
+    element.style.left = `${window.scrollX}px`;
+    element.style.width = `${viewport.width}px`;
+    element.style.height = `${viewport.height}px`;
 }
 
 function formatDebugNumber(value: number): string {
@@ -653,7 +642,7 @@ export default function Gallery() {
                 loop: false,
                 maxZoomLevel: 4,
                 paddingFn: () => settings.edgeToEdge
-                    ? EDGE_TO_EDGE_IMAGE_INSETS
+                    ? NO_SAFE_AREA_INSETS
                     : safeAreaInsetsRef.current,
                 getViewportSizeFn: (_options, pswp) => {
                     const element = (pswp as PhotoSwipe).element;
@@ -962,7 +951,7 @@ export default function Gallery() {
         lbOptions.secondaryZoomLevel = settings.fillScreen ? "fit" : "fill";
         lbOptions.mainClass = settings.edgeToEdge ? "pswp--edge-to-edge" : "";
         lbOptions.paddingFn = () => settings.edgeToEdge
-            ? EDGE_TO_EDGE_IMAGE_INSETS
+            ? NO_SAFE_AREA_INSETS
             : safeAreaInsetsRef.current;
         lbOptions.getViewportSizeFn = (_options, pswpBase) => {
             const element = (pswpBase as PhotoSwipe).element;
