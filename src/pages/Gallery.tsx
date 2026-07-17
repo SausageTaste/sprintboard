@@ -780,21 +780,12 @@ export default function Gallery() {
     React.useEffect(() => {
         if (!lightboxRef.current) {
             let stopGeometryDiagnostics: (() => void) | null = null;
+            // paddingFn, getViewportSizeFn, and mainClass are assigned below
+            // from the current settings on every effect run.
             const lb = new PhotoSwipeLightbox({
                 pswpModule: () => import("photoswipe"),
                 loop: false,
                 maxZoomLevel: 4,
-                paddingFn: () => settings.edgeToEdge
-                    ? NO_SAFE_AREA_INSETS
-                    : safeAreaInsetsRef.current,
-                getViewportSizeFn: (_options, pswp) => {
-                    const element = (pswp as PhotoSwipe).element;
-                    if (settings.edgeToEdge && element) {
-                        return { x: element.clientWidth, y: element.clientHeight };
-                    }
-
-                    return { x: document.documentElement.clientWidth, y: window.innerHeight };
-                },
                 bgOpacity: 1,
             });
 
@@ -1107,7 +1098,6 @@ export default function Gallery() {
         if (pswp) {
             const previousCount = pswp.getNumItems();
             pswp.options.dataSource = dataSource;
-            pswp.updateSize(true);
 
             const nextIndex = pswp.currIndex + 1;
             if (dataSource.length > previousCount && nextIndex < dataSource.length)
