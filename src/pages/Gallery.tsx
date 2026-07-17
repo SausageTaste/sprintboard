@@ -56,22 +56,63 @@ function usesIPhoneDocumentViewportWorkaround(): boolean {
         && window.matchMedia("(display-mode: browser)").matches;
 }
 
-// The layout viewport is not vertically centered on the physical screen: the
-// status area above it is shorter than the address bar + home indicator below
-// it. Share measured from an iOS 26 Safari screenshot (~82pt of 182pt chrome).
-const IPHONE_TOP_CHROME_SHARE = 0.45;
+// Share of the hidden browser chrome that sits above the layout viewport
+// (status area vs. address bar + home indicator). Measured on iOS 26 Safari:
+// ~0.51 with expanded chrome, ~0.53 with minimized chrome.
+const IPHONE_TOP_CHROME_SHARE = 0.52;
+
+function probeDeviceDimension(dimension: "width" | "height"): number {
+    if (!window.matchMedia(`(min-device-${dimension}: 1px)`).matches)
+        return Number.NaN;
+
+    let low = 1;
+    let high = 4000;
+    while (high - low > 1) {
+        const mid = Math.floor((low + high) / 2);
+        if (window.matchMedia(`(min-device-${dimension}: ${mid}px)`).matches)
+            low = mid;
+        else
+            high = mid;
+    }
+    return low;
+}
+
+let cachedDeviceScreenSize: { shortSide: number; longSide: number } | null | undefined;
+
+function getDeviceScreenSizeFromMediaQueries() {
+    if (cachedDeviceScreenSize === undefined) {
+        const width = probeDeviceDimension("width");
+        const height = probeDeviceDimension("height");
+        cachedDeviceScreenSize = Number.isFinite(width) && Number.isFinite(height)
+            ? { shortSide: Math.min(width, height), longSide: Math.max(width, height) }
+            : null;
+    }
+    return cachedDeviceScreenSize;
+}
 
 function getIPhoneScreenViewport() {
     const isPortrait = window.innerHeight >= window.innerWidth;
     const screenLongSide = Math.max(window.screen.width, window.screen.height);
     const screenShortSide = Math.min(window.screen.width, window.screen.height);
+    const device = getDeviceScreenSizeFromMediaQueries();
 
-    // Safari insets the page canvas horizontally (innerWidth < screen.width)
-    // but keeps CSS pixels 1:1 with screen points, so take the screen height
-    // as-is instead of rescaling it by the width ratio. The inset side strips
-    // are unreachable, so the width stays capped at the layout width.
+    // The layout width always reflects real screen points (CSS pixels map
+    // 1:1 onto them), so it anchors everything else.
     const width = window.innerWidth;
-    const height = isPortrait ? screenLongSide : screenShortSide;
+
+    // Safari spoofs `window.screen` while fingerprinting protection is
+    // active (always in private browsing) — e.g. it reports 414x896 on a
+    // 402x874 iPhone 16 Pro. When device media queries disagree with
+    // `window.screen` they carry the real dimensions; otherwise reconstruct
+    // the height from the layout width and the reported aspect ratio, which
+    // stays within a few points of truth even when spoofed because recent
+    // iPhones share nearly the same aspect ratio.
+    const aspectRatio = screenLongSide / screenShortSide;
+    const height = device
+        && (device.longSide !== screenLongSide || device.shortSide !== screenShortSide)
+        ? (isPortrait ? device.longSide : device.shortSide)
+        : (isPortrait ? width * aspectRatio : width / aspectRatio);
+
     const topInset = Math.max(0, (height - window.innerHeight) * IPHONE_TOP_CHROME_SHARE);
 
     return { width, height, topInset };
@@ -256,6 +297,12 @@ function startViewerGeometryDiagnostics(pswp: PhotoSwipe): () => void {
             debugPanel.textContent = [
                 "VIEWER GEOMETRY (magenta=root cyan=wrap yellow=image)",
                 `screen ${screen.width}x${screen.height} avail ${screen.availWidth}x${screen.availHeight} dpr ${window.devicePixelRatio}`,
+                (() => {
+                    const device = getDeviceScreenSizeFromMediaQueries();
+                    return device
+                        ? `mq device ${device.shortSide}x${device.longSide}`
+                        : "mq device missing";
+                })(),
                 `outer ${window.outerWidth}x${window.outerHeight}`,
                 `screenXY ${formatDebugNumber(window.screenX)},${formatDebugNumber(window.screenY)} availTL ${formatDebugNumber(screenAny.availLeft ?? NaN)},${formatDebugNumber(screenAny.availTop ?? NaN)}`,
                 `inner ${window.innerWidth}x${window.innerHeight} client ${document.documentElement.clientWidth}x${document.documentElement.clientHeight}`,
