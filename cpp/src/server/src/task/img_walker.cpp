@@ -206,52 +206,87 @@ namespace {
                 if (!sung::fs::is_directory(local_dir))
                     continue;
 
-                try {
-                    const auto iterator =
-                        sung::fs::recursive_directory_iterator(local_dir);
+                // Walks with the error-code API instead of the throwing
+                // recursive iterator: a volume that fails mid-scan (e.g. EIO
+                // from a flaky external drive) must only cost the unreadable
+                // subtree, not the process. The next scan retries whatever
+                // was skipped.
+                std::vector<sung::Path> pending{ local_dir };
+                while (!pending.empty()) {
+                    const auto dir = std::move(pending.back());
+                    pending.pop_back();
 
-                    for (const auto& entry : iterator) {
-                        auto ext_str = sung::tostr(entry.path().extension());
-                        ext_str = absl::AsciiStrToLower(ext_str);
-                        if (ext_str != ".png")
-                            continue;
-
-                        const auto avif = sung::replace_ext(
-                            entry.path(), ".avif"
+                    std::error_code iter_error;
+                    auto entry_it = sung::fs::directory_iterator(
+                        dir, iter_error
+                    );
+                    if (iter_error) {
+                        std::println(
+                            "ImgWalker: Skipping unreadable directory {}: {}",
+                            sung::tostr(dir),
+                            iter_error.message()
                         );
+                        continue;
+                    }
 
-                        // A generated AVIF carries the source's mtime from
-                        // encode time, so anything other than an exact match
-                        // means the source has changed since. This costs the
-                        // same one stat per file as the previous exists()
-                        // check; the source mtime comes from attributes the
-                        // directory iteration already fetched.
-                        std::error_code avif_error;
-                        const auto avif_time = sung::fs::last_write_time(
-                            avif, avif_error
-                        );
-                        if (!avif_error) {
-                            std::error_code png_error;
-                            const auto png_time = entry.last_write_time(
-                                png_error
-                            );
-                            if (png_error || png_time == avif_time)
-                                continue;
+                    const sung::fs::directory_iterator dir_end;
+                    while (entry_it != dir_end) {
+                        const auto& entry = *entry_it;
+
+                        // Queue subdirectories without following symlinks,
+                        // matching recursive_directory_iterator's default.
+                        std::error_code type_error;
+                        if (entry.is_directory(type_error) && !type_error) {
+                            if (!entry.is_symlink(type_error) && !type_error)
+                                pending.push_back(entry.path());
                         }
 
+                        auto ext_str = sung::tostr(entry.path().extension());
+                        ext_str = absl::AsciiStrToLower(ext_str);
+                        if (ext_str == ".png") {
+                            const auto avif = sung::replace_ext(
+                                entry.path(), ".avif"
+                            );
+
+                            // A generated AVIF carries the source's mtime
+                            // from encode time, so anything other than an
+                            // exact match means the source has changed since.
+                            // This costs the same one stat per file as the
+                            // previous exists() check; the source mtime comes
+                            // from attributes the directory iteration already
+                            // fetched.
+                            std::error_code avif_error;
+                            const auto avif_time = sung::fs::last_write_time(
+                                avif, avif_error
+                            );
+                            bool up_to_date = false;
+                            if (!avif_error) {
+                                std::error_code png_error;
+                                const auto png_time = entry.last_write_time(
+                                    png_error
+                                );
+                                up_to_date = png_error || png_time == avif_time;
+                            }
+
+                            if (!up_to_date) {
 #if HAS_GENERATOR
-                        co_yield entry.path();
+                                co_yield entry.path();
 #else
-                        result.push_back(entry.path());
+                                result.push_back(entry.path());
 #endif
+                            }
+                        }
+
+                        entry_it.increment(iter_error);
+                        if (iter_error) {
+                            std::println(
+                                "ImgWalker: Stopping scan of directory {}: {}",
+                                sung::tostr(dir),
+                                iter_error.message()
+                            );
+                            break;
+                        }
                     }
-                } catch (std::filesystem::filesystem_error& e) {
-                    std::println(
-                        "ImgWalker: Failed to access directory {}: {}",
-                        sung::tostr(local_dir),
-                        e.what()
-                    );
-                    throw;
                 }
             }
         }
