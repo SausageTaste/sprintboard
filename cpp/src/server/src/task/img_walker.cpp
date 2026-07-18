@@ -219,8 +219,25 @@ namespace {
                         const auto avif = sung::replace_ext(
                             entry.path(), ".avif"
                         );
-                        if (sung::fs::exists(avif))
-                            continue;
+
+                        // A generated AVIF carries the source's mtime from
+                        // encode time, so anything other than an exact match
+                        // means the source has changed since. This costs the
+                        // same one stat per file as the previous exists()
+                        // check; the source mtime comes from attributes the
+                        // directory iteration already fetched.
+                        std::error_code avif_error;
+                        const auto avif_time = sung::fs::last_write_time(
+                            avif, avif_error
+                        );
+                        if (!avif_error) {
+                            std::error_code png_error;
+                            const auto png_time = entry.last_write_time(
+                                png_error
+                            );
+                            if (png_error || png_time == avif_time)
+                                continue;
+                        }
 
 #if HAS_GENERATOR
                         co_yield entry.path();
@@ -273,6 +290,15 @@ namespace {
                     const sung::ScopedWakeLock wake_lock{ power_req_ };
                     sung::MonotonicRealtimeTimer one_timer;
 
+                    // Captured before reading the pixels: if the source is
+                    // edited while encoding, the AVIF keeps the pre-edit
+                    // timestamp, and the mismatch makes a later scan
+                    // regenerate it.
+                    sung::FileTimestamps src_timestamps;
+                    const auto src_ts_error = sung::read_file_timestamps(
+                        p, src_timestamps
+                    );
+
                     const auto png_data = sung::read_png(p);
                     if (!png_data)
                         return;
@@ -312,9 +338,11 @@ namespace {
                         return;
                     }
 
-                    const auto timestamp_error = sung::copy_file_timestamps(
-                        p, avif_path
-                    );
+                    const auto timestamp_error =
+                        src_ts_error ? src_ts_error
+                                     : sung::set_file_timestamps(
+                                           avif_path, src_timestamps
+                                       );
                     if (timestamp_error) {
                         std::println(
                             "ImgWalker: Failed to copy timestamps from {} to "

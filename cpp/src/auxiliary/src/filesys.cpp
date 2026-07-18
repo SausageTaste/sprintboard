@@ -35,6 +35,23 @@ namespace {
             static_cast<int>(GetLastError()), std::system_category()
         );
     }
+
+    uint64_t filetime_to_ticks(const FILETIME& filetime) {
+        ULARGE_INTEGER ticks{};
+        ticks.LowPart = filetime.dwLowDateTime;
+        ticks.HighPart = filetime.dwHighDateTime;
+        return ticks.QuadPart;
+    }
+
+    FILETIME ticks_to_filetime(const uint64_t value) {
+        ULARGE_INTEGER ticks{};
+        ticks.QuadPart = value;
+
+        FILETIME filetime{};
+        filetime.dwLowDateTime = ticks.LowPart;
+        filetime.dwHighDateTime = ticks.HighPart;
+        return filetime;
+    }
 #endif
 
 }  // namespace
@@ -87,12 +104,12 @@ namespace sung {
         return static_cast<size_t>(ofs.tellp()) == size;
     }
 
-    std::error_code copy_file_timestamps(
-        const Path& source, const Path& destination
+    std::error_code read_file_timestamps(
+        const Path& path, FileTimestamps& out
     ) {
 #ifdef _WIN32
-        const FileHandle source_handle{ CreateFileW(
-            source.c_str(),
+        const FileHandle handle{ CreateFileW(
+            path.c_str(),
             FILE_READ_ATTRIBUTES,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             nullptr,
@@ -100,19 +117,30 @@ namespace sung {
             FILE_ATTRIBUTE_NORMAL,
             nullptr
         ) };
-        if (source_handle.get() == INVALID_HANDLE_VALUE)
+        if (handle.get() == INVALID_HANDLE_VALUE)
             return ::last_windows_error();
 
         FILETIME creation_time{};
         FILETIME modified_time{};
-        if (!GetFileTime(
-                source_handle.get(), &creation_time, nullptr, &modified_time
-            )) {
+        if (!GetFileTime(handle.get(), &creation_time, nullptr, &modified_time))
             return ::last_windows_error();
-        }
 
-        const FileHandle destination_handle{ CreateFileW(
-            destination.c_str(),
+        out.creation_time_ = ::filetime_to_ticks(creation_time);
+        out.modified_time_ = ::filetime_to_ticks(modified_time);
+        return {};
+#else
+        std::error_code error;
+        out.modified_time_ = fs::last_write_time(path, error);
+        return error;
+#endif
+    }
+
+    std::error_code set_file_timestamps(
+        const Path& path, const FileTimestamps& timestamps
+    ) {
+#ifdef _WIN32
+        const FileHandle handle{ CreateFileW(
+            path.c_str(),
             FILE_WRITE_ATTRIBUTES,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             nullptr,
@@ -120,28 +148,33 @@ namespace sung {
             FILE_ATTRIBUTE_NORMAL,
             nullptr
         ) };
-        if (destination_handle.get() == INVALID_HANDLE_VALUE)
+        if (handle.get() == INVALID_HANDLE_VALUE)
             return ::last_windows_error();
 
-        if (!SetFileTime(
-                destination_handle.get(),
-                &creation_time,
-                nullptr,
-                &modified_time
-            )) {
+        const auto creation_time = ::ticks_to_filetime(
+            timestamps.creation_time_
+        );
+        const auto modified_time = ::ticks_to_filetime(
+            timestamps.modified_time_
+        );
+        if (!SetFileTime(handle.get(), &creation_time, nullptr, &modified_time))
             return ::last_windows_error();
-        }
 
         return {};
 #else
         std::error_code error;
-        const auto modified_time = fs::last_write_time(source, error);
-        if (error)
-            return error;
-
-        fs::last_write_time(destination, modified_time, error);
+        fs::last_write_time(path, timestamps.modified_time_, error);
         return error;
 #endif
+    }
+
+    std::error_code copy_file_timestamps(
+        const Path& source, const Path& destination
+    ) {
+        FileTimestamps timestamps;
+        if (const auto error = read_file_timestamps(source, timestamps))
+            return error;
+        return set_file_timestamps(destination, timestamps);
     }
 
 }  // namespace sung
