@@ -960,7 +960,8 @@ public:
     ImageListResponse query(
         const Path& dir_path,
         const std::string& query_text,
-        const bool recursive
+        const bool recursive,
+        const ImageSortOrder sort_order
     ) const {
         const auto current = load_snapshot();
         ImageListResponse response;
@@ -969,7 +970,7 @@ public:
         if (dir.empty() || dir == ".") {
             for (const auto& namespace_name : current->namespaces_)
                 response.add_dir(namespace_name, sung::fromstr(namespace_name));
-            response.sort();
+            response.sort(sort_order);
             return response;
         }
 
@@ -1004,6 +1005,7 @@ public:
             if (folder.parent_path_ == dir)
                 response.add_dir(folder.name_, sung::fromstr(folder.path_));
         }
+        response.sort(sort_order);
         return response;
     }
 
@@ -1105,9 +1107,12 @@ namespace sung {
     }
 
     ImageListResponse ImageIndex::query(
-        const Path& dir, const std::string& query, const bool recursive
+        const Path& dir,
+        const std::string& query,
+        const bool recursive,
+        const ImageSortOrder sort_order
     ) const {
-        return impl_->query(dir, query, recursive);
+        return impl_->query(dir, query, recursive, sort_order);
     }
 
     void ImageIndex::remove_api_path(const std::string_view api_path) {

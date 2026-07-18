@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <expected>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -11,6 +12,18 @@
 
 
 namespace sung {
+
+    enum class ImageSortOrder {
+        date_desc,
+        date_asc,
+        name_asc,
+        name_desc,
+    };
+
+    std::expected<ImageSortOrder, std::string> parse_image_sort_order(
+        std::string_view value
+    );
+    std::string_view image_sort_order_name(ImageSortOrder order);
 
     class ImageListResponse {
 
@@ -58,8 +71,12 @@ namespace sung {
             const bool recursive
         );
 
-        void sort();
-        static bool file_before(const FileInfo& a, const FileInfo& b);
+        void sort(ImageSortOrder order = ImageSortOrder::date_desc);
+        static bool file_before(
+            const FileInfo& a,
+            const FileInfo& b,
+            ImageSortOrder order = ImageSortOrder::date_desc
+        );
         nlohmann::json make_json(size_t offset, size_t limit) const;
         std::expected<nlohmann::json, std::string> make_json(
             std::string_view cursor, size_t limit
@@ -76,6 +93,7 @@ namespace sung {
 
         std::vector<DirInfo> dirs_;
         std::vector<FileInfo> files_;
+        ImageSortOrder sort_order_ = ImageSortOrder::date_desc;
     };
 
 }  // namespace sung

@@ -27,6 +27,32 @@ namespace {
         "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 
+    unsigned char ascii_lower(const unsigned char value) {
+        if (value >= 'A' && value <= 'Z')
+            return value + ('a' - 'A');
+        return value;
+    }
+
+    int compare_ascii_case_insensitive(
+        const std::string_view a, const std::string_view b
+    ) {
+        const auto common_size = std::min(a.size(), b.size());
+        for (size_t i = 0; i < common_size; ++i) {
+            const auto a_char = ascii_lower(static_cast<unsigned char>(a[i]));
+            const auto b_char = ascii_lower(static_cast<unsigned char>(b[i]));
+            if (a_char < b_char)
+                return -1;
+            if (a_char > b_char)
+                return 1;
+        }
+        if (a.size() < b.size())
+            return -1;
+        if (a.size() > b.size())
+            return 1;
+        return 0;
+    }
+
+
     std::string encode_base64url(const std::string_view input) {
         std::string output;
         output.reserve((input.size() * 4 + 2) / 3);
@@ -74,10 +100,12 @@ namespace {
     }
 
     std::string make_cursor(
-        const sung::ImageListResponse::FileInfo& file_info
+        const sung::ImageListResponse::FileInfo& file_info,
+        const sung::ImageSortOrder sort_order
     ) {
         const nlohmann::json payload = {
-            { "v", 2 },
+            { "v", 3 },
+            { "sort", sung::image_sort_order_name(sort_order) },
             { "time", file_info.sort_time_ns_ },
             { "name", file_info.name_ },
             { "src", sung::tostr(file_info.path_) },
@@ -86,7 +114,8 @@ namespace {
     }
 
     std::expected<sung::ImageListResponse::FileInfo, std::string> parse_cursor(
-        const std::string_view cursor
+        const std::string_view cursor,
+        const sung::ImageSortOrder expected_sort_order
     ) {
         const auto decoded = decode_base64url(cursor);
         if (!decoded)
@@ -94,8 +123,18 @@ namespace {
 
         try {
             const auto payload = nlohmann::json::parse(*decoded);
-            if (payload.at("v").get<int>() != 2)
+            if (payload.at("v").get<int>() != 3)
                 return std::unexpected("Unsupported cursor version");
+
+            const auto cursor_sort_order = sung::parse_image_sort_order(
+                payload.at("sort").get<std::string>()
+            );
+            if (!cursor_sort_order)
+                return std::unexpected("Invalid cursor sort order");
+            if (*cursor_sort_order != expected_sort_order)
+                return std::unexpected(
+                    "Cursor sort order does not match request"
+                );
 
             sung::ImageListResponse::FileInfo output;
             output.sort_time_ns_ = payload.at("time").get<int64_t>();
@@ -432,6 +471,34 @@ namespace {
 // ImageListResponse
 namespace sung {
 
+    std::expected<ImageSortOrder, std::string> parse_image_sort_order(
+        const std::string_view value
+    ) {
+        if (value == "date-desc")
+            return ImageSortOrder::date_desc;
+        if (value == "date-asc")
+            return ImageSortOrder::date_asc;
+        if (value == "name-asc")
+            return ImageSortOrder::name_asc;
+        if (value == "name-desc")
+            return ImageSortOrder::name_desc;
+        return std::unexpected("Invalid 'sort' parameter");
+    }
+
+    std::string_view image_sort_order_name(const ImageSortOrder order) {
+        switch (order) {
+            case ImageSortOrder::date_desc:
+                return "date-desc";
+            case ImageSortOrder::date_asc:
+                return "date-asc";
+            case ImageSortOrder::name_asc:
+                return "name-asc";
+            case ImageSortOrder::name_desc:
+                return "name-desc";
+        }
+        return "date-desc";
+    }
+
     void ImageListResponse::add_dir(
         const std::string& name, const sung::Path& path
     ) {
@@ -488,20 +555,47 @@ namespace sung {
         );
     }
 
-    void ImageListResponse::sort() {
-        std::sort(files_.begin(), files_.end(), file_before);
+    void ImageListResponse::sort(const ImageSortOrder order) {
+        sort_order_ = order;
+        std::sort(
+            files_.begin(),
+            files_.end(),
+            [order](const auto& a, const auto& b) {
+                return file_before(a, b, order);
+            }
+        );
 
         std::sort(dirs_.begin(), dirs_.end(), [](const auto& a, const auto& b) {
             return a.name_ > b.name_;
         });
     }
 
-    bool ImageListResponse::file_before(const FileInfo& a, const FileInfo& b) {
-        if (a.sort_time_ns_ != b.sort_time_ns_)
-            return a.sort_time_ns_ > b.sort_time_ns_;
+    bool ImageListResponse::file_before(
+        const FileInfo& a, const FileInfo& b, const ImageSortOrder order
+    ) {
+        const bool ascending = order == ImageSortOrder::date_asc ||
+                               order == ImageSortOrder::name_asc;
+
+        if (order == ImageSortOrder::date_desc ||
+            order == ImageSortOrder::date_asc) {
+            if (a.sort_time_ns_ != b.sort_time_ns_) {
+                return ascending ? a.sort_time_ns_ < b.sort_time_ns_
+                                 : a.sort_time_ns_ > b.sort_time_ns_;
+            }
+        } else {
+            const auto name_order = ::compare_ascii_case_insensitive(
+                a.name_, b.name_
+            );
+            if (name_order != 0)
+                return ascending ? name_order < 0 : name_order > 0;
+        }
+
         if (a.name_ != b.name_)
-            return a.name_ > b.name_;
-        return sung::tostr(a.path_) > sung::tostr(b.path_);
+            return ascending ? a.name_ < b.name_ : a.name_ > b.name_;
+
+        const auto a_path = sung::tostr(a.path_);
+        const auto b_path = sung::tostr(b.path_);
+        return ascending ? a_path < b_path : a_path > b_path;
     }
 
     nlohmann::json ImageListResponse::make_json(
@@ -513,14 +607,19 @@ namespace sung {
     std::expected<nlohmann::json, std::string> ImageListResponse::make_json(
         const std::string_view cursor, const size_t limit
     ) const {
-        const auto cursor_info = ::parse_cursor(cursor);
+        const auto cursor_info = ::parse_cursor(cursor, sort_order_);
         if (!cursor_info)
             return std::unexpected(cursor_info.error());
 
         const auto first = static_cast<size_t>(std::distance(
             files_.begin(),
             std::upper_bound(
-                files_.begin(), files_.end(), *cursor_info, file_before
+                files_.begin(),
+                files_.end(),
+                *cursor_info,
+                [this](const auto& a, const auto& b) {
+                    return file_before(a, b, sort_order_);
+                }
             )
         ));
         return make_json_page(first, limit);
@@ -550,9 +649,9 @@ namespace sung {
                                        ? nlohmann::json(last)
                                        : nlohmann::json(nullptr);
             output["nextCursor"] = last < files_.size() && last > first
-                                       ? nlohmann::json(
-                                             ::make_cursor(files_[last - 1])
-                                         )
+                                       ? nlohmann::json(::make_cursor(
+                                             files_[last - 1], sort_order_
+                                         ))
                                        : nlohmann::json(nullptr);
         }
 

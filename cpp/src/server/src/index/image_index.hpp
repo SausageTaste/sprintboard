@@ -70,7 +70,10 @@ namespace sung {
         );
 
         ImageListResponse query(
-            const Path& dir, const std::string& query, bool recursive
+            const Path& dir,
+            const std::string& query,
+            bool recursive,
+            ImageSortOrder sort_order = ImageSortOrder::date_desc
         ) const;
 
         void remove_api_path(std::string_view api_path);

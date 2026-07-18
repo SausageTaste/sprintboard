@@ -7,7 +7,12 @@ import "photoswipe/style.css";
 import Breadcrumbs from "../widgets/Breadcrumbs";
 import FolderCard from "../widgets/FolderCard";
 import GalleryDrawer from "../widgets/GalleryDrawer";
-import { loadSettings, saveSettings, type ViewerSettings } from "../func/ViewerSetings";
+import {
+    loadSettings,
+    saveSettings,
+    type ImageSortOrder,
+    type ViewerSettings,
+} from "../func/ViewerSetings";
 
 
 type ImageFileInfo = {
@@ -494,6 +499,7 @@ async function fetchImageList(
     query: string,
     cursor: string | null,
     recursive: boolean,
+    sortOrder: ImageSortOrder,
     signal?: AbortSignal,
 ): Promise<ImageListResponse> {
     const url = new URL("/api/images/list", window.location.origin);
@@ -503,6 +509,7 @@ async function fetchImageList(
         url.searchParams.set("cursor", cursor);
     url.searchParams.set("limit", String(PAGE_SIZE));
     url.searchParams.set("recursive", recursive ? "1" : "0");
+    url.searchParams.set("sort", sortOrder);
 
     const res = await fetch(url.toString(), { signal });
     if (!res.ok)
@@ -662,6 +669,7 @@ export default function Gallery() {
                 settings.searchText,
                 cursor,
                 settings.filesRecursive,
+                settings.imageSortOrder,
                 controller.signal,
             );
             if (generation !== requestGenerationRef.current)
@@ -691,7 +699,13 @@ export default function Gallery() {
                 loadingRef.current = false;
             }
         }
-    }, [curDir, settings.filesRecursive, settings.searchText, totalImgCount]);
+    }, [
+        curDir,
+        settings.filesRecursive,
+        settings.imageSortOrder,
+        settings.searchText,
+        totalImgCount,
+    ]);
 
     React.useEffect(() => {
         loadMoreRef.current = loadMore;
@@ -777,6 +791,7 @@ export default function Gallery() {
                     settings.searchText,
                     null,
                     settings.filesRecursive,
+                    settings.imageSortOrder,
                     controller.signal,
                 );
                 if (generation !== requestGenerationRef.current)
@@ -814,6 +829,7 @@ export default function Gallery() {
                         settings.searchText,
                         data.nextCursor,
                         settings.filesRecursive,
+                        settings.imageSortOrder,
                         controller.signal,
                     );
                     if (generation !== requestGenerationRef.current)
@@ -832,7 +848,12 @@ export default function Gallery() {
         })();
 
         return () => controller.abort();
-    }, [curDir, settings.filesRecursive, settings.searchText]);
+    }, [
+        curDir,
+        settings.filesRecursive,
+        settings.imageSortOrder,
+        settings.searchText,
+    ]);
 
     React.useEffect(() => {
         if (!lightboxRef.current) {

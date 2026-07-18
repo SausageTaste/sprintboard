@@ -244,6 +244,20 @@ int main() {
         if (it_param_query != req.params.end())
             query = it_param_query->second;
 
+        auto sort_order = sung::ImageSortOrder::date_desc;
+        const auto it_param_sort = req.params.find("sort");
+        if (it_param_sort != req.params.end()) {
+            const auto parsed_sort_order = sung::parse_image_sort_order(
+                it_param_sort->second
+            );
+            if (!parsed_sort_order) {
+                res.status = 400;
+                res.set_content(parsed_sort_order.error(), "text/plain");
+                return;
+            }
+            sort_order = *parsed_sort_order;
+        }
+
         const auto offset = ::parse_size_param(req, "offset", 0, true);
         if (!offset) {
             res.status = 400;
@@ -303,7 +317,7 @@ int main() {
         }
 
         sung::ImageListResponse response = image_index.query(
-            sung::fromstr(param_dir), query, recursive
+            sung::fromstr(param_dir), query, recursive, sort_order
         );
 
         nlohmann::json json_data;

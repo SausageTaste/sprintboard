@@ -1,4 +1,4 @@
-import type { ViewerSettings } from "../func/ViewerSetings";
+import type { ImageSortOrder, ViewerSettings } from "../func/ViewerSetings";
 
 
 type Props = {
@@ -67,6 +67,32 @@ export default function GalleryDrawer({
                                 }
                                 style={{ width: 60, height: 30, fontSize: 16 }}
                             />
+                        </label>
+
+                        <label
+                            style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                padding: "10px 0",
+                            }}
+                        >
+                            <span>Image order</span>
+                            <select
+                                value={settings.imageSortOrder}
+                                onChange={(e) =>
+                                    onChangeSettings((s) => ({
+                                        ...s,
+                                        imageSortOrder: e.target.value as ImageSortOrder,
+                                    }))
+                                }
+                                style={{ height: 34, fontSize: 16 }}
+                            >
+                                <option value="date-desc">Newest</option>
+                                <option value="date-asc">Oldest</option>
+                                <option value="name-asc">Name A–Z</option>
+                                <option value="name-desc">Name Z–A</option>
+                            </select>
                         </label>
 
                         <label

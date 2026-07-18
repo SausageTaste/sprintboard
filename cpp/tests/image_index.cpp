@@ -480,6 +480,30 @@ int main() {
                                 .make_json(0, 100)["imageFiles"];
         const auto recursive = index.query(sung::fromstr("test"), "", true)
                                    .make_json(0, 100)["imageFiles"];
+        const auto oldest = index
+                                .query(
+                                    sung::fromstr("test"),
+                                    "",
+                                    true,
+                                    sung::ImageSortOrder::date_asc
+                                )
+                                .make_json(0, 100)["imageFiles"];
+        const auto name_ascending = index
+                                        .query(
+                                            sung::fromstr("test"),
+                                            "",
+                                            true,
+                                            sung::ImageSortOrder::name_asc
+                                        )
+                                        .make_json(0, 100)["imageFiles"];
+        const auto name_descending = index
+                                         .query(
+                                             sung::fromstr("test"),
+                                             "",
+                                             true,
+                                             sung::ImageSortOrder::name_desc
+                                         )
+                                         .make_json(0, 100)["imageFiles"];
         if (!check(
                 reopened.metadata_reused_ == 3 &&
                     reopened.metadata_indexed_ == 0,
@@ -495,6 +519,24 @@ int main() {
                     recursive[1]["name"] == "a-new.avif" &&
                     recursive[2]["name"] == "z-old.avif",
                 "sorts recursive galleries globally by newest timestamp"
+            ) ||
+            !check(
+                oldest[0]["name"] == "z-old.avif" &&
+                    oldest[1]["name"] == "a-new.avif" &&
+                    oldest[2]["name"] == "nested-new.png",
+                "sorts recursive galleries globally by oldest timestamp"
+            ) ||
+            !check(
+                name_ascending[0]["name"] == "a-new.avif" &&
+                    name_ascending[1]["name"] == "nested-new.png" &&
+                    name_ascending[2]["name"] == "z-old.avif",
+                "sorts recursive galleries globally by ascending name"
+            ) ||
+            !check(
+                name_descending[0]["name"] == "z-old.avif" &&
+                    name_descending[1]["name"] == "nested-new.png" &&
+                    name_descending[2]["name"] == "a-new.avif",
+                "sorts recursive galleries globally by descending name"
             )) {
             sung::fs::remove_all(temp);
             return 1;
