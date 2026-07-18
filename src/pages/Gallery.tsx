@@ -36,6 +36,7 @@ interface ImageListResponse {
 
 const PAGE_SIZE = 100;
 const LIGHTBOX_PREFETCH_THRESHOLD = 10;
+const MIN_THUMBNAIL_SIZE = 50;
 
 type SafeAreaInsets = {
     top: number;
@@ -528,6 +529,7 @@ export default function Gallery() {
     const settingsRef = React.useRef(settings);
     const [lightboxReady, setLightboxReady] = React.useState(false);
     const [searchBoxText, setSearchBoxText] = React.useState(settings.searchText || "");
+    const effectiveThumbnailSize = Math.max(MIN_THUMBNAIL_SIZE, settings.thumbnailSize);
 
     const virtuosoRef = React.useRef<any>(null);
     const lightboxRef = React.useRef<PhotoSwipeLightbox | null>(null);
@@ -1352,7 +1354,7 @@ export default function Gallery() {
             <div
                 style={{
                     display: "grid",
-                    gridTemplateColumns: `repeat(auto-fill, minmax(${settings.thumbnailSize}px, 1fr))`,
+                    gridTemplateColumns: `repeat(auto-fill, minmax(${effectiveThumbnailSize}px, 1fr))`,
                     gap: 12,
                 }}
             >
@@ -1411,7 +1413,7 @@ export default function Gallery() {
             <style>{`
         .grid {
           display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(${settings.thumbnailSize}px, 1fr));
+          grid-template-columns: repeat(auto-fill, minmax(${effectiveThumbnailSize}px, 1fr));
           gap: 10px;
           padding: 4px;
         }
