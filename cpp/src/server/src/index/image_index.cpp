@@ -16,6 +16,9 @@
 #include <sqlite3.h>
 #include <sung/basic/os_detect.hpp>
 #include <sung/basic/time.hpp>
+#include <tbb/blocked_range.h>
+#include <tbb/parallel_for.h>
+#include <tbb/task_arena.h>
 
 #include "sung/image/img_info.hpp"
 
@@ -329,6 +332,71 @@ namespace {
         }
 
         return output;
+    }
+
+    // Concurrency this workload wants to run at while scanning: each unit of
+    // work is dominated by round-trip latency to the filesystem (which may
+    // sit behind something slow, e.g. an encrypted vault driver) rather than
+    // CPU, so we deliberately run far more of these in flight at once than
+    // there are cores, to overlap that latency instead of serializing it.
+    constexpr int SCAN_CONCURRENCY = 32;
+
+    struct FileProbe {
+        bool shadowed_ = false;
+        bool stat_failed_ = false;
+        bool reused_ = false;
+        bool needs_persist_ = false;
+        CachedMetadata metadata_;
+    };
+
+    // Pure/side-effect-free so it is safe to call concurrently across files:
+    // reads `existing` (a snapshot, not a live map reference) and touches
+    // only the filesystem and its own return value.
+    FileProbe probe_file(
+        const sung::Path& physical_path, const CachedMetadata* existing
+    ) {
+        FileProbe probe;
+
+        auto extension = sung::tostr(physical_path.extension());
+        absl::AsciiStrToLower(&extension);
+        if (extension == ".png") {
+            const auto avif_path = sung::replace_ext(physical_path, ".avif");
+            std::error_code shadow_error;
+            if (sung::fs::is_regular_file(avif_path, shadow_error) &&
+                !shadow_error) {
+                probe.shadowed_ = true;
+                return probe;
+            }
+        }
+
+        std::error_code stat_error;
+        const auto size = get_file_size(physical_path, stat_error);
+        const auto modified = get_modified_time(physical_path, stat_error);
+        if (stat_error) {
+            probe.stat_failed_ = true;
+            return probe;
+        }
+
+        if (existing && existing->file_size_ == size &&
+            existing->modified_time_ == modified) {
+            probe.reused_ = true;
+            probe.metadata_ = *existing;
+            if (probe.metadata_.sort_time_ns_ == 0) {
+                probe.metadata_.sort_time_ns_ = get_image_sort_time(
+                    physical_path
+                );
+                if (probe.metadata_.sort_time_ns_ > 0)
+                    probe.needs_persist_ = true;
+            }
+        } else {
+            const auto sort_time_ns = get_image_sort_time(physical_path);
+            probe.metadata_ = inspect_file(
+                physical_path, size, modified, sort_time_ns
+            );
+            probe.needs_persist_ = true;
+        }
+
+        return probe;
     }
 
     bool execute_sql(sqlite3* database, const char* sql) {
@@ -727,55 +795,57 @@ public:
                     seen_physical.insert(path_str);
                 }
 
-                for (const auto& physical_path : physical_files) {
-                    ++stats.files_scanned_;
-                    auto extension = sung::tostr(physical_path.extension());
-                    absl::AsciiStrToLower(&extension);
-                    if (extension == ".png") {
-                        const auto avif_path = sung::replace_ext(
-                            physical_path, ".avif"
-                        );
-                        std::error_code shadow_error;
-                        if (fs::is_regular_file(avif_path, shadow_error) &&
-                            !shadow_error) {
-                            continue;
+                // The probe phase only reads `metadata_` (never writes it),
+                // so concurrent lookups across files are safe; each file's
+                // filesystem work (stat, and full decode for new/changed
+                // files) can therefore overlap instead of running one at a
+                // time, which matters a lot when the scan root is behind
+                // something with high per-call latency (e.g. an encrypted
+                // vault driver).
+                std::vector<FileProbe> probes(physical_files.size());
+                scan_arena_.execute([&] {
+                    tbb::parallel_for(
+                        tbb::blocked_range<size_t>(0, physical_files.size()),
+                        [&](const tbb::blocked_range<size_t>& range) {
+                            for (auto i = range.begin(); i != range.end();
+                                 ++i) {
+                                const auto path_str = sung::tostr(
+                                    physical_files[i]
+                                );
+                                const auto it = metadata_.find(path_str);
+                                const CachedMetadata* existing =
+                                    it != metadata_.end() ? &it->second
+                                                           : nullptr;
+                                probes[i] = probe_file(
+                                    physical_files[i], existing
+                                );
+                            }
                         }
-                    }
-
-                    std::error_code stat_error;
-                    const auto size = get_file_size(physical_path, stat_error);
-                    const auto modified = get_modified_time(
-                        physical_path, stat_error
                     );
-                    if (stat_error)
+                });
+
+                for (size_t i = 0; i < physical_files.size(); ++i) {
+                    const auto& physical_path = physical_files[i];
+                    auto& probe = probes[i];
+                    ++stats.files_scanned_;
+
+                    if (probe.shadowed_ || probe.stat_failed_)
                         continue;
 
                     const auto path_str = sung::tostr(physical_path);
-                    auto metadata_it = metadata_.find(path_str);
-                    if (metadata_it != metadata_.end() &&
-                        metadata_it->second.file_size_ == size &&
-                        metadata_it->second.modified_time_ == modified) {
+                    if (probe.reused_) {
                         ++stats.metadata_reused_;
-                        if (metadata_it->second.sort_time_ns_ == 0) {
-                            metadata_it->second.sort_time_ns_ =
-                                get_image_sort_time(physical_path);
-                            if (metadata_it->second.sort_time_ns_ > 0)
-                                changed.push_back(metadata_it->second);
+                        if (probe.needs_persist_) {
+                            metadata_[path_str] = probe.metadata_;
+                            changed.push_back(probe.metadata_);
                         }
                     } else {
-                        const auto sort_time_ns = get_image_sort_time(
-                            physical_path
-                        );
-                        auto metadata = inspect_file(
-                            physical_path, size, modified, sort_time_ns
-                        );
-                        metadata_[path_str] = metadata;
-                        changed.push_back(std::move(metadata));
-                        metadata_it = metadata_.find(path_str);
+                        metadata_[path_str] = probe.metadata_;
+                        changed.push_back(probe.metadata_);
                         ++stats.metadata_indexed_;
                     }
 
-                    const auto& metadata = metadata_it->second;
+                    const auto& metadata = probe.metadata_;
                     if (initial_refresh && stats.files_scanned_ % 1000 == 0) {
                         std::println(
                             "ImageIndex: Validated {} files ({} reused, {} "
@@ -968,6 +1038,9 @@ private:
     std::shared_ptr<const IndexSnapshot> snapshot_;
     std::mutex refresh_mutex_;
     mutable std::mutex snapshot_mutex_;
+    // Isolated from the default TBB arena (used by CPU-bound AVIF encoding)
+    // since this one is deliberately oversubscribed for I/O latency-hiding.
+    tbb::task_arena scan_arena_{ SCAN_CONCURRENCY };
 };
 
 
@@ -989,7 +1062,11 @@ namespace sung {
     ImageIndex::ImageIndex(Path database_path)
         : impl_(std::make_unique<Impl>(std::move(database_path))) {}
 
-    ImageIndex::~ImageIndex() = default;
+    ImageIndex::~ImageIndex() {
+        auto_refresh_stop_ = true;
+        if (auto_refresh_thread_.joinable())
+            auto_refresh_thread_.join();
+    }
 
     ImageIndexRefreshStats ImageIndex::initialize(
         std::shared_ptr<const ServerConfigs> configs
@@ -1002,6 +1079,29 @@ namespace sung {
         std::shared_ptr<const ServerConfigs> configs
     ) {
         return impl_->refresh(configs);
+    }
+
+    void ImageIndex::start_auto_refresh(
+        std::function<std::shared_ptr<const ServerConfigs>()>
+            configs_provider,
+        const double interval_seconds
+    ) {
+        auto_refresh_thread_ = std::thread([this,
+                                             configs_provider = std::move(
+                                                 configs_provider
+                                             ),
+                                             interval_seconds] {
+            while (!auto_refresh_stop_) {
+                for (double waited = 0;
+                     waited < interval_seconds && !auto_refresh_stop_;
+                     waited += 0.1) {
+                    sung::sleep_naive(0.1);
+                }
+                if (auto_refresh_stop_)
+                    break;
+                impl_->refresh(configs_provider());
+            }
+        });
     }
 
     ImageListResponse ImageIndex::query(

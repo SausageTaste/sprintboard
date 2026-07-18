@@ -30,6 +30,11 @@ namespace {
     constexpr size_t DEFAULT_PAGE_SIZE = 100;
     constexpr size_t MAX_PAGE_SIZE = 200;
 
+    // Scan roots can sit behind something slow (an encrypted vault, a
+    // network share), so this is deliberately longer than a plain local
+    // directory would need.
+    constexpr double IMAGE_INDEX_REFRESH_INTERVAL = 30;
+
 
     std::expected<size_t, std::string> parse_size_param(
         const HttpReq& req,
@@ -188,19 +193,16 @@ int main() {
         sung::fromstr(".sprintboard/image-index.sqlite3")
     };
     image_index.initialize(server_configs.get());
+    image_index.start_auto_refresh(
+        [&server_configs]() { return server_configs.get(); },
+        ::IMAGE_INDEX_REFRESH_INTERVAL
+    );
 
     sung::TaskManager tasks;
     auto power_req = std::make_shared<::PowerRequestTask>();
     tasks.add_periodic_task(power_req, 3.0);
 
     tasks.add_periodic_task([&server_configs]() { server_configs.tick(); }, 1);
-
-    tasks.add_periodic_task(
-        [&image_index, &server_configs]() {
-            image_index.refresh(server_configs.get());
-        },
-        5
-    );
 
     tasks.add_periodic_task(
         sung::create_img_walker_task(server_configs, power_req->get()),

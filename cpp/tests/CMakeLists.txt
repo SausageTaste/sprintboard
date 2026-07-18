@@ -39,5 +39,6 @@ target_include_directories(
 target_link_libraries(
     ${PROJECT_NAME}_test_image_index
     sprintboard_img
+    TBB::tbb
     unofficial::sqlite3::sqlite3
 )

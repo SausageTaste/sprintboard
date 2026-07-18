@@ -1,10 +1,13 @@
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <thread>
 
 #include <nlohmann/json.hpp>
 
@@ -54,6 +57,18 @@ namespace sung {
             std::shared_ptr<const ServerConfigs> configs
         );
 
+        // Runs `refresh` repeatedly on a dedicated thread, waiting
+        // `interval_seconds` after each scan completes before starting the
+        // next one. Keeping this off the shared task-manager thread matters
+        // when the scan roots live behind something slow (an encrypted
+        // vault, a network share): a slow scan there must not stall the
+        // other periodic tasks (AVIF encoding, power-request gating).
+        void start_auto_refresh(
+            std::function<std::shared_ptr<const ServerConfigs>()>
+                configs_provider,
+            double interval_seconds
+        );
+
         ImageListResponse query(
             const Path& dir, const std::string& query, bool recursive
         ) const;
@@ -63,6 +78,8 @@ namespace sung {
     private:
         class Impl;
         std::unique_ptr<Impl> impl_;
+        std::thread auto_refresh_thread_;
+        std::atomic_bool auto_refresh_stop_{ false };
     };
 
 }  // namespace sung
