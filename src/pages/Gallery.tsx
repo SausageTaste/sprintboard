@@ -198,7 +198,14 @@ function positionEdgeToEdgeOverlay(element: HTMLElement): void {
     const viewport = getIPhoneScreenViewport();
 
     element.classList.add("pswp--document-viewport");
-    element.style.setProperty("--viewer-control-top-inset", `${viewport.topInset}px`);
+    // Home-screen mode also lands here (without a manifest it still matches
+    // display-mode: browser) with a correct topInset of 0 — but there the
+    // status bar overlays the screen top, so the controls must clear the
+    // device safe-area inset instead of the browser chrome estimate.
+    element.style.setProperty(
+        "--viewer-control-top-inset",
+        `max(${viewport.topInset}px, env(safe-area-inset-top, 0px))`,
+    );
     element.style.top = `${window.scrollY - viewport.topInset}px`;
     element.style.left = `${window.scrollX}px`;
     element.style.width = `${viewport.width}px`;
