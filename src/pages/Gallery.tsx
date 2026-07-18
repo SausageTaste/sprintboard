@@ -850,6 +850,15 @@ export default function Gallery() {
                     positionEdgeToEdgeOverlay(element);
             });
 
+            lb.on("openingAnimationStart", () => {
+                // PhotoSwipe makes its controls visible immediately after this
+                // event. Hide them before the browser paints; tapping the viewer
+                // still uses PhotoSwipe's default toggle-controls action.
+                queueMicrotask(() => {
+                    lb.pswp?.element?.classList.remove("pswp--ui-visible");
+                });
+            });
+
             lb.on("afterInit", () => {
                 const pswp = lb.pswp;
                 if (!pswp?.element || !settingsRef.current.viewerDiagnostics)
