@@ -76,7 +76,7 @@ export default function ImageDetails() {
     }, []);
 
     return (
-        <div style={{ padding: 16, fontFamily: "system-ui" }}>
+        <div className="app-page">
             <h2>Image details</h2>
             <a href={imgSrc} target="_blank" rel="noopener noreferrer">
                 <img

@@ -47,12 +47,12 @@ export default function Gallery() {
     }, [loadMore]);
 
     return (
-        <div style={{ padding: 16, fontFamily: "system-ui" }}>
+        <div className="app-page">
             <h2>Image Gallery</h2>
             <div style={{ height: 12 }} />
-            <text>Idle time: {idleTime.toFixed(2)} seconds</text>
+            <div>Idle time: {idleTime.toFixed(2)} seconds</div>
             <div style={{ height: 12 }} />
-            <text>Wake status: {wakeStatus ? "ON" : "OFF"}</text>
+            <div>Wake status: {wakeStatus ? "ON" : "OFF"}</div>
             <div style={{ height: 12 }} />
             <button onClick={sendWakeUpCall}>Send Wake Up Call</button>
             <div style={{ height: 12 }} />

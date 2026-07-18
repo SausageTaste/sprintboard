@@ -1266,7 +1266,7 @@ export default function Gallery() {
     }, [settings]);
 
     return (
-        <div className="gallery-page">
+        <div className="app-page">
             <div ref={safeAreaProbeRef} className="safe-area-probe" aria-hidden="true" />
             <div className="headerRow" style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <button
