@@ -854,11 +854,26 @@ export default function Gallery() {
 
             lb.on("openingAnimationStart", () => {
                 // PhotoSwipe makes its controls visible immediately after this
-                // event. Hide them before the browser paints; tapping the viewer
-                // still uses PhotoSwipe's default toggle-controls action.
+                // event. Hide them before the browser paints.
                 queueMicrotask(() => {
                     lb.pswp?.element?.classList.remove("pswp--ui-visible");
                 });
+            });
+
+            lb.on("afterInit", () => {
+                const pswp = lb.pswp;
+                if (!pswp?.element)
+                    return;
+
+                const revealControls = () => {
+                    pswp.element?.classList.add("pswp--ui-visible");
+                };
+
+                // Touch taps use PhotoSwipe's toggle-controls action. Desktop
+                // clicks zoom or close, so reveal controls through mouse and
+                // keyboard activity without replacing those click actions.
+                pswp.events.add(pswp.element, "mousemove", revealControls);
+                pswp.events.add(pswp.element, "focusin", revealControls);
             });
 
             lb.on("afterInit", () => {
