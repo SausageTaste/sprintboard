@@ -7,11 +7,12 @@
 #include <queue>
 #include <thread>
 
-#include <absl/strings/str_split.h>
 #include <sung/basic/os_detect.hpp>
 #include <sung/basic/time.hpp>
 
 #include "sung/image/img_info.hpp"
+
+#include "image_query.hpp"
 
 #if defined(__cpp_lib_generator) && __cpp_lib_generator >= SUNG__cplusplus
     #include <generator>
@@ -146,84 +147,6 @@ namespace {
         }
     }
 
-    class Query {
-
-    public:
-        void parse(const std::string& query) {
-            auto parts = absl::StrSplit(query, ',');
-            for (auto part : parts) {
-                if (!part.empty()) {
-                    part = absl::StripAsciiWhitespace(part);
-
-                    if (part.empty())
-                        continue;
-
-                    if (part.starts_with("model:")) {
-                        model_ = part.substr(6);
-                    } else if (part.starts_with("dim:")) {
-                        const auto dim_str = part.substr(4);
-                        if (dim_str == "ver") {
-                            opt_ver_ = true;
-                            opt_hor_ = false;
-                        } else if (dim_str == "hor") {
-                            opt_hor_ = true;
-                            opt_ver_ = false;
-                        }
-                    } else {
-                        terms_.push_back(std::string{ part });
-                    }
-                }
-            }
-
-            return;
-        }
-
-        bool need_metadata() const {
-            if (!model_.empty())
-                return true;
-            if (!terms_.empty())
-                return true;
-            return false;
-        }
-
-        bool match(const std::string& text) const {
-            for (const auto& term : terms_) {
-                if (!text.contains(term)) {
-                    return false;
-                }
-            }
-            return true;
-        }
-
-        bool match_model(const std::string& model) const {
-            // If user did not specify model filter, always match
-            if (model_.empty())
-                return true;
-
-            // If image does not have model info, no match
-            if (model.empty())
-                return false;
-
-            return model.contains(model_);
-        }
-
-        template <typename T>
-        bool match_dim(T width, T height) const {
-            if (opt_ver_ && height <= width)
-                return false;
-            if (opt_hor_ && width <= height)
-                return false;
-            return true;
-        }
-
-    private:
-        std::vector<std::string> terms_;
-        std::string model_;
-        bool opt_ver_ = false;
-        bool opt_hor_ = false;
-    };
-
-
     std::optional<int> check_path_depth(
         const sung::Path& base, const sung::Path& target
     ) {
@@ -285,7 +208,7 @@ namespace {
     }
 
     std::optional<refimg::SimpleImageInfo> is_file_eligible(
-        const sung::Path& file_path, const ::Query& query
+        const sung::Path& file_path, const sung::detail::ImageQuery& query
     ) {
         const auto avif_path = sung::replace_ext(file_path, ".avif");
         if (avif_path != file_path && sung::fs::exists(avif_path))
@@ -295,28 +218,25 @@ namespace {
         if (!img_info.load_simple_info())
             return std::nullopt;
 
-        if (!query.match_dim(img_info.width(), img_info.height()))
+        if (!query.matches_dimensions(img_info.width(), img_info.height()))
             return std::nullopt;
-        if (!query.need_metadata())
+        if (!query.needs_metadata())
             return img_info.simple();
 
-        if (!img_info.load_img_metadata())
-            return std::nullopt;
-        if (!img_info.parse_comfyui_workflow())
-            return std::nullopt;
-
-        img_info.parse_stable_diffusion_model();
-        if (!query.match_model(img_info.sd().model_name_))
-            return std::nullopt;
-
-        img_info.parse_stable_diffusion_prompt();
-        for (const auto& p : img_info.sd().prompt_) {
-            if (query.match(p)) {
-                return img_info.simple();
-            }
+        if (!img_info.load_img_metadata() ||
+            !img_info.parse_comfyui_workflow()) {
+            return query.matches_without_metadata()
+                       ? std::optional{ img_info.simple() }
+                       : std::nullopt;
         }
 
-        return std::nullopt;
+        img_info.parse_stable_diffusion_model();
+        img_info.parse_stable_diffusion_prompt();
+        return query.matches_metadata(
+                   img_info.sd().model_name_, img_info.sd().prompt_
+               )
+                   ? std::optional{ img_info.simple() }
+                   : std::nullopt;
     }
 
 
@@ -373,7 +293,7 @@ namespace {
 
         void init(
             BoundedQueue<sung::Path>& q,
-            const Query& query,
+            const sung::detail::ImageQuery& query,
             const sung::Path& local_dir,
             const sung::Path& api_path_prefix
         ) {
@@ -406,7 +326,7 @@ namespace {
 
     private:
         BoundedQueue<sung::Path>* task_q_ = nullptr;
-        const Query* query_ = nullptr;
+        const sung::detail::ImageQuery* query_ = nullptr;
         sung::Path local_dir_;
         sung::Path api_path_prefix_;
         std::vector<sung::ImageListResponse::FileInfo> results_;
@@ -421,8 +341,7 @@ namespace {
         const std::string& query,
         const bool recursive
     ) {
-        Query q;
-        q.parse(query);
+        const sung::detail::ImageQuery image_query{ query };
 
         const auto api_path_prefix = "/img" / namespace_path;
         const auto thread_count = std::clamp<size_t>(
@@ -434,7 +353,7 @@ namespace {
         std::vector<std::thread> threads;
         threads.reserve(thread_count);
         for (size_t i = 0; i < thread_count; ++i) {
-            workers[i].init(task_q, q, local_dir, api_path_prefix);
+            workers[i].init(task_q, image_query, local_dir, api_path_prefix);
             threads.emplace_back(std::ref(workers[i]));
         }
 

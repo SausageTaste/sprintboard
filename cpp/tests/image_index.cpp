@@ -5,6 +5,7 @@
 
 #include <sqlite3.h>
 
+#include "image_query.hpp"
 #include "index/image_index.hpp"
 
 
@@ -145,6 +146,24 @@ namespace {
 
 
 int main() {
+    const sung::detail::ImageQuery exclusion_query{
+        "wanted, -blocked, -unwanted"
+    };
+    if (!check(
+            exclusion_query.matches_metadata("", { "wanted" }),
+            "accepts prompts that satisfy inclusions and exclusions"
+        ) ||
+        !check(
+            !exclusion_query.matches_metadata("", { "wanted", "blocked" }),
+            "applies exclusions across every image prompt"
+        ) ||
+        !check(
+            sung::detail::ImageQuery{ "-blocked" }.matches_metadata("", {}),
+            "allows metadata-free images for exclusion-only queries"
+        )) {
+        return 1;
+    }
+
     if (!check(
             sung::detail::select_image_sort_time(100, 200) == 100,
             "prefers filesystem creation time"
@@ -197,6 +216,18 @@ int main() {
             !check(
                 image_count(index, "demon girl") == 1,
                 "searches eagerly indexed prompt metadata"
+            ) ||
+            !check(
+                image_count(index, "-demon girl") == 1,
+                "excludes indexed prompt metadata"
+            ) ||
+            !check(
+                image_count(index, "demon girl, -demon girl") == 0,
+                "combines included and excluded prompt terms"
+            ) ||
+            !check(
+                image_count(index, "-not-a-real-tag") == 2,
+                "supports exclusion-only searches"
             ) ||
             !check(
                 image_count(index, "model:perfectdeliberate") +

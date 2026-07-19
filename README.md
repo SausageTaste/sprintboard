@@ -39,6 +39,10 @@ There are special tokens.
 * `dim:ver` - Show only vertical images
 * `dim:hor` - Show only horizontal images
 * `model:<text>` - Show only images whose model name contains `<text>` as a substring
+* `-<text>` - Exclude images whose prompt contains `<text>` as a substring
+
+For example, `1girl, -blue hair, -outdoors` shows images whose prompt contains
+`1girl` but contains neither `blue hair` nor `outdoors`.
 
 ## Use AVIF to Save Storage Space
 

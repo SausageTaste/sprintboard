@@ -12,15 +12,16 @@
 #include <vector>
 
 #include <absl/strings/ascii.h>
-#include <absl/strings/str_split.h>
 #include <sqlite3.h>
-#include <sung/basic/os_detect.hpp>
-#include <sung/basic/time.hpp>
 #include <tbb/blocked_range.h>
 #include <tbb/parallel_for.h>
 #include <tbb/task_arena.h>
+#include <sung/basic/os_detect.hpp>
+#include <sung/basic/time.hpp>
 
 #include "sung/image/img_info.hpp"
+
+#include "image_query.hpp"
 
 #if defined(SUNG_OS_WINDOWS)
     #ifndef NOMINMAX
@@ -163,72 +164,6 @@ namespace {
         return make_timestamp_ns(attributes.st_mtime, 0);
 #endif
     }
-
-
-    class Query {
-
-    public:
-        explicit Query(const std::string& query) {
-            for (auto part : absl::StrSplit(query, ',')) {
-                part = absl::StripAsciiWhitespace(part);
-                if (part.empty())
-                    continue;
-
-                if (part.starts_with("model:")) {
-                    model_ = std::string{ part.substr(6) };
-                } else if (part.starts_with("dim:")) {
-                    const auto dim = part.substr(4);
-                    if (dim == "ver") {
-                        vertical_ = true;
-                        horizontal_ = false;
-                    } else if (dim == "hor") {
-                        horizontal_ = true;
-                        vertical_ = false;
-                    }
-                } else {
-                    terms_.emplace_back(part);
-                }
-            }
-        }
-
-        bool matches_dimensions(const int width, const int height) const {
-            if (vertical_ && height <= width)
-                return false;
-            if (horizontal_ && width <= height)
-                return false;
-            return true;
-        }
-
-        bool needs_metadata() const {
-            return !model_.empty() || !terms_.empty();
-        }
-
-        bool matches_metadata(
-            const std::string& model, const std::vector<std::string>& prompts
-        ) const {
-            if (!model_.empty() && !model.contains(model_))
-                return false;
-
-            for (const auto& prompt : prompts) {
-                bool matched = true;
-                for (const auto& term : terms_) {
-                    if (!prompt.contains(term)) {
-                        matched = false;
-                        break;
-                    }
-                }
-                if (matched)
-                    return true;
-            }
-            return false;
-        }
-
-    private:
-        std::vector<std::string> terms_;
-        std::string model_;
-        bool vertical_ = false;
-        bool horizontal_ = false;
-    };
 
 
     struct CachedMetadata {
@@ -815,7 +750,7 @@ public:
                                 const auto it = metadata_.find(path_str);
                                 const CachedMetadata* existing =
                                     it != metadata_.end() ? &it->second
-                                                           : nullptr;
+                                                          : nullptr;
                                 probes[i] = probe_file(
                                     physical_files[i], existing
                                 );
@@ -974,7 +909,7 @@ public:
             return response;
         }
 
-        const Query query{ query_text };
+        const sung::detail::ImageQuery query{ query_text };
         for (const auto& file : current->files_) {
             const auto in_directory = recursive
                                           ? is_descendant_or_child(
