@@ -69,15 +69,13 @@ namespace {
 
         // <rdf:RDF ...>
         pugi::xml_node rdf = xmpmeta.append_child("rdf:RDF");
-        rdf.append_attribute(
-            "xmlns:rdf"
+        rdf.append_attribute("xmlns:rdf"
         ) = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
 
         // <rdf:Description ...>
         pugi::xml_node desc = rdf.append_child("rdf:Description");
         desc.append_attribute("rdf:about") = "";
-        desc.append_attribute(
-            "xmlns:sprintboard"
+        desc.append_attribute("xmlns:sprintboard"
         ) = "https://github.com/SausageTaste/sprintboard/";
 
         for (auto& kv : src.text) {
@@ -190,18 +188,26 @@ namespace {
         return outData;
     }
 
+    struct PngWorkItem {
+        sung::Path path_;
+        const sung::ServerConfigs::BindingInfo* binding_;
+    };
+
 #if HAS_GENERATOR
-    std::generator<sung::Path> gen_png_files(
+    std::generator<PngWorkItem> gen_png_files(
 #else
-    std::vector<sung::Path> gen_png_files(
+    std::vector<PngWorkItem> gen_png_files(
 #endif
-        const sung::ServerConfigs::DirBindings& dir_bindings
+        const sung::ServerConfigs& cfg
     ) {
 #if !HAS_GENERATOR
-        std::vector<sung::Path> result;
+        std::vector<PngWorkItem> result;
 #endif
 
-        for (const auto& [name, binding_info] : dir_bindings) {
+        for (const auto& [name, binding_info] : cfg.dir_bindings_) {
+            if (!cfg.effective_avif_options(binding_info).gen_)
+                continue;
+
             for (const auto& local_dir : binding_info.local_dirs_) {
                 if (!sung::fs::is_directory(local_dir))
                     continue;
@@ -270,9 +276,11 @@ namespace {
 
                             if (!up_to_date) {
 #if HAS_GENERATOR
-                                co_yield entry.path();
+                                co_yield PngWorkItem{ entry.path(),
+                                                      &binding_info };
 #else
-                                result.push_back(entry.path());
+                                result.push_back({ entry.path(), &binding_info }
+                                );
 #endif
                             }
                         }
@@ -314,14 +322,17 @@ namespace {
 
         void run() override {
             const auto svrcfg = cfg_.get();
-            if (!svrcfg->avif_gen_)
+            if (!svrcfg->any_avif_gen())
                 return;
 
             size_t count = 0;
-            for (const auto& p : ::gen_png_files(svrcfg->dir_bindings_)) {
+            for (const auto& item : ::gen_png_files(*svrcfg)) {
                 ++count;
 
-                tg_.run([p, &svrcfg, this]() {
+                const auto avif_opts = svrcfg->effective_avif_options(
+                    *item.binding_
+                );
+                tg_.run([p = item.path_, avif_opts, this]() {
                     const sung::ScopedWakeLock wake_lock{ power_req_ };
                     sung::MonotonicRealtimeTimer one_timer;
 
@@ -339,11 +350,11 @@ namespace {
                         return;
 
                     sung::AvifEncodeParams avif_params;
-                    avif_params.set_quality(svrcfg->avif_quality_);
-                    avif_params.set_speed(svrcfg->avif_speed_);
+                    avif_params.set_quality(avif_opts.quality_);
+                    avif_params.set_speed(avif_opts.speed_);
                     avif_params.set_xmp(::make_xmp_packet(*png_data));
                     avif_params.set_yuv_format(
-                        ::conv_pix_format(svrcfg->avif_pix_format_)
+                        ::conv_pix_format(avif_opts.pix_format_)
                     );
 
                     const auto avif_blob = encode_avif(*png_data, avif_params);

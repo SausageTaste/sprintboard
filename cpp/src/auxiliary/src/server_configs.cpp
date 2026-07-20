@@ -56,6 +56,20 @@ namespace {
         }
     }
 
+    template <typename T>
+    std::optional<T> try_get_opt(const nlohmann::json& j, const char* key) {
+        if (!j.contains(key))
+            return std::nullopt;
+
+        try {
+            return j.at(key).get<T>();
+        } catch (const std::exception& e) {
+            throw std::runtime_error(
+                "Invalid type for key '" + std::string(key) + "'"
+            );
+        }
+    }
+
     sung::ErrStr load_or_create_new_server_configs(
         const sung::Path& path, sung::ServerConfigs& configs
     ) {
@@ -125,6 +139,29 @@ namespace sung {
         avif_gen_remove_src_ = false;
     }
 
+    ServerConfigs::AvifOptions ServerConfigs::effective_avif_options(
+        const BindingInfo& binding
+    ) const {
+        AvifOptions output;
+        output.pix_format_ = binding.avif_.pix_format_.value_or(avif_pix_format_
+        );
+        output.quality_ = binding.avif_.quality_.value_or(avif_quality_);
+        output.speed_ = binding.avif_.speed_.value_or(avif_speed_);
+        output.gen_ = binding.avif_.gen_.value_or(avif_gen_);
+        output.gen_remove_src_ = binding.avif_.gen_remove_src_.value_or(
+            avif_gen_remove_src_
+        );
+        return output;
+    }
+
+    bool ServerConfigs::any_avif_gen() const {
+        for (const auto& [name, binding] : dir_bindings_) {
+            if (this->effective_avif_options(binding).gen_)
+                return true;
+        }
+        return false;
+    }
+
     const ServerConfigs::BindingInfo* ServerConfigs::find_binding(
         const std::string& namespace_str
     ) const {
@@ -169,26 +206,46 @@ namespace sung {
         if (json_data.contains("dir_bindings")) {
             const auto& bindings = json_data.at("dir_bindings");
             for (auto it = bindings.begin(); it != bindings.end(); ++it) {
-                auto& dir = it.key();
-                auto& binding_info = it.value();
+                const auto& json_binding = it.value();
+                auto& binding_info = dir_bindings_[it.key()];
 
-                if (binding_info.contains("local_dirs")) {
-                    auto& local_dirs = binding_info.at("local_dirs");
-                    auto& binding_info = dir_bindings_[dir];
-                    for (auto& x : local_dirs) {
+                if (json_binding.contains("local_dirs")) {
+                    for (auto& x : json_binding.at("local_dirs")) {
                         auto path_str = x.get<std::string>();
                         const auto path = fs::u8path(path_str);
                         binding_info.local_dirs_.push_back(path);
                     }
                 }
-            }
-        }
 
-        if (json_data.contains("server_host")) {
-            const auto host = json_data.at("server_host").get<std::string>();
-            server_host_ = host;
-        } else {
-            server_host_ = DEFAULT_HOST;
+                if (json_binding.contains("avif_pix_format")) {
+                    try {
+                        binding_info.avif_.pix_format_ =
+                            ::fromstr_avif_pix_format(json_binding
+                                                          .at("avif_pix_format")
+                                                          .get<std::string>());
+                    } catch (const std::exception& e) {
+                        std::println(
+                            "Invalid value for `avif_pix_format` in binding "
+                            "'{}': {}",
+                            it.key(),
+                            e.what()
+                        );
+                    }
+                }
+
+                binding_info.avif_.quality_ = try_get_opt<double>(
+                    json_binding, "avif_quality"
+                );
+                binding_info.avif_.speed_ = try_get_opt<int>(
+                    json_binding, "avif_speed"
+                );
+                binding_info.avif_.gen_ = try_get_opt<bool>(
+                    json_binding, "avif_gen"
+                );
+                binding_info.avif_.gen_remove_src_ = try_get_opt<bool>(
+                    json_binding, "avif_gen_remove_src"
+                );
+            }
         }
 
         server_host_ = try_get(json_data, "server_host", DEFAULT_HOST);
@@ -224,6 +281,28 @@ namespace sung {
                 for (const auto& path : info.local_dirs_) {
                     json_binding["local_dirs"].push_back(sung::tostr(path));
                 }
+
+                // Only explicitly set overrides may be written back:
+                // materializing inherited values here would detach the
+                // binding from later root edits (the config file is
+                // re-exported after every reload).
+                const auto& overrides = info.avif_;
+                if (overrides.pix_format_) {
+                    json_binding["avif_pix_format"] = ::tostr(
+                        *overrides.pix_format_
+                    );
+                }
+                if (overrides.quality_)
+                    json_binding["avif_quality"] = *overrides.quality_;
+                if (overrides.speed_)
+                    json_binding["avif_speed"] = *overrides.speed_;
+                if (overrides.gen_)
+                    json_binding["avif_gen"] = *overrides.gen_;
+                if (overrides.gen_remove_src_) {
+                    json_binding["avif_gen_remove_src"] =
+                        *overrides.gen_remove_src_;
+                }
+
                 dir_bindings[name] = json_binding;
             }
 

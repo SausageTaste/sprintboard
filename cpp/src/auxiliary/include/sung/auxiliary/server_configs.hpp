@@ -29,8 +29,25 @@ namespace sung {
             yuv400,
         };
 
+        struct AvifOptions {
+            AvifPixelFormat pix_format_;
+            double quality_;
+            int speed_;
+            bool gen_;
+            bool gen_remove_src_;
+        };
+
+        struct AvifOverrides {
+            std::optional<AvifPixelFormat> pix_format_;
+            std::optional<double> quality_;
+            std::optional<int> speed_;
+            std::optional<bool> gen_;
+            std::optional<bool> gen_remove_src_;
+        };
+
         struct BindingInfo {
             std::vector<Path> local_dirs_;
+            AvifOverrides avif_;
         };
 
         using DirBindings = std::map<std::string, BindingInfo>;
@@ -38,11 +55,13 @@ namespace sung {
     public:
         void fill_default();
 
+        AvifOptions effective_avif_options(const BindingInfo& binding) const;
+        bool any_avif_gen() const;
+
         const BindingInfo* find_binding(const std::string& namespace_str) const;
         const BindingInfo* find_binding(const Path& namespace_path) const;
 
-        std::expected<Path, std::string> resolve_paths(
-            const Path& base_dir
+        std::expected<Path, std::string> resolve_paths(const Path& base_dir
         ) const;
 
         void import_json(const nlohmann::json& json_data);

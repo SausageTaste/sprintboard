@@ -3,6 +3,11 @@ add_test(NAME ${PROJECT_NAME}_test_filesys COMMAND ${PROJECT_NAME}_test_filesys)
 set_target_properties(${PROJECT_NAME}_test_filesys PROPERTIES FOLDER "${PROJECT_NAME}/test")
 target_link_libraries(${PROJECT_NAME}_test_filesys sprintboard_aux)
 
+add_executable(${PROJECT_NAME}_test_server_configs server_configs.cpp)
+add_test(NAME ${PROJECT_NAME}_test_server_configs COMMAND ${PROJECT_NAME}_test_server_configs)
+set_target_properties(${PROJECT_NAME}_test_server_configs PROPERTIES FOLDER "${PROJECT_NAME}/test")
+target_link_libraries(${PROJECT_NAME}_test_server_configs sprintboard_aux)
+
 add_executable(
     ${PROJECT_NAME}_test_source_image
     source_image.cpp
