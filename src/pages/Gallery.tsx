@@ -500,6 +500,7 @@ async function fetchImageList(
     cursor: string | null,
     recursive: boolean,
     sortOrder: ImageSortOrder,
+    avifOnly: boolean,
     signal?: AbortSignal,
 ): Promise<ImageListResponse> {
     const url = new URL("/api/images/list", window.location.origin);
@@ -510,6 +511,8 @@ async function fetchImageList(
     url.searchParams.set("limit", String(PAGE_SIZE));
     url.searchParams.set("recursive", recursive ? "1" : "0");
     url.searchParams.set("sort", sortOrder);
+    if (avifOnly)
+        url.searchParams.set("avif_only", "1");
 
     const res = await fetch(url.toString(), { signal });
     if (!res.ok)
@@ -670,6 +673,7 @@ export default function Gallery() {
                 cursor,
                 settings.filesRecursive,
                 settings.imageSortOrder,
+                settings.avifOnly,
                 controller.signal,
             );
             if (generation !== requestGenerationRef.current)
@@ -704,6 +708,7 @@ export default function Gallery() {
         settings.filesRecursive,
         settings.imageSortOrder,
         settings.searchText,
+        settings.avifOnly,
         totalImgCount,
     ]);
 
@@ -792,6 +797,7 @@ export default function Gallery() {
                     null,
                     settings.filesRecursive,
                     settings.imageSortOrder,
+                    settings.avifOnly,
                     controller.signal,
                 );
                 if (generation !== requestGenerationRef.current)
@@ -830,6 +836,7 @@ export default function Gallery() {
                         data.nextCursor,
                         settings.filesRecursive,
                         settings.imageSortOrder,
+                        settings.avifOnly,
                         controller.signal,
                     );
                     if (generation !== requestGenerationRef.current)
@@ -853,6 +860,7 @@ export default function Gallery() {
         settings.filesRecursive,
         settings.imageSortOrder,
         settings.searchText,
+        settings.avifOnly,
     ]);
 
     React.useEffect(() => {

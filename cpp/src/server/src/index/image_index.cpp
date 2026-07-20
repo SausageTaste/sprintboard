@@ -896,7 +896,8 @@ public:
         const Path& dir_path,
         const std::string& query_text,
         const bool recursive,
-        const ImageSortOrder sort_order
+        const ImageSortOrder sort_order,
+        const bool avif_only
     ) const {
         const auto current = load_snapshot();
         ImageListResponse response;
@@ -911,6 +912,12 @@ public:
 
         const sung::detail::ImageQuery query{ query_text };
         for (const auto& file : current->files_) {
+            if (avif_only) {
+                auto ext = file.info_.path_.extension().string();
+                absl::AsciiStrToLower(&ext);
+                if (ext != ".avif")
+                    continue;
+            }
             const auto in_directory = recursive
                                           ? is_descendant_or_child(
                                                 dir, file.parent_browser_path_
@@ -1019,35 +1026,35 @@ namespace sung {
     }
 
     void ImageIndex::start_auto_refresh(
-        std::function<std::shared_ptr<const ServerConfigs>()>
-            configs_provider,
+        std::function<std::shared_ptr<const ServerConfigs>()> configs_provider,
         const double interval_seconds
     ) {
-        auto_refresh_thread_ = std::thread([this,
-                                             configs_provider = std::move(
-                                                 configs_provider
-                                             ),
-                                             interval_seconds] {
-            while (!auto_refresh_stop_) {
-                for (double waited = 0;
-                     waited < interval_seconds && !auto_refresh_stop_;
-                     waited += 0.1) {
-                    sung::sleep_naive(0.1);
+        auto_refresh_thread_ = std::thread(
+            [this,
+             configs_provider = std::move(configs_provider),
+             interval_seconds] {
+                while (!auto_refresh_stop_) {
+                    for (double waited = 0;
+                         waited < interval_seconds && !auto_refresh_stop_;
+                         waited += 0.1) {
+                        sung::sleep_naive(0.1);
+                    }
+                    if (auto_refresh_stop_)
+                        break;
+                    impl_->refresh(configs_provider());
                 }
-                if (auto_refresh_stop_)
-                    break;
-                impl_->refresh(configs_provider());
             }
-        });
+        );
     }
 
     ImageListResponse ImageIndex::query(
         const Path& dir,
         const std::string& query,
         const bool recursive,
-        const ImageSortOrder sort_order
+        const ImageSortOrder sort_order,
+        const bool avif_only
     ) const {
-        return impl_->query(dir, query, recursive, sort_order);
+        return impl_->query(dir, query, recursive, sort_order, avif_only);
     }
 
     void ImageIndex::remove_api_path(const std::string_view api_path) {

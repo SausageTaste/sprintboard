@@ -9,6 +9,7 @@ type ViewerSettings = {
     edgeToEdge: boolean;
     filesRecursive: boolean;
     viewerDiagnostics: boolean;
+    avifOnly: boolean;
 };
 
 const DEFAULT_SETTINGS: ViewerSettings = {
@@ -19,6 +20,7 @@ const DEFAULT_SETTINGS: ViewerSettings = {
     edgeToEdge: true,
     filesRecursive: false,
     viewerDiagnostics: false,
+    avifOnly: false,
 };
 
 

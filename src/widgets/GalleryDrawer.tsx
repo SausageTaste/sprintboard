@@ -182,6 +182,28 @@ export default function GalleryDrawer({
                                 style={{ width: 20, height: 20 }}
                             />
                         </label>
+
+                        <label
+                            style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                padding: "10px 0",
+                            }}
+                        >
+                            <span>AVIF only mode</span>
+                            <input
+                                type="checkbox"
+                                checked={settings.avifOnly}
+                                onChange={(e) =>
+                                    onChangeSettings((s) => ({
+                                        ...s,
+                                        avifOnly: e.target.checked,
+                                    }))
+                                }
+                                style={{ width: 20, height: 20 }}
+                            />
+                        </label>
                     </div>
 
                     <div className="drawer-section">
