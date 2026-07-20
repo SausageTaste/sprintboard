@@ -142,6 +142,41 @@ namespace {
         return success;
     }
 
+    bool get_sort_time(
+        const sung::Path& database_path,
+        const std::string_view filename,
+        int64_t& sort_time_ns
+    ) {
+        sqlite3* database = nullptr;
+        const auto path = sung::tostr(database_path);
+        if (sqlite3_open(path.c_str(), &database) != SQLITE_OK) {
+            sqlite3_close(database);
+            return false;
+        }
+
+        sqlite3_stmt* statement = nullptr;
+        auto success = sqlite3_prepare_v2(
+                           database,
+                           "SELECT sort_time_ns FROM image_metadata WHERE "
+                           "physical_path LIKE ?;",
+                           -1,
+                           &statement,
+                           nullptr
+                       ) == SQLITE_OK;
+        const auto pattern = "%/" + std::string{ filename };
+        if (success) {
+            sqlite3_bind_text(
+                statement, 1, pattern.c_str(), -1, SQLITE_TRANSIENT
+            );
+            success = sqlite3_step(statement) == SQLITE_ROW;
+            if (success)
+                sort_time_ns = sqlite3_column_int64(statement, 0);
+        }
+        sqlite3_finalize(statement);
+        sqlite3_close(database);
+        return success;
+    }
+
 }  // namespace
 
 
@@ -474,6 +509,52 @@ int main() {
             sung::fs::remove_all(temp);
             return 1;
         }
+    }
+
+    const auto source_date_root = temp / "source-date-images";
+    const auto source_date_database = temp / "source-date.sqlite3";
+    sung::fs::create_directories(source_date_root);
+    sung::fs::copy_file(source_png, source_date_root / "paired.png");
+    const auto source_date_configs = make_configs(source_date_root);
+    {
+        sung::ImageIndex index{ source_date_database };
+        index.initialize(source_date_configs);
+    }
+    int64_t source_sort_time = 0;
+    if (!check(
+            get_sort_time(
+                source_date_database, "paired.png", source_sort_time
+            ) && source_sort_time > 0,
+            "records the source image timestamp"
+        )) {
+        sung::fs::remove_all(temp);
+        return 1;
+    }
+    sung::fs::copy_file(source_avif, source_date_root / "paired.avif");
+    {
+        sung::ImageIndex index{ source_date_database };
+        index.initialize(source_date_configs);
+    }
+    if (!check(
+            set_sort_time(source_date_database, "paired.avif", 123),
+            "changes the cached AVIF timestamp"
+        )) {
+        sung::fs::remove_all(temp);
+        return 1;
+    }
+    {
+        sung::ImageIndex index{ source_date_database };
+        index.initialize(source_date_configs);
+    }
+    int64_t avif_sort_time = 0;
+    if (!check(
+            get_sort_time(
+                source_date_database, "paired.avif", avif_sort_time
+            ) && avif_sort_time == source_sort_time,
+            "sorts a generated AVIF using its source image timestamp"
+        )) {
+        sung::fs::remove_all(temp);
+        return 1;
     }
 
     const auto ordering_root = temp / "ordering-images";

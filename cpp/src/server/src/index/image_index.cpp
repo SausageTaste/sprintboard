@@ -239,6 +239,14 @@ namespace {
         ));
     }
 
+    std::string make_path_key(const sung::Path& path) {
+        auto output = sung::tostr(path);
+#if defined(SUNG_OS_WINDOWS)
+        absl::AsciiStrToLower(&output);
+#endif
+        return output;
+    }
+
     CachedMetadata inspect_file(
         const sung::Path& path,
         const int64_t size,
@@ -288,7 +296,9 @@ namespace {
     // reads `existing` (a snapshot, not a live map reference) and touches
     // only the filesystem and its own return value.
     FileProbe probe_file(
-        const sung::Path& physical_path, const CachedMetadata* existing
+        const sung::Path& physical_path,
+        const sung::Path* sort_time_source,
+        const CachedMetadata* existing
     ) {
         FileProbe probe;
 
@@ -316,15 +326,38 @@ namespace {
             existing->modified_time_ == modified) {
             probe.reused_ = true;
             probe.metadata_ = *existing;
-            if (probe.metadata_.sort_time_ns_ == 0) {
-                probe.metadata_.sort_time_ns_ = get_image_sort_time(
+            if (sort_time_source) {
+                const auto& source_path = *sort_time_source;
+                const auto sort_time_ns = get_image_sort_time(source_path);
+                if (sort_time_ns > 0 &&
+                    probe.metadata_.sort_time_ns_ != sort_time_ns) {
+                    probe.metadata_.sort_time_ns_ = sort_time_ns;
+                    probe.needs_persist_ = true;
+                } else if (sort_time_ns == 0 &&
+                           probe.metadata_.sort_time_ns_ == 0) {
+                    const auto fallback_sort_time_ns = get_image_sort_time(
+                        physical_path
+                    );
+                    if (fallback_sort_time_ns > 0) {
+                        probe.metadata_.sort_time_ns_ = fallback_sort_time_ns;
+                        probe.needs_persist_ = true;
+                    }
+                }
+            } else if (probe.metadata_.sort_time_ns_ == 0) {
+                const auto fallback_sort_time_ns = get_image_sort_time(
                     physical_path
                 );
-                if (probe.metadata_.sort_time_ns_ > 0)
+                if (fallback_sort_time_ns > 0) {
+                    probe.metadata_.sort_time_ns_ = fallback_sort_time_ns;
                     probe.needs_persist_ = true;
+                }
             }
         } else {
-            const auto sort_time_ns = get_image_sort_time(physical_path);
+            auto sort_time_ns = get_image_sort_time(
+                sort_time_source ? *sort_time_source : physical_path
+            );
+            if (sort_time_ns == 0 && sort_time_source)
+                sort_time_ns = get_image_sort_time(physical_path);
             probe.metadata_ = inspect_file(
                 physical_path, size, modified, sort_time_ns
             );
@@ -730,6 +763,22 @@ public:
                     seen_physical.insert(path_str);
                 }
 
+                // A same-stem AVIF is the browser-facing derivative of its
+                // PNG. Keep the relationship explicit so date sorting uses
+                // the source timestamp even when the encoder could not copy
+                // all filesystem timestamps to the derivative.
+                std::unordered_map<std::string, Path> png_sources;
+                for (const auto& path : physical_files) {
+                    auto extension = sung::tostr(path.extension());
+                    absl::AsciiStrToLower(&extension);
+                    if (extension != ".png")
+                        continue;
+
+                    png_sources.insert_or_assign(
+                        make_path_key(sung::replace_ext(path, ".avif")), path
+                    );
+                }
+
                 // The probe phase only reads `metadata_` (never writes it),
                 // so concurrent lookups across files are safe; each file's
                 // filesystem work (stat, and full decode for new/changed
@@ -751,8 +800,22 @@ public:
                                 const CachedMetadata* existing =
                                     it != metadata_.end() ? &it->second
                                                           : nullptr;
+                                const Path* sort_time_source = nullptr;
+                                auto extension = sung::tostr(
+                                    physical_files[i].extension()
+                                );
+                                absl::AsciiStrToLower(&extension);
+                                if (extension == ".avif") {
+                                    const auto source = png_sources.find(
+                                        make_path_key(physical_files[i])
+                                    );
+                                    if (source != png_sources.end())
+                                        sort_time_source = &source->second;
+                                }
                                 probes[i] = probe_file(
-                                    physical_files[i], existing
+                                    physical_files[i],
+                                    sort_time_source,
+                                    existing
                                 );
                             }
                         }
