@@ -1,5 +1,6 @@
 import React from "react";
 import { useSearchParams } from "react-router-dom";
+import { downloadImage, downloadSourceImage } from "../func/downloadImage";
 
 
 interface ComfyuiInfo {
@@ -40,20 +41,6 @@ async function fetchImageDetails(path: string): Promise<ImageDetailsResponse> {
     return (await res.json()) as ImageDetailsResponse;
 }
 
-function downloadImage(src: string) {
-    if (!src)
-        return;
-
-    const link = document.createElement("a");
-    link.href = src;
-    link.download = "";
-    link.rel = "noopener";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-}
-
-
 export default function ImageDetails() {
     const [imageDetails, setImageDetails] = React.useState<ImageDetailsResponse | null>(null);
 
@@ -92,6 +79,14 @@ export default function ImageDetails() {
                     disabled={!imgSrc}
                 >
                     Download image
+                </button>
+                <button
+                    type="button"
+                    onClick={() => downloadSourceImage(imgSrc)}
+                    disabled={!imgSrc}
+                    style={{ marginLeft: 8 }}
+                >
+                    Download source image
                 </button>
             </div>
             <p>Dimensions: {imageDetails?.width} x {imageDetails?.height}</p>

@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <expected>
 #include <fstream>
+#include <optional>
 #include <print>
 #include <string_view>
 #include <system_error>
@@ -15,6 +16,7 @@
 #include "index/image_index.hpp"
 #include "response/img_details.hpp"
 #include "response/img_list.hpp"
+#include "source_image.hpp"
 #include "sung/auxiliary/filesys.hpp"
 #include "sung/auxiliary/server_configs.hpp"
 #include "task/img_walker.hpp"
@@ -388,6 +390,68 @@ int main() {
         res.status = 200;
         res.set_content(json_str, "application/json");
         return;
+    });
+
+    svr.Get("/api/images/download", [&](const HttpReq& req, HttpRes& res) {
+        const sung::ScopedWakeLock wake_lock{ power_req->get() };
+
+        const auto it_param_path = req.params.find("path");
+        if (it_param_path == req.params.end()) {
+            res.status = 400;
+            res.set_content("Missing 'path' parameter", "text/plain");
+            return;
+        }
+
+        auto param_path = it_param_path->second;
+        if (param_path.starts_with("/img/"))
+            param_path = param_path.substr(5);
+
+        const auto requested_path = sung::fromstr(param_path);
+        const auto [namespace_path, rest_path] = ::split_namespace(
+            requested_path
+        );
+        const auto svrcfg = server_configs.get();
+        const auto binding = svrcfg->find_binding(namespace_path);
+        if (!binding) {
+            res.status = 400;
+            res.set_content(
+                "Invalid namespace in 'path' parameter", "text/plain"
+            );
+            return;
+        }
+
+        std::optional<sung::Path> source_path;
+        for (const auto& local_dir : binding->local_dirs_) {
+            const auto full_path = sung::concat_path_safely(
+                local_dir, rest_path
+            );
+            if (!full_path) {
+                res.status = 400;
+                res.set_content("Invalid 'path' parameter", "text/plain");
+                return;
+            }
+            source_path = sung::select_source_image_path(*full_path);
+            if (source_path)
+                break;
+        }
+        if (!source_path) {
+            res.status = 404;
+            res.set_content("Source image not found", "text/plain");
+            return;
+        }
+
+        const auto mime = ::determine_mime(*source_path);
+        if (::serve_file_streaming(*source_path, mime, res)) {
+            res.set_header(
+                "Content-Disposition",
+                sung::make_image_attachment_header(*source_path)
+            );
+            res.status = 200;
+            return;
+        }
+
+        res.status = 404;
+        res.set_content("Source image not found", "text/plain");
     });
 
     svr.Delete("/api/images/delete", [&](const HttpReq& req, HttpRes& res) {

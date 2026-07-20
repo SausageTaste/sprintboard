@@ -7,6 +7,7 @@ import "photoswipe/style.css";
 import Breadcrumbs from "../widgets/Breadcrumbs";
 import FolderCard from "../widgets/FolderCard";
 import GalleryDrawer from "../widgets/GalleryDrawer";
+import { downloadImage, downloadSourceImage } from "../func/downloadImage";
 import {
     loadSettings,
     saveSettings,
@@ -617,16 +618,6 @@ export default function Gallery() {
         window.open(url, "_blank", "noopener,noreferrer");
     }
 
-    function downloadImage(src: string) {
-        const a = document.createElement("a");
-        a.href = src;
-        a.download = ""; // lets browser pick filename if same-origin
-        a.rel = "noopener";
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-    }
-
     async function deleteCurrentImage(pswp: PhotoSwipe) {
         const i = pswp.currIndex;
         const it = imgItemsRef.current[i];
@@ -1118,7 +1109,8 @@ export default function Gallery() {
                     html: `
     <div class="pswp-menu">
       <button class="pswp-menu-item" data-action="details">Details...</button>
-      <button class="pswp-menu-item" data-action="download">Download</button>
+      <button class="pswp-menu-item" data-action="download">Download image</button>
+      <button class="pswp-menu-item" data-action="download-source">Download source image</button>
       <button class="pswp-menu-item" data-action="newtab">Open in new tab</button>
       <button class="pswp-menu-item" data-action="copy">Copy URL</button>
       <button class="pswp-menu-item" data-action="delete">Delete</button>
@@ -1146,6 +1138,8 @@ export default function Gallery() {
                                 window.open(it.src, "_blank", "noopener,noreferrer");
                             } else if (action === "download") {
                                 downloadImage(it.src);
+                            } else if (action === "download-source") {
+                                downloadSourceImage(it.src);
                             } else if (action === "copy") {
                                 try { await navigator.clipboard.writeText(it.src); } catch { }
                             } else if (action === "details") {
