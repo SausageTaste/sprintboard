@@ -892,7 +892,14 @@ export default function Gallery() {
                 // Touch taps use PhotoSwipe's toggle-controls action. Desktop
                 // clicks zoom or close, so reveal controls through mouse and
                 // keyboard activity without replacing those click actions.
-                pswp.events.add(pswp.element, "mousemove", revealControls);
+                // iOS/Safari replays touch taps as synthetic mouse events
+                // (mousemove included), which would re-reveal controls right
+                // after opening on every tap; only real mouse input should count.
+                const revealOnRealMouseMove = (e: Event) => {
+                    if ((e as PointerEvent).pointerType === "mouse")
+                        revealControls();
+                };
+                pswp.events.add(pswp.element, "pointermove", revealOnRealMouseMove);
                 pswp.events.add(pswp.element, "focusin", revealControls);
             });
 
