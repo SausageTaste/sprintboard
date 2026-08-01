@@ -148,9 +148,21 @@ If you modify these values, the changes will take effect as soon as possible, wi
 
 The `.sprintboard.avif` suffix is reserved for generated proxies. Legacy
 same-stem files such as `img.png` and `img.avif` are treated as independent
-source images and are never migrated automatically. If a source is removed
-outside Sprintboard, its remaining proxy continues to appear as an independent
-image after the next index refresh.
+source images by the server. If a source is removed outside Sprintboard, its
+remaining proxy continues to appear as an independent image after the next
+index refresh.
+
+## Migrating legacy AVIF proxy names
+
+The optional `scripts/migrate_avif_proxy_names.py` script recursively renames
+legacy AVIFs such as `img.avif` to `img.png.sprintboard.avif`. Edit its
+`WORKING_DIRECTORIES` list before running it. It previews changes by default;
+after reviewing the output, change `DRY_RUN` to `False` to apply them.
+
+Stop Sprintboard before applying the migration. The script intentionally treats
+every AVIF that does not already have the reserved suffix as a legacy proxy,
+including genuine AVIF source images. Existing targets and ambiguous PNG pairs
+are reported and never overwritten.
 
 # Guide to Viewing Images on Mobile Phone
 
