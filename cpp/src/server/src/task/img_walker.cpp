@@ -177,8 +177,8 @@ namespace {
                         auto ext_str = sung::tostr(entry.path().extension());
                         ext_str = absl::AsciiStrToLower(ext_str);
                         if (ext_str == ".png") {
-                            const auto avif = sung::replace_ext(
-                                entry.path(), ".avif"
+                            const auto avif = sung::make_sprintboard_proxy_path(
+                                entry.path()
                             );
 
                             // A generated AVIF carries the source's mtime
@@ -295,7 +295,7 @@ namespace {
                         return;
                     }
 
-                    const auto avif_path = sung::replace_ext(p, ".avif");
+                    const auto avif_path = sung::make_sprintboard_proxy_path(p);
                     if (!sung::fs::exists(p)) {
                         std::println(
                             "ImgWalker: Source PNG missing, skipping: {}",

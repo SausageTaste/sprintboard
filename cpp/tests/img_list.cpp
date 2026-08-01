@@ -1,10 +1,14 @@
 #include <array>
+#include <chrono>
+#include <format>
 #include <print>
+#include <source_location>
 #include <string>
 #include <string_view>
 #include <tuple>
 
 #include "response/img_list.hpp"
+#include "sung/auxiliary/filesys.hpp"
 
 
 namespace {
@@ -295,8 +299,8 @@ int main() {
              },
          }) {
         const auto original_first = make_response(order).make_json(0, 2);
-        const auto order_cursor = original_first["nextCursor"].get<std::string>(
-        );
+        const auto order_cursor =
+            original_first["nextCursor"].get<std::string>();
         const auto changed_page = make_changed_response(order).make_json(
             order_cursor, 2
         );
@@ -391,6 +395,58 @@ int main() {
         )) {
         return 1;
     }
+
+    const auto source_path = sung::fromstr(
+        std::source_location::current().file_name()
+    );
+    const auto fixtures =
+        source_path.parent_path().parent_path().parent_path() / "fixtures" /
+        "images";
+    const auto fixture_png = fixtures / sung::fromstr("유우카.png");
+    const auto fixture_avif = fixtures / sung::fromstr("Émilie.avif");
+    const auto unique =
+        std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto temp = sung::fs::temp_directory_path() /
+                      std::format("sprintboard-img-list-test-{}", unique);
+    sung::fs::create_directories(temp);
+    sung::fs::copy_file(fixture_png, temp / "legacy.png");
+    sung::fs::copy_file(fixture_avif, temp / "legacy.avif");
+    sung::fs::copy_file(fixture_png, temp / "paired.png");
+    sung::fs::copy_file(fixture_avif, temp / "paired.png.sprintboard.avif");
+    sung::fs::copy_file(fixture_avif, temp / "orphan.png.sprintboard.avif");
+
+    sung::ImageListResponse directory_response;
+    directory_response.fetch_directory(
+        sung::fromstr("test"), temp, temp, "", false
+    );
+    const auto directory_files = directory_response.make_json(
+        0, 100
+    )["imageFiles"];
+    bool found_legacy_png = false;
+    bool found_legacy_avif = false;
+    bool found_pair = false;
+    bool found_orphan = false;
+    for (const auto& file : directory_files) {
+        found_legacy_png = found_legacy_png || file["name"] == "legacy.png";
+        found_legacy_avif = found_legacy_avif || file["name"] == "legacy.avif";
+        found_pair = found_pair ||
+                     (file["name"] == "paired.png" &&
+                      file["src"] == "/img/test/paired.png.sprintboard.avif");
+        found_orphan = found_orphan ||
+                       file["name"] == "orphan.png.sprintboard.avif";
+    }
+    const auto directory_success =
+        check(directory_files.size() == 4, "lists one item per proxy pair") &&
+        check(
+            found_legacy_png && found_legacy_avif,
+            "keeps legacy same-stem files independent"
+        ) &&
+        check(found_pair, "lists a proxy using its source filename") &&
+        check(found_orphan, "lists an orphan using its proxy filename");
+    std::error_code cleanup_error;
+    sung::fs::remove_all(temp, cleanup_error);
+    if (!directory_success)
+        return 1;
 
     return 0;
 }

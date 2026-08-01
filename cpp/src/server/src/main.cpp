@@ -480,25 +480,23 @@ int main() {
             return;
         }
 
-        auto file_path = *full_path;
-        if (sung::fs::exists(file_path)) {
-            sung::fs::remove(file_path);
-            std::println("Deleted file: {}", sung::tostr(file_path));
+        const auto paths = sung::image_source_proxy_paths(*full_path);
+
+        for (const auto& file_path : { paths.source_, paths.proxy_ }) {
+            std::error_code file_error;
+            if (!sung::fs::is_regular_file(file_path, file_error) || file_error)
+                continue;
+            if (sung::fs::remove(file_path, file_error) && !file_error) {
+                std::println("Deleted file: {}", sung::tostr(file_path));
+            }
         }
 
-        file_path.replace_extension(".avif");
-        if (sung::fs::exists(file_path)) {
-            sung::fs::remove(file_path);
-            std::println("Deleted file: {}", sung::tostr(file_path));
-        }
-
-        file_path.replace_extension(".png");
-        if (sung::fs::exists(file_path)) {
-            sung::fs::remove(file_path);
-            std::println("Deleted file: {}", sung::tostr(file_path));
-        }
-
-        image_index.remove_api_path(api_path);
+        const auto requested_api_path = sung::fromstr(api_path);
+        const auto api_paths = sung::image_source_proxy_paths(
+            requested_api_path
+        );
+        image_index.remove_api_path(sung::tostr(api_paths.source_));
+        image_index.remove_api_path(sung::tostr(api_paths.proxy_));
 
         res.status = 200;
         res.set_content("File deleted", "text/plain");

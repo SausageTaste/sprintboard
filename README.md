@@ -140,11 +140,17 @@ If you modify these values, the changes will take effect as soon as possible, wi
 
 |Key |Description
 |- |-
-|`avif_gen` |Generate an AVIF image for each source image. If an AVIF file with the same filename exists, the server will serve that file instead.
-|`avif_gen_remove_src` |Currently not implemented
+|`avif_gen` |Generate an AVIF proxy for each PNG source. A source such as `img.png` produces `img.png.sprintboard.avif`; Sprintboard serves the proxy without modifying the source.
+|`avif_gen_remove_src` |Retained for configuration compatibility but not implemented. Sources are removed only by an explicit gallery delete action.
 |`avif_quality` |Quality option for AVIF encoder.
 |`avif_speed` |Speed option for AVIF encoder.
 |`dir_bindings` |Add folder entries here. Each key will appear as a folder in the root directory, and all contents in `local_dirs` will be placed inside it. You can use both absolute and relative paths for `local_dirs`. Although you can set multiple directories for a single binding, I strongly recommend using only one.
+
+The `.sprintboard.avif` suffix is reserved for generated proxies. Legacy
+same-stem files such as `img.png` and `img.avif` are treated as independent
+source images and are never migrated automatically. If a source is removed
+outside Sprintboard, its remaining proxy continues to appear as an independent
+image after the next index refresh.
 
 # Guide to Viewing Images on Mobile Phone
 

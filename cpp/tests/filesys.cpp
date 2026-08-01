@@ -76,6 +76,46 @@ namespace {
 
 
 int main() {
+    const auto unicode_source = sung::fromstr("folder/Émilie.final.PNG");
+    const auto unicode_proxy = sung::fromstr(
+        "folder/Émilie.final.PNG.sprintboard.avif"
+    );
+    auto success =
+        check(
+            sung::make_sprintboard_proxy_path(unicode_source) == unicode_proxy,
+            "appends the proxy suffix to the complete source filename"
+        ) &&
+        check(
+            sung::make_sprintboard_proxy_path(sung::fromstr("image.avif")) ==
+                sung::fromstr("image.avif.sprintboard.avif"),
+            "supports native AVIF source names"
+        ) &&
+        check(
+            sung::is_sprintboard_proxy_path(
+                sung::fromstr("image.png.SPRINTBOARD.AVIF")
+            ),
+            "recognizes the proxy suffix case-insensitively"
+        ) &&
+        check(
+            !sung::is_sprintboard_proxy_path(
+                sung::fromstr(".sprintboard.avif")
+            ),
+            "rejects an empty source filename"
+        );
+    const auto recovered_source = sung::sprintboard_proxy_source_path(
+        unicode_proxy
+    );
+    success =
+        check(
+            recovered_source && *recovered_source == unicode_source,
+            "recovers the source path from a proxy path"
+        ) &&
+        check(
+            !sung::sprintboard_proxy_source_path(sung::fromstr("legacy.avif")),
+            "does not classify a legacy AVIF as a proxy"
+        ) &&
+        success;
+
     const auto unique =
         std::chrono::steady_clock::now().time_since_epoch().count();
     const auto temp = sung::fs::temp_directory_path() /
@@ -117,15 +157,14 @@ int main() {
     const auto source_time_error = error;
     const auto destination_time = sung::fs::last_write_time(destination, error);
 
-    auto success = check(!copy_error, "copies file timestamps") &&
-                   check(
-                       !source_time_error, "reads source modification time"
-                   ) &&
-                   check(!error, "reads destination modification time") &&
-                   check(
-                       source_time == destination_time,
-                       "preserves source modification time"
-                   );
+    success = check(!copy_error, "copies file timestamps") &&
+              check(!source_time_error, "reads source modification time") &&
+              check(!error, "reads destination modification time") &&
+              check(
+                  source_time == destination_time,
+                  "preserves source modification time"
+              ) &&
+              success;
 
 #ifdef _WIN32
     FILETIME source_creation_time{};

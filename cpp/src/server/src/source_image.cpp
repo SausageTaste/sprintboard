@@ -8,44 +8,9 @@
 
 namespace {
 
-    char ascii_lower(const char value) {
-        if (value >= 'A' && value <= 'Z')
-            return static_cast<char>(value + ('a' - 'A'));
-        return value;
-    }
-
-    std::string ascii_lower(std::string value) {
-        for (auto& ch : value) ch = ascii_lower(ch);
-        return value;
-    }
-
     bool is_existing_regular_file(const sung::Path& path) {
         std::error_code error;
         return sung::fs::is_regular_file(path, error) && !error;
-    }
-
-    std::optional<sung::Path> find_png_twin(const sung::Path& avif_path) {
-        const auto conventional_path = sung::replace_ext(avif_path, ".png");
-        if (is_existing_regular_file(conventional_path))
-            return conventional_path;
-
-        std::error_code error;
-        sung::fs::directory_iterator iterator{
-            avif_path.parent_path(),
-            sung::fs::directory_options::skip_permission_denied,
-            error
-        };
-        const sung::fs::directory_iterator end;
-        while (!error && iterator != end) {
-            const auto& entry = *iterator;
-            if (entry.path().stem() == avif_path.stem() &&
-                ascii_lower(sung::tostr(entry.path().extension())) == ".png" &&
-                entry.is_regular_file(error) && !error) {
-                return entry.path();
-            }
-            iterator.increment(error);
-        }
-        return std::nullopt;
     }
 
     bool is_rfc5987_attr_char(const unsigned char value) {
@@ -95,16 +60,23 @@ namespace {
 namespace sung {
 
     std::optional<Path> select_source_image_path(const Path& requested_path) {
-        const auto extension = ascii_lower(sung::tostr(requested_path.extension(
-        )));
-        if (extension == ".avif") {
-            if (const auto png_path = find_png_twin(requested_path))
-                return png_path;
+        if (const auto source_path =
+                sprintboard_proxy_source_path(requested_path)) {
+            if (is_existing_regular_file(*source_path))
+                return source_path;
         }
 
         if (is_existing_regular_file(requested_path))
             return requested_path;
         return std::nullopt;
+    }
+
+    ImageSourceProxyPaths image_source_proxy_paths(const Path& requested_path) {
+        if (const auto source_path =
+                sprintboard_proxy_source_path(requested_path)) {
+            return { *source_path, requested_path };
+        }
+        return { requested_path, make_sprintboard_proxy_path(requested_path) };
     }
 
     std::string make_image_attachment_header(const Path& path) {

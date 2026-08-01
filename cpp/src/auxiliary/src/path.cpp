@@ -1,6 +1,31 @@
 #include "sung/auxiliary/path.hpp"
 
 
+namespace {
+
+    char ascii_lower(const char value) {
+        if (value >= 'A' && value <= 'Z')
+            return static_cast<char>(value + ('a' - 'A'));
+        return value;
+    }
+
+    bool ends_with_case_insensitive(
+        const std::string_view value, const std::string_view suffix
+    ) {
+        if (value.size() < suffix.size())
+            return false;
+
+        const auto offset = value.size() - suffix.size();
+        for (size_t i = 0; i < suffix.size(); ++i) {
+            if (ascii_lower(value[offset + i]) != ascii_lower(suffix[i]))
+                return false;
+        }
+        return true;
+    }
+
+}  // namespace
+
+
 namespace sung {
 
     std::string tostr(const Path& path) {
@@ -32,6 +57,27 @@ namespace sung {
         Path new_path = path.parent_path() / stem;
         new_path += path.extension();
         return new_path;
+    }
+
+    Path make_sprintboard_proxy_path(const Path& source_path) {
+        return path_concat(
+            source_path, std::string{ SPRINTBOARD_PROXY_SUFFIX }
+        );
+    }
+
+    bool is_sprintboard_proxy_path(const Path& path) {
+        const auto filename = tostr(path.filename());
+        return filename.size() > SPRINTBOARD_PROXY_SUFFIX.size() &&
+               ends_with_case_insensitive(filename, SPRINTBOARD_PROXY_SUFFIX);
+    }
+
+    std::optional<Path> sprintboard_proxy_source_path(const Path& proxy_path) {
+        if (!is_sprintboard_proxy_path(proxy_path))
+            return std::nullopt;
+
+        auto filename = tostr(proxy_path.filename());
+        filename.resize(filename.size() - SPRINTBOARD_PROXY_SUFFIX.size());
+        return proxy_path.parent_path() / fromstr(filename);
     }
 
 }  // namespace sung

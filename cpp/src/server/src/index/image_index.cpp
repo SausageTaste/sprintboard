@@ -297,21 +297,15 @@ namespace {
     // only the filesystem and its own return value.
     FileProbe probe_file(
         const sung::Path& physical_path,
+        const bool shadowed_by_proxy,
         const sung::Path* sort_time_source,
         const CachedMetadata* existing
     ) {
         FileProbe probe;
 
-        auto extension = sung::tostr(physical_path.extension());
-        absl::AsciiStrToLower(&extension);
-        if (extension == ".png") {
-            const auto avif_path = sung::replace_ext(physical_path, ".avif");
-            std::error_code shadow_error;
-            if (sung::fs::is_regular_file(avif_path, shadow_error) &&
-                !shadow_error) {
-                probe.shadowed_ = true;
-                return probe;
-            }
+        if (shadowed_by_proxy) {
+            probe.shadowed_ = true;
+            return probe;
         }
 
         std::error_code stat_error;
@@ -333,8 +327,9 @@ namespace {
                     probe.metadata_.sort_time_ns_ != sort_time_ns) {
                     probe.metadata_.sort_time_ns_ = sort_time_ns;
                     probe.needs_persist_ = true;
-                } else if (sort_time_ns == 0 &&
-                           probe.metadata_.sort_time_ns_ == 0) {
+                } else if (
+                    sort_time_ns == 0 && probe.metadata_.sort_time_ns_ == 0
+                ) {
                     const auto fallback_sort_time_ns = get_image_sort_time(
                         physical_path
                     );
@@ -763,20 +758,33 @@ public:
                     seen_physical.insert(path_str);
                 }
 
-                // A same-stem AVIF is the browser-facing derivative of its
-                // PNG. Keep the relationship explicit so date sorting uses
-                // the source timestamp even when the encoder could not copy
-                // all filesystem timestamps to the derivative.
-                std::unordered_map<std::string, Path> png_sources;
+                // A Sprintboard AVIF proxy is the browser-facing derivative
+                // of its source. Keep the relationship explicit so date
+                // sorting uses the source timestamp even when the encoder
+                // could not copy all filesystem timestamps to the proxy.
+                std::unordered_map<std::string, Path> sources_by_path;
                 for (const auto& path : physical_files) {
-                    auto extension = sung::tostr(path.extension());
-                    absl::AsciiStrToLower(&extension);
-                    if (extension != ".png")
+                    if (sung::is_sprintboard_proxy_path(path))
                         continue;
+                    sources_by_path.insert_or_assign(make_path_key(path), path);
+                }
 
-                    png_sources.insert_or_assign(
-                        make_path_key(sung::replace_ext(path, ".avif")), path
+                std::unordered_map<std::string, Path> proxy_sources;
+                std::unordered_set<std::string> paired_sources;
+                for (const auto& path : physical_files) {
+                    const auto source_path =
+                        sung::sprintboard_proxy_source_path(path);
+                    if (!source_path)
+                        continue;
+                    const auto source = sources_by_path.find(
+                        make_path_key(*source_path)
                     );
+                    if (source == sources_by_path.end())
+                        continue;
+                    proxy_sources.insert_or_assign(
+                        make_path_key(path), source->second
+                    );
+                    paired_sources.insert(make_path_key(source->second));
                 }
 
                 // The probe phase only reads `metadata_` (never writes it),
@@ -800,20 +808,22 @@ public:
                                 const CachedMetadata* existing =
                                     it != metadata_.end() ? &it->second
                                                           : nullptr;
-                                const Path* sort_time_source = nullptr;
-                                auto extension = sung::tostr(
-                                    physical_files[i].extension()
+                                const auto path_key = make_path_key(
+                                    physical_files[i]
                                 );
-                                absl::AsciiStrToLower(&extension);
-                                if (extension == ".avif") {
-                                    const auto source = png_sources.find(
-                                        make_path_key(physical_files[i])
+                                const Path* sort_time_source = nullptr;
+                                if (sung::is_sprintboard_proxy_path(
+                                        physical_files[i]
+                                    )) {
+                                    const auto source = proxy_sources.find(
+                                        path_key
                                     );
-                                    if (source != png_sources.end())
+                                    if (source != proxy_sources.end())
                                         sort_time_source = &source->second;
                                 }
                                 probes[i] = probe_file(
                                     physical_files[i],
+                                    paired_sources.contains(path_key),
                                     sort_time_source,
                                     existing
                                 );
@@ -880,13 +890,18 @@ public:
                     entry.parent_browser_path_ = sung::tostr(
                         (namespace_path / relative).parent_path()
                     );
-                    entry.info_ = {
-                        sung::tostr(physical_path.filename()),
-                        sung::fromstr(api_path),
-                        metadata.width_,
-                        metadata.height_,
-                        metadata.sort_time_ns_,
-                    };
+                    const auto proxy_source = proxy_sources.find(
+                        make_path_key(physical_path)
+                    );
+                    const auto display_name =
+                        proxy_source != proxy_sources.end()
+                            ? sung::tostr(proxy_source->second.filename())
+                            : sung::tostr(physical_path.filename());
+                    entry.info_.name_ = display_name;
+                    entry.info_.path_ = sung::fromstr(api_path);
+                    entry.info_.width_ = metadata.width_;
+                    entry.info_.height_ = metadata.height_;
+                    entry.info_.sort_time_ns_ = metadata.sort_time_ns_;
                     entry.model_ = metadata.model_;
                     entry.prompts_ = metadata.prompts_;
                     next->files_.push_back(std::move(entry));

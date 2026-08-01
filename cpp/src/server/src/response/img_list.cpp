@@ -210,9 +210,11 @@ namespace {
     std::optional<refimg::SimpleImageInfo> is_file_eligible(
         const sung::Path& file_path, const sung::detail::ImageQuery& query
     ) {
-        const auto avif_path = sung::replace_ext(file_path, ".avif");
-        if (avif_path != file_path && sung::fs::exists(avif_path))
+        const auto proxy_path = sung::make_sprintboard_proxy_path(file_path);
+        if (!sung::is_sprintboard_proxy_path(file_path) &&
+            sung::fs::exists(proxy_path)) {
             return std::nullopt;
+        }
 
         sung::ImageInfo img_info{ file_path };
         if (!img_info.load_simple_info())
@@ -314,7 +316,13 @@ namespace {
                     const auto api_path = api_path_prefix_ / rel_path;
 
                     auto& file_info = results_.emplace_back();
-                    file_info.name_ = sung::tostr(path.filename());
+                    const auto source_path =
+                        sung::sprintboard_proxy_source_path(path);
+                    file_info.name_ = source_path && sung::fs::is_regular_file(
+                                                         *source_path
+                                                     )
+                                          ? sung::tostr(source_path->filename())
+                                          : sung::tostr(path.filename());
                     file_info.path_ = api_path.lexically_normal();
                     file_info.width_ = static_cast<int>(info->width_);
                     file_info.height_ = static_cast<int>(info->height_);
@@ -567,11 +575,12 @@ namespace sung {
             output["nextOffset"] = last < files_.size()
                                        ? nlohmann::json(last)
                                        : nlohmann::json(nullptr);
-            output["nextCursor"] = last < files_.size() && last > first
-                                       ? nlohmann::json(::make_cursor(
-                                             files_[last - 1], sort_order_
-                                         ))
-                                       : nlohmann::json(nullptr);
+            output["nextCursor"] =
+                last < files_.size() && last > first
+                    ? nlohmann::json(
+                          ::make_cursor(files_[last - 1], sort_order_)
+                      )
+                    : nlohmann::json(nullptr);
         }
 
         {

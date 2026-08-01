@@ -440,14 +440,49 @@ int main() {
 
         sung::fs::copy_file(source_png, image_root / "shadow.png");
         index.refresh(configs);
-        if (!check(image_count(index) == 3, "indexes a PNG without an AVIF")) {
+        if (!check(image_count(index) == 3, "indexes a PNG without a proxy")) {
             sung::fs::remove_all(temp);
             return 1;
         }
         sung::fs::copy_file(source_avif, image_root / "shadow.avif");
         index.refresh(configs);
         if (!check(
-                image_count(index) == 3, "AVIF shadows a PNG with the same stem"
+                image_count(index) == 4,
+                "keeps a legacy same-stem AVIF as an independent source"
+            )) {
+            sung::fs::remove_all(temp);
+            return 1;
+        }
+        sung::fs::copy_file(
+            source_avif, image_root / "shadow.png.sprintboard.avif"
+        );
+        index.refresh(configs);
+        const auto shadow_files = index.query(sung::fromstr("test"), "", true)
+                                      .make_json(0, 100)["imageFiles"];
+        const auto shadow_avif_only = index
+                                          .query(
+                                              sung::fromstr("test"),
+                                              "",
+                                              true,
+                                              sung::ImageSortOrder::date_desc,
+                                              true
+                                          )
+                                          .make_json(0, 100)["totalImageCount"];
+        bool found_proxy = false;
+        bool found_legacy = false;
+        for (const auto& file : shadow_files) {
+            found_proxy = found_proxy ||
+                          (file["name"] == "shadow.png" &&
+                           file["src"] ==
+                               "/img/test/shadow.png.sprintboard.avif");
+            found_legacy = found_legacy || file["name"] == "shadow.avif";
+        }
+        if (!check(image_count(index) == 4, "proxy shadows only its source") ||
+            !check(found_proxy, "serves the proxy with the source name") ||
+            !check(found_legacy, "continues listing the legacy AVIF") ||
+            !check(
+                shadow_avif_only == 3,
+                "AVIF-only mode includes native AVIFs and proxies"
             )) {
             sung::fs::remove_all(temp);
             return 1;
@@ -457,7 +492,7 @@ int main() {
         sung::fs::rename(image_root, offline_root);
         index.refresh(configs);
         if (!check(
-                image_count(index) == 3,
+                image_count(index) == 4,
                 "preserves the last snapshot for an inaccessible root"
             )) {
             sung::fs::rename(offline_root, image_root);
@@ -490,7 +525,7 @@ int main() {
         sung::ImageIndex index{ database_path };
         const auto rebuilt = index.initialize(configs);
         if (!check(
-                rebuilt.metadata_indexed_ >= 3, "rebuilds unknown schemas"
+                rebuilt.metadata_indexed_ >= 4, "rebuilds unknown schemas"
             )) {
             sung::fs::remove_all(temp);
             return 1;
@@ -505,7 +540,7 @@ int main() {
         if (!check(
                 !fallback.persistent_, "falls back when SQLite cannot open"
             ) ||
-            !check(image_count(index) == 3, "memory fallback remains usable")) {
+            !check(image_count(index) == 4, "memory fallback remains usable")) {
             sung::fs::remove_all(temp);
             return 1;
         }
@@ -530,14 +565,17 @@ int main() {
         sung::fs::remove_all(temp);
         return 1;
     }
-    sung::fs::copy_file(source_avif, source_date_root / "paired.avif");
+    const auto paired_proxy = source_date_root / "paired.png.sprintboard.avif";
+    sung::fs::copy_file(source_avif, paired_proxy);
     {
         sung::ImageIndex index{ source_date_database };
         index.initialize(source_date_configs);
     }
     if (!check(
-            set_sort_time(source_date_database, "paired.avif", 123),
-            "changes the cached AVIF timestamp"
+            set_sort_time(
+                source_date_database, "paired.png.sprintboard.avif", 123
+            ),
+            "changes the cached proxy timestamp"
         )) {
         sung::fs::remove_all(temp);
         return 1;
@@ -549,12 +587,42 @@ int main() {
     int64_t avif_sort_time = 0;
     if (!check(
             get_sort_time(
-                source_date_database, "paired.avif", avif_sort_time
+                source_date_database,
+                "paired.png.sprintboard.avif",
+                avif_sort_time
             ) && avif_sort_time == source_sort_time,
-            "sorts a generated AVIF using its source image timestamp"
+            "sorts a proxy using its source image timestamp"
         )) {
         sung::fs::remove_all(temp);
         return 1;
+    }
+    {
+        sung::ImageIndex index{ source_date_database };
+        index.initialize(source_date_configs);
+        const auto paired = index.query(sung::fromstr("test"), "", true)
+                                .make_json(0, 100)["imageFiles"];
+        if (!check(
+                paired.size() == 1 && paired[0]["name"] == "paired.png" &&
+                    paired[0]["src"] == "/img/test/paired.png.sprintboard.avif",
+                "lists a paired proxy with the logical source name"
+            )) {
+            sung::fs::remove_all(temp);
+            return 1;
+        }
+
+        sung::fs::remove(source_date_root / "paired.png");
+        index.refresh(source_date_configs);
+        const auto orphan = index.query(sung::fromstr("test"), "", true)
+                                .make_json(0, 100)["imageFiles"];
+        if (!check(
+                orphan.size() == 1 &&
+                    orphan[0]["name"] == "paired.png.sprintboard.avif" &&
+                    orphan[0]["src"] == "/img/test/paired.png.sprintboard.avif",
+                "lists an orphan proxy using its physical filename"
+            )) {
+            sung::fs::remove_all(temp);
+            return 1;
+        }
     }
 
     const auto ordering_root = temp / "ordering-images";
