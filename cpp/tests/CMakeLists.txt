@@ -35,6 +35,11 @@ add_test(NAME ${PROJECT_NAME}_test_avif COMMAND ${PROJECT_NAME}_test_avif WORKIN
 set_target_properties(${PROJECT_NAME}_test_avif PROPERTIES FOLDER "${PROJECT_NAME}/test")
 target_link_libraries(${PROJECT_NAME}_test_avif sprintboard_img)
 
+add_executable(${PROJECT_NAME}_test_xmp xmp.cpp)
+add_test(NAME ${PROJECT_NAME}_test_xmp COMMAND ${PROJECT_NAME}_test_xmp)
+set_target_properties(${PROJECT_NAME}_test_xmp PROPERTIES FOLDER "${PROJECT_NAME}/test")
+target_link_libraries(${PROJECT_NAME}_test_xmp sprintboard_img)
+
 add_executable(
     ${PROJECT_NAME}_test_img_list
     img_list.cpp

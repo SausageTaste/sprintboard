@@ -114,6 +114,21 @@ namespace {
         };
     }
 
+    std::vector<uint8_t> collect_text(const pugi::xml_node& node) {
+        std::vector<uint8_t> result;
+        for (const auto& child : node.children()) {
+            if (child.type() != pugi::node_pcdata &&
+                child.type() != pugi::node_cdata) {
+                continue;
+            }
+
+            const std::string_view text{ child.value() };
+            const auto bytes = conv_str_data(text);
+            result.insert(result.end(), bytes.begin(), bytes.end());
+        }
+        return result;
+    }
+
 }  // namespace
 namespace sung {
 
@@ -131,8 +146,7 @@ namespace sung {
                 xmp_doc.root(), "sprintboard:pngText_workflow"
             );
             if (found) {
-                const auto text = std::string_view{ found->text().as_string() };
-                return conv_str_data(text);
+                return collect_text(*found);
             }
         }
 
@@ -142,8 +156,7 @@ namespace sung {
                 xmp_doc.root(), "sprintboard:workflow"
             );
             if (found) {
-                const auto text = std::string_view{ found->text().as_string() };
-                return conv_str_data(text);
+                return collect_text(*found);
             }
         }
 

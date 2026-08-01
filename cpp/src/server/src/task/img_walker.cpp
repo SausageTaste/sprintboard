@@ -1,17 +1,16 @@
 #include "task/img_walker.hpp"
 
-#include <fstream>
 #include <print>
 
 #include <absl/strings/ascii.h>
 #include <tbb/task_group.h>
-#include <pugixml.hpp>
 #include <sung/basic/os_detect.hpp>
 #include <sung/basic/time.hpp>
 
 #include "sung/auxiliary/filesys.hpp"
 #include "sung/image/avif.hpp"
 #include "sung/image/png.hpp"
+#include "sung/image/xmp.hpp"
 
 #if defined(__cpp_lib_generator) && __cpp_lib_generator >= SUNG__cplusplus
     #include <generator>
@@ -22,79 +21,6 @@
 
 
 namespace {
-
-    void append_cdata_safely(pugi::xml_node parent, std::string_view s) {
-        // Splits occurrences of "]]>" so the resulting XML is valid.
-        // The actual text content remains identical.
-        size_t pos = 0;
-        while (true) {
-            size_t p = s.find("]]>", pos);
-            if (p == std::string_view::npos) {
-                parent.append_child(pugi::node_cdata)
-                    .set_value(std::string(s.substr(pos)).c_str());
-                break;
-            }
-
-            // Add up to the problematic sequence
-            parent.append_child(pugi::node_cdata)
-                .set_value(std::string(s.substr(pos, p - pos)).c_str());
-
-            // Recreate "]]>" in a safe way across nodes:
-            // CDATA("]]") + text(">") is a typical split strategy.
-            parent.append_child(pugi::node_cdata).set_value("]]");
-            parent.append_child(pugi::node_pcdata).set_value(">");
-
-            pos = p + 3;
-        }
-    }
-
-    std::string make_xmp_packet(const sung::PngData& src) {
-        pugi::xml_document doc;
-
-        std::string xpacket_begin = "begin=\"";
-        xpacket_begin += std::string("\xEF\xBB\xBF", 3);  // UTF-8 BOM bytes
-        xpacket_begin += "\" id=\"W5M0MpCehiHzreSzNTczkc9d\"";
-
-        // Optional but recommended for compatibility:
-        // xpacket wrapper is usually outside the XML doc as processing
-        // instructions.
-        auto pi_begin = doc.append_child(pugi::node_pi);
-        pi_begin.set_name("xpacket");
-        pi_begin.set_value(xpacket_begin);
-
-        // <x:xmpmeta ...>
-        pugi::xml_node xmpmeta = doc.append_child("x:xmpmeta");
-        xmpmeta.append_attribute("xmlns:x") = "adobe:ns:meta/";
-        xmpmeta.append_attribute("x:xmptk") = "sprintboard";
-
-        // <rdf:RDF ...>
-        pugi::xml_node rdf = xmpmeta.append_child("rdf:RDF");
-        rdf.append_attribute("xmlns:rdf"
-        ) = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
-
-        // <rdf:Description ...>
-        pugi::xml_node desc = rdf.append_child("rdf:Description");
-        desc.append_attribute("rdf:about") = "";
-        desc.append_attribute("xmlns:sprintboard"
-        ) = "https://github.com/SausageTaste/sprintboard/";
-
-        for (auto& kv : src.text) {
-            const auto key = std::format("sprintboard:pngText_{}", kv.key);
-            pugi::xml_node n = desc.append_child(key.c_str());
-            append_cdata_safely(n, kv.value);
-        }
-
-        // Close xpacket
-        auto pi_end = doc.append_child(pugi::node_pi);
-        pi_end.set_name("xpacket");
-        pi_end.set_value(R"(end="w")");
-
-        // Serialize
-        std::ostringstream oss;
-        doc.save(oss, "  ", pugi::format_default, pugi::encoding_utf8);
-        std::string out = oss.str();
-        return out;
-    }
 
     avifPixelFormat conv_pix_format(
         sung::ServerConfigs::AvifPixelFormat pix_format
@@ -153,7 +79,8 @@ namespace {
                 image, params.xmp().data(), params.xmp().size()
             );
             if (result != AVIF_RESULT_OK) {
-                return std::unexpected(avifResultToString(res));
+                avifImageDestroy(image);
+                return std::unexpected(avifResultToString(result));
             }
         }
 
@@ -279,7 +206,8 @@ namespace {
                                 co_yield PngWorkItem{ entry.path(),
                                                       &binding_info };
 #else
-                                result.push_back({ entry.path(), &binding_info }
+                                result.push_back(
+                                    { entry.path(), &binding_info }
                                 );
 #endif
                             }
@@ -352,7 +280,7 @@ namespace {
                     sung::AvifEncodeParams avif_params;
                     avif_params.set_quality(avif_opts.quality_);
                     avif_params.set_speed(avif_opts.speed_);
-                    avif_params.set_xmp(::make_xmp_packet(*png_data));
+                    avif_params.set_xmp(sung::make_xmp_packet(*png_data));
                     avif_params.set_yuv_format(
                         ::conv_pix_format(avif_opts.pix_format_)
                     );
