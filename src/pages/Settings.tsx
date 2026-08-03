@@ -1,6 +1,6 @@
 import React from "react";
 
-import type { ImageSortOrder, ViewerSettings } from "../func/ViewerSetings";
+import type { ViewerSettings } from "../func/ViewerSetings";
 
 
 type SettingsProps = {
@@ -53,19 +53,6 @@ export default function Settings({ settings, onChangeSettings }: SettingsProps) 
                         value={settings.thumbnailSize}
                         onChange={(event) => updateSetting("thumbnailSize", Number(event.target.value))}
                     />
-                </label>
-
-                <label className="settings-row">
-                    <span>Image order</span>
-                    <select
-                        value={settings.imageSortOrder}
-                        onChange={(event) => updateSetting("imageSortOrder", event.target.value as ImageSortOrder)}
-                    >
-                        <option value="date-desc">Newest</option>
-                        <option value="date-asc">Oldest</option>
-                        <option value="name-asc">Name A–Z</option>
-                        <option value="name-desc">Name Z–A</option>
-                    </select>
                 </label>
 
                 <label className="settings-row">

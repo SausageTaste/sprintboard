@@ -214,6 +214,119 @@ img,
   pointer-events: none;
 }
 
+.gallery-toolbar {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.gallery-search-form {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.gallery-search-input {
+  width: 100%;
+  height: 44px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.05);
+  font: inherit;
+  font-size: 16px;
+}
+
+.gallery-search-input:focus-visible {
+  outline: 2px solid #8c92ff;
+  outline-offset: 1px;
+}
+
+.gallery-sort {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.gallery-sort-button {
+  display: flex;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.gallery-sort-button[aria-expanded="true"] {
+  border-color: rgba(140, 146, 255, 0.55);
+  background: rgba(100, 108, 255, 0.16);
+}
+
+.gallery-sort-button svg {
+  width: 23px;
+  height: 23px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.gallery-sort-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 50;
+  width: 190px;
+  max-width: calc(100vw - var(--app-rail-width) - env(safe-area-inset-left, 0px) - 32px);
+  overflow: hidden;
+  padding: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 12px;
+  background: rgba(24, 24, 24, 0.98);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38);
+}
+
+.gallery-sort-option {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 11px;
+  border: 0;
+  border-radius: 8px;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+}
+
+.gallery-sort-option:hover,
+.gallery-sort-option:focus-visible {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.gallery-sort-option:focus-visible {
+  outline: 2px solid #8c92ff;
+  outline-offset: -2px;
+}
+
+.gallery-sort-option.selected {
+  color: #fff;
+  background: rgba(100, 108, 255, 0.14);
+}
+
+.gallery-sort-check {
+  opacity: 0;
+}
+
+.gallery-sort-option.selected .gallery-sort-check {
+  opacity: 1;
+}
+
 .settings-page {
   width: min(100%, 720px);
 }

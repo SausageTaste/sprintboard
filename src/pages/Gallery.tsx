@@ -40,6 +40,12 @@ interface ImageListResponse {
 const PAGE_SIZE = 100;
 const LIGHTBOX_PREFETCH_THRESHOLD = 10;
 const MIN_THUMBNAIL_SIZE = 50;
+const IMAGE_SORT_OPTIONS: ReadonlyArray<{ value: ImageSortOrder; label: string }> = [
+    { value: "date-desc", label: "Newest" },
+    { value: "date-asc", label: "Oldest" },
+    { value: "name-asc", label: "Name A–Z" },
+    { value: "name-desc", label: "Name Z–A" },
+];
 
 type SafeAreaInsets = {
     top: number;
@@ -540,10 +546,15 @@ export default function Gallery({ settings, onChangeSettings }: GalleryProps) {
     const settingsRef = React.useRef(settings);
     const [lightboxReady, setLightboxReady] = React.useState(false);
     const [searchBoxText, setSearchBoxText] = React.useState(settings.searchText || "");
+    const [sortMenuOpen, setSortMenuOpen] = React.useState(false);
     const effectiveThumbnailSize = Math.max(MIN_THUMBNAIL_SIZE, settings.thumbnailSize);
+    const currentSortLabel = IMAGE_SORT_OPTIONS.find(option => option.value === settings.imageSortOrder)?.label
+        ?? "Image order";
 
     const virtuosoRef = React.useRef<any>(null);
     const lightboxRef = React.useRef<PhotoSwipeLightbox | null>(null);
+    const sortMenuRef = React.useRef<HTMLDivElement | null>(null);
+    const sortButtonRef = React.useRef<HTMLButtonElement | null>(null);
     const lastIndexRef = React.useRef<number>(0);
     const loadingRef = React.useRef(false);
     const imgItemsRef = React.useRef(imgItems);
@@ -1273,6 +1284,45 @@ export default function Gallery({ settings, onChangeSettings }: GalleryProps) {
         settingsRef.current = settings;
     }, [settings]);
 
+    React.useEffect(() => {
+        if (!sortMenuOpen)
+            return;
+
+        const focusFrame = window.requestAnimationFrame(() => {
+            sortMenuRef.current
+                ?.querySelector<HTMLButtonElement>(`[data-sort-order="${settings.imageSortOrder}"]`)
+                ?.focus();
+        });
+
+        const closeOnOutsidePointer = (event: PointerEvent) => {
+            if (event.target instanceof Node && !sortMenuRef.current?.contains(event.target))
+                setSortMenuOpen(false);
+        };
+
+        const closeOnEscape = (event: KeyboardEvent) => {
+            if (event.key !== "Escape")
+                return;
+            event.preventDefault();
+            setSortMenuOpen(false);
+            sortButtonRef.current?.focus();
+        };
+
+        document.addEventListener("pointerdown", closeOnOutsidePointer);
+        document.addEventListener("keydown", closeOnEscape);
+
+        return () => {
+            window.cancelAnimationFrame(focusFrame);
+            document.removeEventListener("pointerdown", closeOnOutsidePointer);
+            document.removeEventListener("keydown", closeOnEscape);
+        };
+    }, [settings.imageSortOrder, sortMenuOpen]);
+
+    const selectImageSortOrder = (imageSortOrder: ImageSortOrder) => {
+        onChangeSettings(current => ({ ...current, imageSortOrder }));
+        setSortMenuOpen(false);
+        sortButtonRef.current?.focus();
+    };
+
     return (
         <div className="app-page">
             <div ref={safeAreaProbeRef} className="safe-area-probe" aria-hidden="true" />
@@ -1286,28 +1336,63 @@ export default function Gallery({ settings, onChangeSettings }: GalleryProps) {
 
             <div style={{ height: 12 }} />
 
-            <form
-                onSubmit={(e) => {
-                    e.preventDefault();
-                    onChangeSettings(prev => ({ ...prev, searchText: searchBoxText }));
-                }}
-            >
-                <input
-                    type="search"
-                    placeholder="Search..."
-                    value={searchBoxText}
-                    onChange={(e) => setSearchBoxText(e.target.value)}
-                    style={{
-                        width: "100%",
-                        padding: "10px 12px",
-                        borderRadius: 10,
-                        border: "1px solid rgba(255,255,255,0.15)",
-                        background: "rgba(255,255,255,0.05)",
-                        color: "inherit",
-                        fontSize: 16,
+            <div className="gallery-toolbar">
+                <form
+                    className="gallery-search-form"
+                    onSubmit={(e) => {
+                        e.preventDefault();
+                        onChangeSettings(prev => ({ ...prev, searchText: searchBoxText }));
                     }}
-                />
-            </form>
+                >
+                    <input
+                        className="gallery-search-input"
+                        type="search"
+                        placeholder="Search..."
+                        aria-label="Search images"
+                        value={searchBoxText}
+                        onChange={(e) => setSearchBoxText(e.target.value)}
+                    />
+                </form>
+
+                <div className="gallery-sort" ref={sortMenuRef}>
+                    <button
+                        ref={sortButtonRef}
+                        className="gallery-sort-button"
+                        type="button"
+                        aria-label={`Sort images. Current order: ${currentSortLabel}`}
+                        aria-haspopup="menu"
+                        aria-expanded={sortMenuOpen}
+                        title={`Sort images: ${currentSortLabel}`}
+                        onClick={() => setSortMenuOpen(open => !open)}
+                    >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M4 6h10M4 12h7M4 18h4M18 5v14m-3-3 3 3 3-3" />
+                        </svg>
+                    </button>
+
+                    {sortMenuOpen && (
+                        <div className="gallery-sort-menu" role="menu" aria-label="Image order">
+                            {IMAGE_SORT_OPTIONS.map(option => {
+                                const selected = option.value === settings.imageSortOrder;
+                                return (
+                                    <button
+                                        key={option.value}
+                                        className={`gallery-sort-option${selected ? " selected" : ""}`}
+                                        type="button"
+                                        role="menuitemradio"
+                                        aria-checked={selected}
+                                        data-sort-order={option.value}
+                                        onClick={() => selectImageSortOrder(option.value)}
+                                    >
+                                        <span>{option.label}</span>
+                                        <span className="gallery-sort-check" aria-hidden="true">✓</span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+            </div>
 
             <div style={{ height: 12 }} />
 
