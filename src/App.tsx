@@ -47,10 +47,23 @@ function SettingsIcon() {
   );
 }
 
+function RailToggleIcon({ collapsed }: { collapsed: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M8 4v16" />
+      {collapsed
+        ? <path d="m12 8 4 4-4 4" />
+        : <path d="m16 8-4 4 4 4" />}
+    </svg>
+  );
+}
+
 function AppShell() {
   const location = useLocation();
   const [settings, setSettings] = React.useState(loadSettings);
   const isImageView = location.pathname.startsWith("/images");
+  const railCollapsed = settings.railCollapsed;
   const currentLocation = `${location.pathname}${location.search}${location.hash}`;
   const imageTabLocation = isImageView ? currentLocation : readLastImageLocation();
 
@@ -70,12 +83,32 @@ function AppShell() {
   }, [settings]);
 
   return (
-    <div className="app-shell">
-      <aside className="app-rail">
+    <div className={`app-shell${railCollapsed ? " rail-collapsed" : ""}`}>
+      <button
+        className="app-rail-toggle"
+        type="button"
+        aria-label={railCollapsed ? "Show navigation rail" : "Hide navigation rail"}
+        aria-expanded={!railCollapsed}
+        aria-controls="app-navigation-rail"
+        title={railCollapsed ? "Show navigation rail" : "Hide navigation rail"}
+        onClick={() => setSettings(current => ({
+          ...current,
+          railCollapsed: !current.railCollapsed,
+        }))}
+      >
+        <RailToggleIcon collapsed={railCollapsed} />
+      </button>
+
+      <aside
+        id="app-navigation-rail"
+        className="app-rail"
+        aria-hidden={railCollapsed}
+      >
         <nav className="app-rail-nav" aria-label="Application views">
           <NavLink
             to="/"
             end
+            tabIndex={railCollapsed ? -1 : undefined}
             className={({ isActive }) => `app-rail-link${isActive ? " active" : ""}`}
             aria-label="Front View"
             title="Front View"
@@ -84,6 +117,7 @@ function AppShell() {
           </NavLink>
           <NavLink
             to={imageTabLocation}
+            tabIndex={railCollapsed ? -1 : undefined}
             className={() => `app-rail-link${isImageView ? " active" : ""}`}
             aria-label="Image View"
             title="Image View"
@@ -92,6 +126,7 @@ function AppShell() {
           </NavLink>
           <NavLink
             to="/settings"
+            tabIndex={railCollapsed ? -1 : undefined}
             className={({ isActive }) => `app-rail-link app-rail-settings${isActive ? " active" : ""}`}
             aria-label="Settings"
             title="Settings"
@@ -112,7 +147,7 @@ function AppShell() {
             path="/settings"
             element={<Settings settings={settings} onChangeSettings={setSettings} />}
           />
-          <Route path="*" element={<div className="app-page">Page not found.</div>} />
+          <Route path="*" element={<div className="app-page app-not-found">Page not found.</div>} />
         </Routes>
       </main>
     </div>

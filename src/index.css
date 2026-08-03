@@ -41,7 +41,12 @@ body {
 }
 
 .app-shell {
+  --app-content-offset: calc(var(--app-rail-width) + env(safe-area-inset-left, 0px));
   min-height: 100%;
+}
+
+.app-shell.rail-collapsed {
+  --app-content-offset: 0px;
 }
 
 .app-rail {
@@ -55,6 +60,53 @@ body {
   padding-left: calc(8px + env(safe-area-inset-left, 0px));
   border-right: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(27, 27, 27, 0.98);
+  transition: transform 180ms ease, visibility 0s;
+}
+
+.rail-collapsed .app-rail {
+  visibility: hidden;
+  transform: translateX(-100%);
+  transition: transform 180ms ease, visibility 0s 180ms;
+}
+
+.app-rail-toggle {
+  position: fixed;
+  top: calc(10px + env(safe-area-inset-top, 0px));
+  left: calc(8px + env(safe-area-inset-left, 0px));
+  z-index: 101;
+  display: flex;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  color: rgba(255, 255, 255, 0.72);
+  background: rgba(36, 36, 36, 0.94);
+  box-shadow: 0 5px 18px rgba(0, 0, 0, 0.18);
+  transition: color 140ms ease, background 140ms ease, border-color 140ms ease;
+}
+
+.app-rail-toggle:hover {
+  color: #fff;
+  border-color: rgba(140, 146, 255, 0.42);
+  background: rgba(48, 48, 48, 0.98);
+}
+
+.app-rail-toggle:focus-visible {
+  outline: 2px solid #8c92ff;
+  outline-offset: 2px;
+}
+
+.app-rail-toggle svg {
+  width: 23px;
+  height: 23px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .app-rail-nav {
@@ -63,6 +115,7 @@ body {
   flex-direction: column;
   align-items: center;
   gap: 8px;
+  padding-top: 52px;
 }
 
 .app-rail-link {
@@ -111,11 +164,42 @@ body {
 
 .app-shell-content {
   min-height: 100%;
-  margin-left: calc(var(--app-rail-width) + env(safe-area-inset-left, 0px));
+  margin-left: var(--app-content-offset);
+  transition: margin-left 180ms ease;
 }
 
 .app-shell-content .app-page {
   padding-left: 16px;
+}
+
+.rail-collapsed .app-shell-content .app-page {
+  padding-left: calc(16px + env(safe-area-inset-left, 0px));
+}
+
+.rail-collapsed .headerRow,
+.rail-collapsed .dashboard-title,
+.rail-collapsed .settings-header h2 {
+  min-height: 44px;
+  padding-left: 52px;
+}
+
+.rail-collapsed .dashboard-title,
+.rail-collapsed .settings-header h2 {
+  display: flex;
+  align-items: center;
+}
+
+.rail-collapsed .app-not-found {
+  min-height: 44px;
+  padding-left: calc(68px + env(safe-area-inset-left, 0px));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-rail,
+  .rail-collapsed .app-rail,
+  .app-shell-content {
+    transition: none;
+  }
 }
 
 h1 {
@@ -289,7 +373,7 @@ img,
   right: 0;
   z-index: 50;
   width: 190px;
-  max-width: calc(100vw - var(--app-rail-width) - env(safe-area-inset-left, 0px) - 32px);
+  max-width: calc(100vw - var(--app-content-offset) - 32px);
   overflow: hidden;
   padding: 5px;
   border: 1px solid rgba(255, 255, 255, 0.13);

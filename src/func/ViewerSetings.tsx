@@ -7,6 +7,7 @@ type ViewerSettings = {
     thumbnailSize: number;
     imageSortOrder: ImageSortOrder;
     imageViewMode: ImageViewMode;
+    railCollapsed: boolean;
     fillScreen: boolean;
     edgeToEdge: boolean;
     filesRecursive: boolean;
@@ -19,6 +20,7 @@ const DEFAULT_SETTINGS: ViewerSettings = {
     thumbnailSize: 150,
     imageSortOrder: "date-desc",
     imageViewMode: "grid",
+    railCollapsed: false,
     fillScreen: false,
     edgeToEdge: true,
     filesRecursive: false,

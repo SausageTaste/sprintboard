@@ -46,7 +46,7 @@ export default function Dashboard() {
 
     return (
         <div className="app-page">
-            <h2>Sprintboard</h2>
+            <h2 className="dashboard-title">Sprintboard</h2>
             <div style={{ height: 12 }} />
             <div>Idle time: {idleTime.toFixed(2)} seconds</div>
             <div style={{ height: 12 }} />
