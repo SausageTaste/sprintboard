@@ -69,6 +69,20 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(results[2]["ratings"][0]["name"], "safe")
         self.assertGreater(len(FakeTagger.calls), 1)
 
+    def test_analyze_preserves_request_path_spelling(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image = Path(temp_dir) / "image.png"
+            image.write_bytes(b"test")
+            request_path = image.as_posix()
+
+            response = self.client.post(
+                "/v1/analyze",
+                json={"paths": [request_path]},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["results"][0]["path"], request_path)
+
     def test_validates_paths_and_batch_limit(self) -> None:
         relative = self.client.post(
             "/v1/analyze", json={"paths": ["relative.png"]}

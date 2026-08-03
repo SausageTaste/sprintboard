@@ -126,6 +126,10 @@ class AnalysisService:
             with self.lock:
                 analyzed = self._analyze_isolated(validated)
             for index, result in zip(valid_indices, analyzed, strict=True):
+                # Paths are opaque correlation values in the protocol. Path
+                # stringification changes separators on Windows, so return the
+                # request spelling verbatim for the C++ client to match.
+                result["path"] = path_strings[index]
                 indexed_results[index] = result
 
         return [indexed_results[index] for index in range(len(path_strings))]
