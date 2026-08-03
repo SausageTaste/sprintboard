@@ -36,6 +36,88 @@ body {
   min-height: 100vh;
 }
 
+:root {
+  --app-rail-width: 60px;
+}
+
+.app-shell {
+  min-height: 100%;
+}
+
+.app-rail {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: 100;
+  width: calc(var(--app-rail-width) + env(safe-area-inset-left, 0px));
+  padding-top: calc(10px + env(safe-area-inset-top, 0px));
+  padding-right: 8px;
+  padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  padding-left: calc(8px + env(safe-area-inset-left, 0px));
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(27, 27, 27, 0.98);
+}
+
+.app-rail-nav {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-rail-link {
+  display: flex;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  color: rgba(255, 255, 255, 0.65);
+  background: transparent;
+  transition: color 140ms ease, background 140ms ease, border-color 140ms ease;
+}
+
+.app-rail-link:hover {
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.app-rail-link:focus-visible {
+  outline: 2px solid #8c92ff;
+  outline-offset: 2px;
+}
+
+.app-rail-link.active {
+  color: #fff;
+  border-color: rgba(140, 146, 255, 0.42);
+  background: rgba(100, 108, 255, 0.2);
+}
+
+.app-rail-link svg {
+  width: 23px;
+  height: 23px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.app-rail-settings {
+  margin-top: auto;
+}
+
+.app-shell-content {
+  min-height: 100%;
+  margin-left: calc(var(--app-rail-width) + env(safe-area-inset-left, 0px));
+}
+
+.app-shell-content .app-page {
+  padding-left: 16px;
+}
+
 h1 {
   font-size: 3.2em;
   line-height: 1.1;
@@ -104,146 +186,6 @@ img,
   color: rgba(255, 255, 255, 0.85);
 }
 
-.drawer-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.45);
-  opacity: 0;
-  pointer-events: none;
-  /* visibility:hidden once faded out, so iOS Safari stops compositing the
-     closed backdrop and cannot leave stale paint behind */
-  visibility: hidden;
-  transition: opacity 160ms ease, visibility 0s 160ms;
-  z-index: 9998;
-}
-
-.drawer-backdrop.open {
-  opacity: 1;
-  pointer-events: auto;
-  visibility: visible;
-  transition: opacity 160ms ease;
-}
-
-.drawer {
-  position: fixed;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: min(320px, 86vw);
-  background: rgba(24, 24, 24, 0.98);
-  border-right: 1px solid rgba(255, 255, 255, 0.12);
-  transform: translateX(-105%);
-  /* visibility:hidden once slid out, so iOS Safari stops compositing the
-     closed drawer and cannot leave stale paint behind */
-  visibility: hidden;
-  transition: transform 200ms ease, visibility 0s 200ms;
-  z-index: 9999;
-
-  /* iOS safe area */
-  padding-top: env(safe-area-inset-top);
-  padding-bottom: env(safe-area-inset-bottom);
-  padding-left: env(safe-area-inset-left);
-
-  /* prevent body scroll feeling inside the drawer */
-  overscroll-behavior: contain;
-}
-
-.drawer.open {
-  transform: translateX(0);
-  visibility: visible;
-  transition: transform 200ms ease;
-}
-
-.drawer-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 14px 10px 14px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.10);
-}
-
-.drawer-close {
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-
-  display: flex;
-  align-items: center;
-  justify-content: center;
-
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.06);
-  color: inherit;
-  cursor: pointer;
-}
-
-.drawer-body {
-  padding: 12px 14px;
-  overflow: auto;
-  height: calc(100% - 60px);
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
-}
-
-.drawer-section {
-  margin-bottom: 16px;
-}
-
-.drawer-label {
-  font-size: 12px;
-  opacity: 0.65;
-  margin-bottom: 8px;
-}
-
-.drawer-value {
-  font-weight: 700;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.drawer-btn {
-  width: 100%;
-  text-align: left;
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.10);
-  background: rgba(255, 255, 255, 0.04);
-  color: inherit;
-  cursor: pointer;
-  margin-bottom: 8px;
-}
-
-.menuBtn {
-  width: 36px;
-  height: 36px;
-
-  display: flex;
-  align-items: center;
-  justify-content: center;
-
-  border-radius: 10px;
-  border: none;
-
-  background: rgba(255, 255, 255, 0.06);
-  color: inherit;
-
-  font-size: 20px;
-  line-height: 1;
-
-  cursor: pointer;
-
-  transition: background 0.15s ease;
-}
-
-.menuBtn:hover {
-  background: rgba(255, 255, 255, 0.12);
-}
-
-.menuBtn:active {
-  background: rgba(255, 255, 255, 0.18);
-}
-
 .headerRow {
   display: flex;
   align-items: center;
@@ -270,6 +212,85 @@ img,
   padding-left: env(safe-area-inset-left, 0px);
   visibility: hidden;
   pointer-events: none;
+}
+
+.settings-page {
+  width: min(100%, 720px);
+}
+
+.settings-header h2 {
+  margin: 0;
+}
+
+.settings-header p {
+  margin: 6px 0 20px;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.settings-panel {
+  margin-bottom: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.settings-panel h3 {
+  margin: 0;
+  padding: 14px 16px 10px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.58);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.settings-row {
+  display: flex;
+  min-height: 54px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.settings-row input[type="number"],
+.settings-row select {
+  min-width: 92px;
+  height: 36px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 9px;
+  padding: 0 10px;
+  color: inherit;
+  background: #1a1a1a;
+  font: inherit;
+}
+
+.settings-row select {
+  min-width: 130px;
+}
+
+.settings-row input[type="checkbox"] {
+  width: 21px;
+  height: 21px;
+  flex: 0 0 auto;
+  accent-color: #747bff;
+}
+
+.settings-action {
+  margin: 2px 16px 8px;
+}
+
+.settings-action:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.settings-status {
+  min-height: 31px;
+  padding: 0 16px 12px;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 14px;
 }
 
 /* Keep viewer controls reachable while the image renders beneath display cutouts. */

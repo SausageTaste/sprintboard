@@ -1,12 +1,9 @@
 import React from "react";
-import { useNavigate } from "react-router-dom";
 
 
-export default function Gallery() {
+export default function Dashboard() {
     const [idleTime, setIdleTime] = React.useState<number>(0);
     const [wakeStatus, setWakeStatus] = React.useState<boolean>(false);
-
-    const navigate = useNavigate();
 
     const loadMore = React.useCallback(async () => {
         try {
@@ -14,7 +11,8 @@ export default function Gallery() {
             const data = await res.json();
             setIdleTime(data.idle_time ?? 0);
             setWakeStatus(data.wake_on ?? false);
-        } catch (e) {
+        } catch (error) {
+            console.warn("Failed to load wake status:", error);
         }
     }, []);
 
@@ -48,15 +46,13 @@ export default function Gallery() {
 
     return (
         <div className="app-page">
-            <h2>Image Gallery</h2>
+            <h2>Sprintboard</h2>
             <div style={{ height: 12 }} />
             <div>Idle time: {idleTime.toFixed(2)} seconds</div>
             <div style={{ height: 12 }} />
             <div>Wake status: {wakeStatus ? "ON" : "OFF"}</div>
             <div style={{ height: 12 }} />
             <button onClick={sendWakeUpCall}>Send Wake Up Call</button>
-            <div style={{ height: 12 }} />
-            <button onClick={() => navigate("/images")}>Go to Images</button>
         </div >
     );
 }

@@ -63,7 +63,7 @@ Starting server at http://127.0.0.1:8787
 ```
 
 Open the link in your preferred web browser.
-On the front page, click the *Go to Images* button to open the file browser.
+Select the *Image View* icon in the left tab rail to open the file browser.
 In the *example* folder, you should find some test images.
 
 # Configs

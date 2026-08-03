@@ -6,11 +6,8 @@ import "photoswipe/style.css";
 
 import Breadcrumbs from "../widgets/Breadcrumbs";
 import FolderCard from "../widgets/FolderCard";
-import GalleryDrawer from "../widgets/GalleryDrawer";
 import { downloadImage, downloadSourceImage } from "../func/downloadImage";
 import {
-    loadSettings,
-    saveSettings,
     type ImageSortOrder,
     type ViewerSettings,
 } from "../func/ViewerSetings";
@@ -527,7 +524,12 @@ async function fetchImageList(
 }
 
 
-export default function Gallery() {
+type GalleryProps = {
+    settings: ViewerSettings;
+    onChangeSettings: React.Dispatch<React.SetStateAction<ViewerSettings>>;
+};
+
+export default function Gallery({ settings, onChangeSettings }: GalleryProps) {
     // Query result of image list
     const [imgItems, setImgItems] = React.useState<ImageFileInfo[]>([]);
     const [folders, setFolders] = React.useState<FolderInfo[]>([]);
@@ -535,8 +537,6 @@ export default function Gallery() {
     const [thumbnailWidth, setThumbnailWidth] = React.useState<number>(3);
     const [thumbnailHeight, setThumbnailHeight] = React.useState<number>(4);
 
-    const [menuOpen, setMenuOpen] = React.useState(false);
-    const [settings, setSettings] = React.useState<ViewerSettings>(() => loadSettings());
     const settingsRef = React.useRef(settings);
     const [lightboxReady, setLightboxReady] = React.useState(false);
     const [searchBoxText, setSearchBoxText] = React.useState(settings.searchText || "");
@@ -1270,102 +1270,17 @@ export default function Gallery() {
     */
 
     React.useEffect(() => {
-        setMenuOpen(false);
-
-        const lb = lightboxRef.current;
-        const pswp = lb?.pswp;
-
-        // If lightbox is open, close it
-        if (pswp) {
-            pswp.close();
-        }
-    }, [curDir]);
-
-    React.useEffect(() => {
-        if (!menuOpen) return;
-
-        // iPhone Safari re-letterboxes an edge-to-edge page around its chrome
-        // when the document stops being scrollable, and can leave it that way
-        // after the drawer closes. Pin the scroll position and swallow
-        // background touch scrolling instead of toggling body overflow there.
-        const lockedScroll = { x: window.scrollX, y: window.scrollY };
-
-        const preventBackgroundTouchScroll = (event: TouchEvent) => {
-            if (event.target instanceof Element && event.target.closest(".drawer"))
-                return;
-            event.preventDefault();
-        };
-
-        const restoreScroll = () => {
-            if (window.scrollX !== lockedScroll.x || window.scrollY !== lockedScroll.y)
-                window.scrollTo(lockedScroll.x, lockedScroll.y);
-        };
-
-        const lockBodyOverflow = !usesIPhoneDocumentViewportWorkaround();
-        const prevOverflow = document.body.style.overflow;
-        if (lockBodyOverflow)
-            document.body.style.overflow = "hidden";
-        document.addEventListener("touchmove", preventBackgroundTouchScroll, { passive: false });
-        window.addEventListener("scroll", restoreScroll);
-
-        return () => {
-            document.removeEventListener("touchmove", preventBackgroundTouchScroll);
-            window.removeEventListener("scroll", restoreScroll);
-            if (lockBodyOverflow)
-                document.body.style.overflow = prevOverflow;
-        };
-    }, [menuOpen]);
-
-    React.useEffect(() => {
         settingsRef.current = settings;
-        saveSettings(settings);
     }, [settings]);
 
     return (
         <div className="app-page">
             <div ref={safeAreaProbeRef} className="safe-area-probe" aria-hidden="true" />
-            <div className="headerRow" style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <button
-                    className="menuBtn"
-                    onClick={() => setMenuOpen(true)}
-                    aria-label="Open menu"
-                    style={{
-                        width: 44,
-                        height: 44,
-                        borderRadius: 12,
-                        border: "1px solid rgba(255,255,255,0.12)",
-                        background: "rgba(255,255,255,0.06)",
-                        color: "inherit",
-                        fontSize: 22,
-                        lineHeight: 1,
-                        cursor: "pointer",
-                    }}
-                >
-                    ☰
-                </button>
-
+            <div className="headerRow">
                 <h2 style={{ margin: 0 }}>Sprintboard Images</h2>
             </div>
 
             <div style={{ height: 12 }} />
-
-            <GalleryDrawer
-                open={menuOpen}
-                curDir={curDir}
-                settings={settings}
-                onChangeSettings={(updater) => setSettings(updater)}
-                onClose={() => setMenuOpen(false)}
-                onRefreshNow={async () => {
-                    const response = await fetch("/api/images/index/refresh", {
-                        method: "POST",
-                    });
-                    if (!response.ok) {
-                        alert(`Refresh failed: HTTP ${response.status}`);
-                        return;
-                    }
-                    navigate(0);
-                }}
-            />
 
             <Breadcrumbs dir={curDir} onNavigate={p => navigate(`/images/${p}`)} />
 
@@ -1374,7 +1289,7 @@ export default function Gallery() {
             <form
                 onSubmit={(e) => {
                     e.preventDefault();
-                    setSettings(prev => ({ ...prev, searchText: searchBoxText }));
+                    onChangeSettings(prev => ({ ...prev, searchText: searchBoxText }));
                 }}
             >
                 <input
