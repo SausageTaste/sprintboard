@@ -3,9 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Protocol
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -50,7 +51,16 @@ class AnalyzeRequest(BaseModel):
     paths: list[str] = Field(min_length=1)
 
 
-TaggerFactory = Callable[..., WdEva02Tagger]
+class ImageTagger(Protocol):
+    device: object
+
+    def analyze(
+        self,
+        image_paths: Sequence[Path],
+    ) -> Iterator[ImageTagAnalysis]: ...
+
+
+TaggerFactory = Callable[..., ImageTagger]
 
 
 def _tag_json(tag: object) -> dict[str, object]:

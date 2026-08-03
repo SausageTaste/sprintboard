@@ -1,7 +1,7 @@
 [project]
 name = "sprintboard-tagger"
 version = "0.1.0"
-description = "Local WD EVA02 tagging service for Sprintboard"
+description = "Local image-tagging services for Sprintboard"
 requires-python = ">=3.14"
 dependencies = [
     "fastapi>=0.116.0",
@@ -15,10 +15,16 @@ dependencies = [
 
 [project.scripts]
 sprintboard-tagger = "sprintboard_tagger.cli:main"
+sprintboard-cl-tagger = "sprintboard_tagger.cl_cli:main"
 
 [dependency-groups]
 dev = [
     "httpx>=0.28.0",
+]
+cl = [
+    "numpy>=2.0.0",
+    "onnxruntime-gpu>=1.28.0; sys_platform == 'win32'",
+    "onnxruntime>=1.28.0; sys_platform != 'win32'",
 ]
 
 [build-system]

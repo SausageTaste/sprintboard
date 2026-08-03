@@ -180,6 +180,48 @@ MPS, then CPU unless `--device` is supplied. Other options include
 `--model-id`, `--batch-size`, `--general-threshold`, and
 `--character-threshold`.
 
+### CL Tagger v2 service
+
+CL Tagger v2 is available through a separate server command and dependency
+group, leaving the WD/PixAI service unchanged. Before its first use, accept the
+[CL Tagger v2 license](https://huggingface.co/cella110n/cl_tagger_v2) and log
+in with the Hugging Face CLI:
+
+```sh
+hf auth login
+uv run --project python --group cl sprintboard-cl-tagger \
+  --host 127.0.0.1 \
+  --port 8790
+```
+
+The command defaults to the provisional `v2_01a` model, a batch size of `4`,
+and `0.55` general and character thresholds. It downloads approximately 2.2 GB
+of gated ONNX weights into the normal Hugging Face cache. The resolved Hub
+commit is part of the analyzer fingerprint, so an upstream replacement of the
+provisional model triggers retagging instead of silently reusing old results.
+The Windows dependency uses ONNX Runtime's CUDA package and prefers CUDA when
+available; macOS and other platforms use CPU ONNX Runtime. `--device cpu`
+forces CPU, while an explicit `--device cuda` fails if CUDA is unavailable.
+
+For offline use, pass `--model-dir PATH`. The directory must directly contain
+the following files downloaded from the selected model-version directory:
+
+```text
+model.onnx
+model.onnx.data
+model_vocabulary.json
+```
+
+Local model contents are hashed into the analyzer fingerprint. Other CL server
+options include `--model-version`, `--revision`, `--batch-size`,
+`--general-threshold`, and `--character-threshold`. Copyright/series
+predictions are returned with general tags so they participate in Sprintboard
+search; meta and quality predictions are omitted.
+
+Run either `sprintboard-tagger` or `sprintboard-cl-tagger` on port 8790, not
+both. Switching between them changes the analyzer fingerprint and causes the
+collection to be retagged.
+
 Set `tagger_enabled` to `true` in `server_configs.json` after starting the
 service. A generated `image.png.sprintboard.avif` shares the absolute
 normalized logical key of `image.png`; if that source exists, it is used for
