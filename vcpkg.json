@@ -5,6 +5,7 @@
         "imageinfo",
         "libpng",
         "nlohmann-json",
+        "openssl",
         "pugixml",
         "spdlog",
         "sqlite3",

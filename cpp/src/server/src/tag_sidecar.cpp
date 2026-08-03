@@ -1,11 +1,27 @@
 #include "tag_sidecar.hpp"
 
+#include <algorithm>
+#include <array>
+#include <cerrno>
 #include <cmath>
 #include <format>
+#include <fstream>
 #include <limits>
+#include <memory>
+
+#include <openssl/evp.h>
 
 #include "index/image_index.hpp"
 #include "sung/auxiliary/filesys.hpp"
+
+#ifdef _WIN32
+    #ifndef NOMINMAX
+        #define NOMINMAX
+    #endif
+    #include <Windows.h>
+#else
+    #include <sys/stat.h>
+#endif
 
 
 namespace {
@@ -43,10 +59,56 @@ namespace {
         return true;
     }
 
-    bool is_absolute_normalized_path(const std::string& value) {
-        const auto path = sung::fromstr(value);
-        return path.is_absolute() &&
-               sung::tostr(path.lexically_normal()) == value;
+    bool is_sha256(const std::string_view value) {
+        if (value.size() != 64)
+            return false;
+        return std::ranges::all_of(value, [](const char ch) {
+            return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f');
+        });
+    }
+
+    std::expected<int64_t, std::string> modified_time_unix_ns(
+        const sung::Path& path
+    ) {
+#ifdef _WIN32
+        WIN32_FILE_ATTRIBUTE_DATA attributes{};
+        if (!GetFileAttributesExW(
+                path.c_str(), GetFileExInfoStandard, &attributes
+            )) {
+            return std::unexpected(
+                std::error_code(
+                    static_cast<int>(GetLastError()), std::system_category()
+                )
+                    .message()
+            );
+        }
+        ULARGE_INTEGER ticks{};
+        ticks.LowPart = attributes.ftLastWriteTime.dwLowDateTime;
+        ticks.HighPart = attributes.ftLastWriteTime.dwHighDateTime;
+        constexpr uint64_t WINDOWS_TO_UNIX_EPOCH_TICKS =
+            116'444'736'000'000'000ULL;
+        if (ticks.QuadPart < WINDOWS_TO_UNIX_EPOCH_TICKS)
+            return std::unexpected("file modification time predates 1970");
+        return static_cast<int64_t>(
+            (ticks.QuadPart - WINDOWS_TO_UNIX_EPOCH_TICKS) * 100ULL
+        );
+#else
+        struct stat attributes{};
+        if (::stat(path.c_str(), &attributes) != 0) {
+            return std::unexpected(
+                std::error_code(errno, std::generic_category()).message()
+            );
+        }
+    #ifdef __APPLE__
+        return static_cast<int64_t>(attributes.st_mtimespec.tv_sec) *
+                   1'000'000'000LL +
+               attributes.st_mtimespec.tv_nsec;
+    #else
+        return static_cast<int64_t>(attributes.st_mtim.tv_sec) *
+                   1'000'000'000LL +
+               attributes.st_mtim.tv_nsec;
+    #endif
+#endif
     }
 
     nlohmann::json analysis_payload(const sung::TagAnalysisRecord& record) {
@@ -79,13 +141,68 @@ namespace sung {
                 error ? error.message() : "file is too large"
             );
         }
-        const auto modified = fs::last_write_time(path, error);
-        if (error)
-            return std::unexpected(error.message());
+        const auto modified = ::modified_time_unix_ns(path);
+        if (!modified)
+            return std::unexpected(modified.error());
         return FileFingerprint{
             static_cast<int64_t>(size),
-            static_cast<int64_t>(modified.time_since_epoch().count()),
+            *modified,
+            {},
         };
+    }
+
+    std::expected<FileFingerprint, std::string> fingerprint_file_with_sha256(
+        const Path& path
+    ) {
+        const auto before = fingerprint_file(path);
+        if (!before)
+            return std::unexpected(before.error());
+
+        std::ifstream input{ path, std::ios::binary };
+        if (!input)
+            return std::unexpected("cannot read file for SHA-256");
+
+        std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> context{
+            EVP_MD_CTX_new(), EVP_MD_CTX_free
+        };
+        if (!context ||
+            EVP_DigestInit_ex(context.get(), EVP_sha256(), nullptr) != 1) {
+            return std::unexpected("cannot initialize SHA-256");
+        }
+
+        std::array<char, 64 * 1024> buffer{};
+        while (input) {
+            input.read(buffer.data(), buffer.size());
+            const auto count = input.gcount();
+            if (count > 0 &&
+                EVP_DigestUpdate(
+                    context.get(), buffer.data(), static_cast<size_t>(count)
+                ) != 1) {
+                return std::unexpected("cannot update SHA-256");
+            }
+        }
+        if (!input.eof())
+            return std::unexpected("cannot read file for SHA-256");
+
+        std::array<unsigned char, EVP_MAX_MD_SIZE> digest{};
+        unsigned int digest_size = 0;
+        if (EVP_DigestFinal_ex(context.get(), digest.data(), &digest_size) !=
+                1 ||
+            digest_size != 32) {
+            return std::unexpected("cannot finalize SHA-256");
+        }
+
+        const auto after = fingerprint_file(path);
+        if (!after)
+            return std::unexpected(after.error());
+        if (*before != *after)
+            return std::unexpected("file changed while calculating SHA-256");
+
+        auto output = *after;
+        output.sha256_.reserve(digest_size * 2);
+        for (unsigned int i = 0; i < digest_size; ++i)
+            output.sha256_ += std::format("{:02x}", digest[i]);
+        return output;
     }
 
     std::vector<std::string> searchable_tags_from_analysis(
@@ -104,9 +221,9 @@ namespace sung {
         stable.erase("path");
         const auto input = std::format(
             "{}\n{}\n{}\n{}\n{}",
-            record.logical_path_,
+            record.input_kind_,
             record.input_size_,
-            record.input_modified_time_,
+            record.input_sha256_,
             record.analyzer_fingerprint_,
             stable.dump()
         );
@@ -123,7 +240,7 @@ namespace sung {
             "{}\n{}\n{}\n{}\n{:.17g}\n{}",
             record.analysis_id_,
             record.input_size_,
-            record.input_modified_time_,
+            record.input_sha256_,
             pixel_format,
             quality,
             speed
@@ -137,17 +254,18 @@ namespace sung {
 
     nlohmann::json make_tag_sidecar_json(const TagAnalysisRecord& record) {
         auto output = ::analysis_payload(record);
-        output["logicalPath"] = record.logical_path_;
+        output["schemaVersion"] = 2;
         output["input"] = {
-            { "path", record.input_path_ },
+            { "kind", record.input_kind_ },
             { "size", record.input_size_ },
-            { "modifiedTime", record.input_modified_time_ },
+            { "modifiedTimeUnixNs", record.input_modified_time_ },
+            { "sha256", record.input_sha256_ },
         };
         if (!record.proxy_path_.empty()) {
             output["proxy"] = {
-                { "path", record.proxy_path_ },
                 { "size", record.proxy_size_ },
-                { "modifiedTime", record.proxy_modified_time_ },
+                { "modifiedTimeUnixNs", record.proxy_modified_time_ },
+                { "sha256", record.proxy_sha256_ },
                 { "materializationId", record.proxy_materialization_id_ },
             };
         }
@@ -158,7 +276,7 @@ namespace sung {
         const nlohmann::json& value, const Path& sidecar_path
     ) {
         try {
-            if (!value.is_object() || value.at("schemaVersion").get<int>() != 1)
+            if (!value.is_object() || value.at("schemaVersion").get<int>() != 2)
                 return std::unexpected("unsupported sidecar schema version");
 
             const auto source = sprintboard_tag_sidecar_source_path(
@@ -168,17 +286,22 @@ namespace sung {
                 return std::unexpected("invalid sidecar filename");
 
             TagAnalysisRecord output;
-            output.logical_path_ = value.at("logicalPath").get<std::string>();
-            if (output.logical_path_ != detail::logical_image_key(*source))
-                return std::unexpected(
-                    "sidecar logical path does not match filename"
-                );
+            output.logical_path_ = detail::logical_image_key(*source);
 
             const auto& input = value.at("input");
-            output.input_path_ = input.at("path").get<std::string>();
+            output.input_kind_ = input.at("kind").get<std::string>();
+            if (output.input_kind_ == "source")
+                output.input_path_ = tostr(*source);
+            else if (output.input_kind_ == "proxy")
+                output.input_path_ = tostr(
+                    make_sprintboard_proxy_path(*source)
+                );
+            else
+                return std::unexpected("invalid sidecar input kind");
             output.input_size_ = input.at("size").get<int64_t>();
             output.input_modified_time_ =
-                input.at("modifiedTime").get<int64_t>();
+                input.at("modifiedTimeUnixNs").get<int64_t>();
+            output.input_sha256_ = input.at("sha256").get<std::string>();
             output.analysis_id_ = value.at("analysisId").get<std::string>();
             output.analyzer_fingerprint_ =
                 value.at("analyzerFingerprint").get<std::string>();
@@ -193,10 +316,10 @@ namespace sung {
                 { "generalTags", value.at("generalTags") },
                 { "characterTags", value.at("characterTags") },
             };
-            if (output.logical_path_.empty() ||
-                !::is_absolute_normalized_path(output.logical_path_) ||
-                !::is_absolute_normalized_path(output.input_path_) ||
-                output.input_size_ <= 0 || output.analysis_id_.empty() ||
+            if (output.logical_path_.empty() || output.input_size_ <= 0 ||
+                output.input_modified_time_ <= 0 ||
+                !::is_sha256(output.input_sha256_) ||
+                output.analysis_id_.empty() ||
                 output.analyzer_fingerprint_.empty() ||
                 !std::isfinite(output.general_threshold_) ||
                 !std::isfinite(output.character_threshold_) ||
@@ -218,14 +341,18 @@ namespace sung {
 
             if (value.contains("proxy")) {
                 const auto& proxy = value.at("proxy");
-                output.proxy_path_ = proxy.at("path").get<std::string>();
+                output.proxy_path_ = tostr(
+                    make_sprintboard_proxy_path(*source)
+                );
                 output.proxy_size_ = proxy.at("size").get<int64_t>();
                 output.proxy_modified_time_ =
-                    proxy.at("modifiedTime").get<int64_t>();
+                    proxy.at("modifiedTimeUnixNs").get<int64_t>();
+                output.proxy_sha256_ = proxy.at("sha256").get<std::string>();
                 output.proxy_materialization_id_ =
                     proxy.at("materializationId").get<std::string>();
-                if (!::is_absolute_normalized_path(output.proxy_path_) ||
-                    output.proxy_size_ <= 0 ||
+                if (output.proxy_size_ <= 0 ||
+                    output.proxy_modified_time_ <= 0 ||
+                    !::is_sha256(output.proxy_sha256_) ||
                     output.proxy_materialization_id_.empty()) {
                     return std::unexpected("invalid sidecar proxy fields");
                 }

@@ -23,10 +23,13 @@ namespace {
     sung::TagAnalysisRecord make_analysis(const sung::Path& source) {
         sung::TagAnalysisRecord output;
         output.logical_path_ = sung::detail::logical_image_key(source);
+        output.input_kind_ = "source";
         output.input_path_ = sung::tostr(source);
-        const auto fingerprint = sung::fingerprint_file(source).value();
+        const auto fingerprint =
+            sung::fingerprint_file_with_sha256(source).value();
         output.input_size_ = fingerprint.size_;
         output.input_modified_time_ = fingerprint.modified_time_;
+        output.input_sha256_ = fingerprint.sha256_;
         output.analyzer_fingerprint_ = "walker-analyzer";
         output.model_id_ = "walker-model";
         output.general_threshold_ = 0.35;

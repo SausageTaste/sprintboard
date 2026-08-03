@@ -74,7 +74,7 @@ namespace sung::detail {
 
 namespace {
 
-    constexpr int DATABASE_SCHEMA_VERSION = 4;
+    constexpr int DATABASE_SCHEMA_VERSION = 5;
     constexpr int64_t NANOSECONDS_PER_SECOND = 1'000'000'000;
 
 
@@ -265,6 +265,26 @@ namespace {
         return static_cast<int64_t>(std::min<uintmax_t>(
             value, static_cast<uintmax_t>(std::numeric_limits<int64_t>::max())
         ));
+    }
+
+    std::optional<sung::FileFingerprint> validate_fingerprint(
+        const sung::Path& path,
+        const int64_t expected_size,
+        const int64_t expected_modified_time,
+        const std::string& expected_sha256
+    ) {
+        const auto metadata = sung::fingerprint_file(path);
+        if (!metadata || metadata->size_ != expected_size)
+            return std::nullopt;
+        if (metadata->modified_time_ == expected_modified_time) {
+            auto output = *metadata;
+            output.sha256_ = expected_sha256;
+            return output;
+        }
+        const auto fingerprint = sung::fingerprint_file_with_sha256(path);
+        if (!fingerprint || fingerprint->sha256_ != expected_sha256)
+            return std::nullopt;
+        return *fingerprint;
     }
 
     std::string make_path_key(const sung::Path& path) {
@@ -489,9 +509,11 @@ public:
         const char* create_tag_table =
             "CREATE TABLE IF NOT EXISTS image_tag_analysis ("
             "logical_path TEXT PRIMARY KEY,"
+            "input_kind TEXT NOT NULL DEFAULT '',"
             "input_path TEXT NOT NULL DEFAULT '',"
             "input_size INTEGER NOT NULL DEFAULT 0,"
             "input_modified_time INTEGER NOT NULL DEFAULT 0,"
+            "input_sha256 TEXT NOT NULL DEFAULT '',"
             "analyzer_fingerprint TEXT NOT NULL DEFAULT '',"
             "model_id TEXT NOT NULL DEFAULT '',"
             "general_threshold REAL NOT NULL DEFAULT 0,"
@@ -510,47 +532,37 @@ public:
             "proxy_path TEXT NOT NULL DEFAULT '',"
             "proxy_size INTEGER NOT NULL DEFAULT 0,"
             "proxy_modified_time INTEGER NOT NULL DEFAULT 0,"
+            "proxy_sha256 TEXT NOT NULL DEFAULT '',"
             "proxy_materialization_id TEXT NOT NULL DEFAULT ''"
             ");";
 
         if (schema_version == 2) {
             if (!execute_sql(database_, "BEGIN IMMEDIATE;") ||
                 !execute_sql(database_, create_tag_table) ||
-                !execute_sql(database_, "PRAGMA user_version=4;") ||
+                !execute_sql(database_, "PRAGMA user_version=5;") ||
                 !execute_sql(database_, "COMMIT;")) {
                 execute_sql(database_, "ROLLBACK;");
                 sqlite3_close(database_);
                 database_ = nullptr;
                 return;
             }
-            schema_version = 4;
+            schema_version = 5;
         }
 
-        if (schema_version == 3) {
-            if (!execute_sql(
-                    database_,
-                    "BEGIN IMMEDIATE;"
-                    "ALTER TABLE image_tag_analysis ADD COLUMN analysis_id "
-                    "TEXT NOT NULL DEFAULT '';"
-                    "ALTER TABLE image_tag_analysis ADD COLUMN sidecar_path "
-                    "TEXT NOT NULL DEFAULT '';"
-                    "ALTER TABLE image_tag_analysis ADD COLUMN proxy_path "
-                    "TEXT NOT NULL DEFAULT '';"
-                    "ALTER TABLE image_tag_analysis ADD COLUMN proxy_size "
-                    "INTEGER NOT NULL DEFAULT 0;"
-                    "ALTER TABLE image_tag_analysis ADD COLUMN "
-                    "proxy_modified_time INTEGER NOT NULL DEFAULT 0;"
-                    "ALTER TABLE image_tag_analysis ADD COLUMN "
-                    "proxy_materialization_id TEXT NOT NULL DEFAULT '';"
-                    "PRAGMA user_version=4;"
-                    "COMMIT;"
-                )) {
+        if (schema_version == 3 || schema_version == 4) {
+            if (!execute_sql(database_, "BEGIN IMMEDIATE;") ||
+                !execute_sql(
+                    database_, "DROP TABLE IF EXISTS image_tag_analysis;"
+                ) ||
+                !execute_sql(database_, create_tag_table) ||
+                !execute_sql(database_, "PRAGMA user_version=5;") ||
+                !execute_sql(database_, "COMMIT;")) {
                 execute_sql(database_, "ROLLBACK;");
                 sqlite3_close(database_);
                 database_ = nullptr;
                 return;
             }
-            schema_version = 4;
+            schema_version = 5;
         }
 
         if (schema_version != DATABASE_SCHEMA_VERSION) {
@@ -572,7 +584,7 @@ public:
                     ");"
                 ) ||
                 !execute_sql(database_, create_tag_table) ||
-                !execute_sql(database_, "PRAGMA user_version=4;") ||
+                !execute_sql(database_, "PRAGMA user_version=5;") ||
                 !execute_sql(database_, "COMMIT;")) {
                 execute_sql(database_, "ROLLBACK;");
                 sqlite3_close(database_);
@@ -660,14 +672,15 @@ public:
 
         sqlite3_stmt* statement = nullptr;
         const char* query =
-            "SELECT logical_path, input_path, input_size, "
-            "input_modified_time, analyzer_fingerprint, model_id, "
+            "SELECT logical_path, input_kind, input_path, input_size, "
+            "input_modified_time, input_sha256, analyzer_fingerprint, "
+            "model_id, "
             "general_threshold, character_threshold, analysis_json, "
             "analyzed_at, attempt_input_path, attempt_input_size, "
             "attempt_input_modified_time, attempt_analyzer_fingerprint, "
             "last_attempt_at, failure_count, last_error, analysis_id, "
             "sidecar_path, proxy_path, proxy_size, proxy_modified_time, "
-            "proxy_materialization_id "
+            "proxy_sha256, proxy_materialization_id "
             "FROM image_tag_analysis;";
         if (sqlite3_prepare_v2(database_, query, -1, &statement, nullptr) !=
             SQLITE_OK) {
@@ -683,21 +696,27 @@ public:
             analysis.logical_path_ = reinterpret_cast<const char*>(
                 sqlite3_column_text(statement, 0)
             );
-            analysis.input_path_ = reinterpret_cast<const char*>(
+            analysis.input_kind_ = reinterpret_cast<const char*>(
                 sqlite3_column_text(statement, 1)
             );
-            analysis.input_size_ = sqlite3_column_int64(statement, 2);
-            analysis.input_modified_time_ = sqlite3_column_int64(statement, 3);
-            analysis.analyzer_fingerprint_ = reinterpret_cast<const char*>(
-                sqlite3_column_text(statement, 4)
+            analysis.input_path_ = reinterpret_cast<const char*>(
+                sqlite3_column_text(statement, 2)
             );
-            analysis.model_id_ = reinterpret_cast<const char*>(
+            analysis.input_size_ = sqlite3_column_int64(statement, 3);
+            analysis.input_modified_time_ = sqlite3_column_int64(statement, 4);
+            analysis.input_sha256_ = reinterpret_cast<const char*>(
                 sqlite3_column_text(statement, 5)
             );
-            analysis.general_threshold_ = sqlite3_column_double(statement, 6);
-            analysis.character_threshold_ = sqlite3_column_double(statement, 7);
+            analysis.analyzer_fingerprint_ = reinterpret_cast<const char*>(
+                sqlite3_column_text(statement, 6)
+            );
+            analysis.model_id_ = reinterpret_cast<const char*>(
+                sqlite3_column_text(statement, 7)
+            );
+            analysis.general_threshold_ = sqlite3_column_double(statement, 8);
+            analysis.character_threshold_ = sqlite3_column_double(statement, 9);
             const auto* json_text = reinterpret_cast<const char*>(
-                sqlite3_column_text(statement, 8)
+                sqlite3_column_text(statement, 10)
             );
             if (json_text && *json_text) {
                 try {
@@ -708,41 +727,40 @@ public:
                     analysis.analysis_ = nlohmann::json{};
                 }
             }
-            analysis.analyzed_at_ = sqlite3_column_int64(statement, 9);
+            analysis.analyzed_at_ = sqlite3_column_int64(statement, 11);
             analysis.attempt_input_path_ = reinterpret_cast<const char*>(
-                sqlite3_column_text(statement, 10)
+                sqlite3_column_text(statement, 12)
             );
-            analysis.attempt_input_size_ = sqlite3_column_int64(statement, 11);
+            analysis.attempt_input_size_ = sqlite3_column_int64(statement, 13);
             analysis.attempt_input_modified_time_ = sqlite3_column_int64(
-                statement, 12
+                statement, 14
             );
             analysis.attempt_analyzer_fingerprint_ =
                 reinterpret_cast<const char*>(
-                    sqlite3_column_text(statement, 13)
+                    sqlite3_column_text(statement, 15)
                 );
-            analysis.last_attempt_at_ = sqlite3_column_int64(statement, 14);
-            analysis.failure_count_ = sqlite3_column_int(statement, 15);
+            analysis.last_attempt_at_ = sqlite3_column_int64(statement, 16);
+            analysis.failure_count_ = sqlite3_column_int(statement, 17);
             analysis.last_error_ = reinterpret_cast<const char*>(
-                sqlite3_column_text(statement, 16)
-            );
-            analysis.analysis_id_ = reinterpret_cast<const char*>(
-                sqlite3_column_text(statement, 17)
-            );
-            analysis.sidecar_path_ = reinterpret_cast<const char*>(
                 sqlite3_column_text(statement, 18)
             );
-            analysis.proxy_path_ = reinterpret_cast<const char*>(
+            analysis.analysis_id_ = reinterpret_cast<const char*>(
                 sqlite3_column_text(statement, 19)
             );
-            analysis.proxy_size_ = sqlite3_column_int64(statement, 20);
-            analysis.proxy_modified_time_ = sqlite3_column_int64(statement, 21);
-            analysis.proxy_materialization_id_ = reinterpret_cast<const char*>(
-                sqlite3_column_text(statement, 22)
+            analysis.sidecar_path_ = reinterpret_cast<const char*>(
+                sqlite3_column_text(statement, 20)
             );
-            if (analysis.analysis_id_.empty() &&
-                !analysis.analysis_.is_null()) {
-                analysis.analysis_id_ = sung::make_analysis_id(analysis);
-            }
+            analysis.proxy_path_ = reinterpret_cast<const char*>(
+                sqlite3_column_text(statement, 21)
+            );
+            analysis.proxy_size_ = sqlite3_column_int64(statement, 22);
+            analysis.proxy_modified_time_ = sqlite3_column_int64(statement, 23);
+            analysis.proxy_sha256_ = reinterpret_cast<const char*>(
+                sqlite3_column_text(statement, 24)
+            );
+            analysis.proxy_materialization_id_ = reinterpret_cast<const char*>(
+                sqlite3_column_text(statement, 25)
+            );
             tag_analyses_.insert_or_assign(
                 analysis.logical_path_, std::move(analysis)
             );
@@ -840,19 +858,22 @@ public:
 
         const char* sql =
             "INSERT INTO image_tag_analysis ("
-            "logical_path, input_path, input_size, input_modified_time, "
-            "analyzer_fingerprint, model_id, general_threshold, "
+            "logical_path, input_kind, input_path, input_size, "
+            "input_modified_time, input_sha256, analyzer_fingerprint, "
+            "model_id, general_threshold, "
             "character_threshold, analysis_json, analyzed_at, "
             "attempt_input_path, attempt_input_size, "
             "attempt_input_modified_time, attempt_analyzer_fingerprint, "
             "last_attempt_at, failure_count, last_error, analysis_id, "
             "sidecar_path, proxy_path, proxy_size, proxy_modified_time, "
-            "proxy_materialization_id"
+            "proxy_sha256, proxy_materialization_id"
             ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-            "?, ?, ?, ?, ?, ?) "
+            "?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(logical_path) DO UPDATE SET "
-            "input_path=excluded.input_path, input_size=excluded.input_size, "
+            "input_kind=excluded.input_kind, input_path=excluded.input_path, "
+            "input_size=excluded.input_size, "
             "input_modified_time=excluded.input_modified_time, "
+            "input_sha256=excluded.input_sha256, "
             "analyzer_fingerprint=excluded.analyzer_fingerprint, "
             "model_id=excluded.model_id, "
             "general_threshold=excluded.general_threshold, "
@@ -872,6 +893,7 @@ public:
             "sidecar_path=excluded.sidecar_path, "
             "proxy_path=excluded.proxy_path, proxy_size=excluded.proxy_size, "
             "proxy_modified_time=excluded.proxy_modified_time, "
+            "proxy_sha256=excluded.proxy_sha256, "
             "proxy_materialization_id=excluded.proxy_materialization_id;";
 
         sqlite3_stmt* statement = nullptr;
@@ -889,28 +911,31 @@ public:
             );
         };
         bind_text(1, item.logical_path_);
-        bind_text(2, item.input_path_);
-        sqlite3_bind_int64(statement, 3, item.input_size_);
-        sqlite3_bind_int64(statement, 4, item.input_modified_time_);
-        bind_text(5, item.analyzer_fingerprint_);
-        bind_text(6, item.model_id_);
-        sqlite3_bind_double(statement, 7, item.general_threshold_);
-        sqlite3_bind_double(statement, 8, item.character_threshold_);
-        bind_text(9, analysis_json);
-        sqlite3_bind_int64(statement, 10, item.analyzed_at_);
-        bind_text(11, item.attempt_input_path_);
-        sqlite3_bind_int64(statement, 12, item.attempt_input_size_);
-        sqlite3_bind_int64(statement, 13, item.attempt_input_modified_time_);
-        bind_text(14, item.attempt_analyzer_fingerprint_);
-        sqlite3_bind_int64(statement, 15, item.last_attempt_at_);
-        sqlite3_bind_int(statement, 16, item.failure_count_);
-        bind_text(17, item.last_error_);
-        bind_text(18, item.analysis_id_);
-        bind_text(19, item.sidecar_path_);
-        bind_text(20, item.proxy_path_);
-        sqlite3_bind_int64(statement, 21, item.proxy_size_);
-        sqlite3_bind_int64(statement, 22, item.proxy_modified_time_);
-        bind_text(23, item.proxy_materialization_id_);
+        bind_text(2, item.input_kind_);
+        bind_text(3, item.input_path_);
+        sqlite3_bind_int64(statement, 4, item.input_size_);
+        sqlite3_bind_int64(statement, 5, item.input_modified_time_);
+        bind_text(6, item.input_sha256_);
+        bind_text(7, item.analyzer_fingerprint_);
+        bind_text(8, item.model_id_);
+        sqlite3_bind_double(statement, 9, item.general_threshold_);
+        sqlite3_bind_double(statement, 10, item.character_threshold_);
+        bind_text(11, analysis_json);
+        sqlite3_bind_int64(statement, 12, item.analyzed_at_);
+        bind_text(13, item.attempt_input_path_);
+        sqlite3_bind_int64(statement, 14, item.attempt_input_size_);
+        sqlite3_bind_int64(statement, 15, item.attempt_input_modified_time_);
+        bind_text(16, item.attempt_analyzer_fingerprint_);
+        sqlite3_bind_int64(statement, 17, item.last_attempt_at_);
+        sqlite3_bind_int(statement, 18, item.failure_count_);
+        bind_text(19, item.last_error_);
+        bind_text(20, item.analysis_id_);
+        bind_text(21, item.sidecar_path_);
+        bind_text(22, item.proxy_path_);
+        sqlite3_bind_int64(statement, 23, item.proxy_size_);
+        sqlite3_bind_int64(statement, 24, item.proxy_modified_time_);
+        bind_text(25, item.proxy_sha256_);
+        bind_text(26, item.proxy_materialization_id_);
 
         const auto success = sqlite3_step(statement) == SQLITE_DONE;
         sqlite3_finalize(statement);
@@ -1124,21 +1149,64 @@ public:
                         }
                         if (existing->second.analysis_id_ ==
                                 parsed->analysis_id_ &&
+                            existing->second.input_sha256_ ==
+                                parsed->input_sha256_ &&
                             existing->second.sidecar_path_ ==
                                 sung::tostr(sidecar_path) &&
                             existing->second.proxy_path_ ==
                                 parsed->proxy_path_ &&
-                            existing->second.proxy_size_ ==
-                                parsed->proxy_size_ &&
-                            existing->second.proxy_modified_time_ ==
-                                parsed->proxy_modified_time_ &&
+                            existing->second.proxy_sha256_ ==
+                                parsed->proxy_sha256_ &&
                             existing->second.proxy_materialization_id_ ==
                                 parsed->proxy_materialization_id_) {
-                            continue;
+                            const auto input = sung::fingerprint_file(
+                                sung::fromstr(existing->second.input_path_)
+                            );
+                            const bool input_current =
+                                input &&
+                                input->size_ == existing->second.input_size_ &&
+                                input->modified_time_ ==
+                                    existing->second.input_modified_time_;
+                            bool proxy_current = false;
+                            if (!existing->second.proxy_path_.empty()) {
+                                const auto proxy = sung::fingerprint_file(
+                                    sung::fromstr(existing->second.proxy_path_)
+                                );
+                                proxy_current =
+                                    proxy &&
+                                    proxy->size_ ==
+                                        existing->second.proxy_size_ &&
+                                    proxy->modified_time_ ==
+                                        existing->second.proxy_modified_time_;
+                            }
+                            if (input_current || proxy_current)
+                                continue;
                         }
                     }
 
                     auto imported = *parsed;
+                    if (const auto fingerprint = ::validate_fingerprint(
+                            sung::fromstr(imported.input_path_),
+                            imported.input_size_,
+                            imported.input_modified_time_,
+                            imported.input_sha256_
+                        )) {
+                        imported.input_size_ = fingerprint->size_;
+                        imported.input_modified_time_ =
+                            fingerprint->modified_time_;
+                    }
+                    if (!imported.proxy_path_.empty()) {
+                        if (const auto fingerprint = ::validate_fingerprint(
+                                sung::fromstr(imported.proxy_path_),
+                                imported.proxy_size_,
+                                imported.proxy_modified_time_,
+                                imported.proxy_sha256_
+                            )) {
+                            imported.proxy_size_ = fingerprint->size_;
+                            imported.proxy_modified_time_ =
+                                fingerprint->modified_time_;
+                        }
+                    }
                     if (existing != tag_analyses_.end()) {
                         imported.attempt_input_path_ =
                             existing->second.attempt_input_path_;
@@ -1339,14 +1407,14 @@ public:
                                                ? proxy_source->second
                                                : physical_path;
                     entry.tag_input_path_ = sung::tostr(tag_input);
-                    std::error_code tag_stat_error;
-                    entry.tag_input_size_ = get_file_size(
-                        tag_input, tag_stat_error
+                    const auto tag_fingerprint = sung::fingerprint_file(
+                        tag_input
                     );
-                    entry.tag_input_modified_time_ = get_modified_time(
-                        tag_input, tag_stat_error
-                    );
-                    if (tag_stat_error) {
+                    if (tag_fingerprint) {
+                        entry.tag_input_size_ = tag_fingerprint->size_;
+                        entry.tag_input_modified_time_ =
+                            tag_fingerprint->modified_time_;
+                    } else {
                         entry.tag_input_size_ = 0;
                         entry.tag_input_modified_time_ = 0;
                     }
@@ -1534,15 +1602,35 @@ public:
                         continue;
                     }
                 }
-                const bool current_analysis =
+                const auto input_kind = sung::is_sprintboard_proxy_path(
+                                            sung::fromstr(file.tag_input_path_)
+                                        )
+                                            ? "proxy"
+                                            : "source";
+                bool current_analysis =
                     existing != tag_analyses_.end() &&
                     !existing->second.analysis_.is_null() &&
+                    existing->second.input_kind_ == input_kind &&
                     existing->second.input_path_ == file.tag_input_path_ &&
-                    existing->second.input_size_ == file.tag_input_size_ &&
-                    existing->second.input_modified_time_ ==
-                        file.tag_input_modified_time_ &&
                     existing->second.analyzer_fingerprint_ ==
                         info->fingerprint_;
+                if (current_analysis) {
+                    const auto validated = ::validate_fingerprint(
+                        sung::fromstr(file.tag_input_path_),
+                        existing->second.input_size_,
+                        existing->second.input_modified_time_,
+                        existing->second.input_sha256_
+                    );
+                    current_analysis = validated.has_value();
+                    if (validated &&
+                        validated->modified_time_ !=
+                            existing->second.input_modified_time_) {
+                        existing->second.input_size_ = validated->size_;
+                        existing->second.input_modified_time_ =
+                            validated->modified_time_;
+                        persist_tag_analysis(existing->second);
+                    }
+                }
                 if (current_analysis)
                     continue;
 
@@ -1620,16 +1708,30 @@ public:
                 if (current_file == latest_snapshot->files_.end())
                     continue;
 
-                std::error_code stat_error;
-                const auto current_size = get_file_size(
-                    candidate.input_path_, stat_error
+                const auto current = sung::fingerprint_file(
+                    candidate.input_path_
                 );
-                const auto current_modified = get_modified_time(
-                    candidate.input_path_, stat_error
-                );
-                if (stat_error || current_size != candidate.input_size_ ||
-                    current_modified != candidate.input_modified_time_) {
+                if (!current || current->size_ != candidate.input_size_ ||
+                    current->modified_time_ != candidate.input_modified_time_) {
                     continue;
+                }
+
+                std::optional<sung::FileFingerprint> content_fingerprint;
+                if (result.error_.empty()) {
+                    const auto hashed = sung::fingerprint_file_with_sha256(
+                        candidate.input_path_
+                    );
+                    if (!hashed || hashed->size_ != candidate.input_size_ ||
+                        hashed->modified_time_ !=
+                            candidate.input_modified_time_) {
+                        std::println(
+                            "ImageTagger: Input changed while fingerprinting: "
+                            "{}",
+                            sung::tostr(candidate.input_path_)
+                        );
+                        continue;
+                    }
+                    content_fingerprint = *hashed;
                 }
 
                 auto analysis = tag_analyses_[candidate.logical_path_];
@@ -1662,10 +1764,16 @@ public:
                         result.error_
                     );
                 } else {
+                    analysis.input_kind_ = sung::is_sprintboard_proxy_path(
+                                               candidate.input_path_
+                                           )
+                                               ? "proxy"
+                                               : "source";
                     analysis.input_path_ = sung::tostr(candidate.input_path_);
-                    analysis.input_size_ = candidate.input_size_;
+                    analysis.input_size_ = content_fingerprint->size_;
                     analysis.input_modified_time_ =
-                        candidate.input_modified_time_;
+                        content_fingerprint->modified_time_;
+                    analysis.input_sha256_ = content_fingerprint->sha256_;
                     analysis.analyzer_fingerprint_ = info->fingerprint_;
                     analysis.model_id_ = info->model_id_;
                     analysis.general_threshold_ = info->general_threshold_;
@@ -1682,6 +1790,7 @@ public:
                     analysis.proxy_path_.clear();
                     analysis.proxy_size_ = 0;
                     analysis.proxy_modified_time_ = 0;
+                    analysis.proxy_sha256_.clear();
                     analysis.proxy_materialization_id_.clear();
                     analysis.failure_count_ = 0;
                     analysis.last_error_.clear();
@@ -1770,20 +1879,31 @@ public:
         if (found == tag_analyses_.end() || found->second.analysis_.is_null())
             return std::nullopt;
 
-        const auto fingerprint = sung::fingerprint_file(source_path);
-        if (!fingerprint ||
-            found->second.input_path_ != sung::tostr(source_path) ||
-            found->second.input_size_ != fingerprint->size_ ||
-            found->second.input_modified_time_ != fingerprint->modified_time_) {
+        const auto input_kind = sung::is_sprintboard_proxy_path(source_path)
+                                    ? "proxy"
+                                    : "source";
+        if (found->second.input_kind_ != input_kind ||
+            found->second.input_path_ != sung::tostr(source_path)) {
             return std::nullopt;
         }
+        const auto fingerprint = ::validate_fingerprint(
+            source_path,
+            found->second.input_size_,
+            found->second.input_modified_time_,
+            found->second.input_sha256_
+        );
+        if (!fingerprint)
+            return std::nullopt;
         if (require_current_analyzer &&
             !current_analyzer_fingerprint_.empty() &&
             found->second.analyzer_fingerprint_ !=
                 current_analyzer_fingerprint_) {
             return std::nullopt;
         }
-        return found->second;
+        auto output = found->second;
+        output.input_size_ = fingerprint->size_;
+        output.input_modified_time_ = fingerprint->modified_time_;
+        return output;
     }
 
     bool proxy_materialization_current(
@@ -1797,10 +1917,13 @@ public:
             found->second.proxy_path_ != sung::tostr(proxy_path)) {
             return false;
         }
-        const auto fingerprint = sung::fingerprint_file(proxy_path);
-        return fingerprint && found->second.proxy_size_ == fingerprint->size_ &&
-               found->second.proxy_modified_time_ ==
-                   fingerprint->modified_time_;
+        return ::validate_fingerprint(
+                   proxy_path,
+                   found->second.proxy_size_,
+                   found->second.proxy_modified_time_,
+                   found->second.proxy_sha256_
+        )
+            .has_value();
     }
 
     void mark_proxy_materialized(
@@ -1813,7 +1936,7 @@ public:
         const auto found = tag_analyses_.find(logical_path);
         if (found == tag_analyses_.end() || found->second.analysis_.is_null())
             return;
-        const auto fingerprint = sung::fingerprint_file(proxy_path);
+        const auto fingerprint = sung::fingerprint_file_with_sha256(proxy_path);
         if (!fingerprint)
             return;
 
@@ -1821,6 +1944,7 @@ public:
         analysis.proxy_path_ = sung::tostr(proxy_path);
         analysis.proxy_size_ = fingerprint->size_;
         analysis.proxy_modified_time_ = fingerprint->modified_time_;
+        analysis.proxy_sha256_ = fingerprint->sha256_;
         analysis.proxy_materialization_id_ = std::move(materialization_id);
         if (analysis.sidecar_path_.empty()) {
             analysis.sidecar_path_ = sung::tostr(

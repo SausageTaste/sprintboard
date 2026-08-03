@@ -15,15 +15,18 @@ namespace sung {
     struct FileFingerprint {
         int64_t size_ = 0;
         int64_t modified_time_ = 0;
+        std::string sha256_;
 
         bool operator==(const FileFingerprint&) const = default;
     };
 
     struct TagAnalysisRecord {
         std::string logical_path_;
+        std::string input_kind_;
         std::string input_path_;
         int64_t input_size_ = 0;
         int64_t input_modified_time_ = 0;
+        std::string input_sha256_;
         std::string analysis_id_;
         std::string analyzer_fingerprint_;
         std::string model_id_;
@@ -45,10 +48,15 @@ namespace sung {
         std::string proxy_path_;
         int64_t proxy_size_ = 0;
         int64_t proxy_modified_time_ = 0;
+        std::string proxy_sha256_;
         std::string proxy_materialization_id_;
     };
 
     std::expected<FileFingerprint, std::string> fingerprint_file(
+        const Path& path
+    );
+
+    std::expected<FileFingerprint, std::string> fingerprint_file_with_sha256(
         const Path& path
     );
 

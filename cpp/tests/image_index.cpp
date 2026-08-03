@@ -33,7 +33,7 @@ namespace {
         return response.make_json(0, 100)["totalImageCount"].get<size_t>();
     }
 
-    bool downgrade_database_to_version_three(const sung::Path& database_path) {
+    bool mark_database_as_version_four(const sung::Path& database_path) {
         sqlite3* database = nullptr;
         const auto path = sung::tostr(database_path);
         if (sqlite3_open(path.c_str(), &database) != SQLITE_OK) {
@@ -42,48 +42,13 @@ namespace {
         }
 
         const auto result = sqlite3_exec(
-            database,
-            "BEGIN IMMEDIATE;"
-            "ALTER TABLE image_tag_analysis RENAME TO "
-            "image_tag_analysis_v4;"
-            "CREATE TABLE image_tag_analysis ("
-            "logical_path TEXT PRIMARY KEY,"
-            "input_path TEXT NOT NULL DEFAULT '',"
-            "input_size INTEGER NOT NULL DEFAULT 0,"
-            "input_modified_time INTEGER NOT NULL DEFAULT 0,"
-            "analyzer_fingerprint TEXT NOT NULL DEFAULT '',"
-            "model_id TEXT NOT NULL DEFAULT '',"
-            "general_threshold REAL NOT NULL DEFAULT 0,"
-            "character_threshold REAL NOT NULL DEFAULT 0,"
-            "analysis_json TEXT NOT NULL DEFAULT '',"
-            "analyzed_at INTEGER NOT NULL DEFAULT 0,"
-            "attempt_input_path TEXT NOT NULL DEFAULT '',"
-            "attempt_input_size INTEGER NOT NULL DEFAULT 0,"
-            "attempt_input_modified_time INTEGER NOT NULL DEFAULT 0,"
-            "attempt_analyzer_fingerprint TEXT NOT NULL DEFAULT '',"
-            "last_attempt_at INTEGER NOT NULL DEFAULT 0,"
-            "failure_count INTEGER NOT NULL DEFAULT 0,"
-            "last_error TEXT NOT NULL DEFAULT ''"
-            ");"
-            "INSERT INTO image_tag_analysis SELECT logical_path, input_path, "
-            "input_size, input_modified_time, analyzer_fingerprint, model_id, "
-            "general_threshold, character_threshold, analysis_json, "
-            "analyzed_at, attempt_input_path, attempt_input_size, "
-            "attempt_input_modified_time, attempt_analyzer_fingerprint, "
-            "last_attempt_at, failure_count, last_error FROM "
-            "image_tag_analysis_v4;"
-            "DROP TABLE image_tag_analysis_v4;"
-            "PRAGMA user_version=3;"
-            "COMMIT;",
-            nullptr,
-            nullptr,
-            nullptr
+            database, "PRAGMA user_version=4;", nullptr, nullptr, nullptr
         );
         sqlite3_close(database);
         return result == SQLITE_OK;
     }
 
-    bool has_version_four_tag_table(
+    bool has_version_five_tag_table(
         const sung::Path& database_path, const size_t expected_count
     ) {
         sqlite3* database = nullptr;
@@ -119,6 +84,7 @@ namespace {
         }
         sqlite3_finalize(statement);
         bool tag_table_exists = false;
+        size_t tag_count = 0;
         statement = nullptr;
         if (sqlite3_prepare_v2(
                 database,
@@ -132,8 +98,20 @@ namespace {
             tag_table_exists = sqlite3_column_int(statement, 0) == 1;
         }
         sqlite3_finalize(statement);
+        statement = nullptr;
+        if (sqlite3_prepare_v2(
+                database,
+                "SELECT COUNT(*) FROM image_tag_analysis;",
+                -1,
+                &statement,
+                nullptr
+            ) == SQLITE_OK &&
+            sqlite3_step(statement) == SQLITE_ROW) {
+            tag_count = static_cast<size_t>(sqlite3_column_int64(statement, 0));
+        }
+        sqlite3_finalize(statement);
         sqlite3_close(database);
-        return schema_version == 4 && tag_table_exists &&
+        return schema_version == 5 && tag_table_exists && tag_count == 0 &&
                timestamp_count == expected_count;
     }
 
@@ -439,8 +417,8 @@ int main() {
     }
 
     if (!check(
-            downgrade_database_to_version_three(database_path),
-            "creates a version-three migration fixture"
+            mark_database_as_version_four(database_path),
+            "creates a version-four migration fixture"
         )) {
         sung::fs::remove_all(temp);
         return 1;
@@ -456,18 +434,16 @@ int main() {
                 reopened.metadata_indexed_ == 0, "avoids repeated image reads"
             ) ||
             !check(
-                image_count(index, "blue_hair") == 1,
-                "searches persisted analyzed tags"
+                image_count(index, "blue_hair") == 0,
+                "invalidates legacy analyzed tags"
             ) ||
             !check(
-                index.tag_analysis(image_root / "one.avif")
-                        .value_or(nlohmann::json::object())
-                        .at("modelId") == "fixture-model",
-                "returns persisted tags from image details lookup"
+                !index.tag_analysis(image_root / "one.avif"),
+                "removes legacy tag details"
             ) ||
             !check(
-                has_version_four_tag_table(database_path, 2),
-                "migrates the tag cache from schema three to four"
+                has_version_five_tag_table(database_path, 2),
+                "migrates the tag cache to schema five without reindexing"
             )) {
             sung::fs::remove_all(temp);
             return 1;
@@ -807,8 +783,9 @@ int main() {
     sidecar_record.logical_path_ = sung::detail::logical_image_key(
         sidecar_source
     );
+    sidecar_record.input_kind_ = "source";
     sidecar_record.input_path_ = sung::tostr(sidecar_source);
-    const auto sidecar_input_fingerprint = sung::fingerprint_file(
+    const auto sidecar_input_fingerprint = sung::fingerprint_file_with_sha256(
         sidecar_source
     );
     if (!check(
@@ -821,6 +798,7 @@ int main() {
     sidecar_record.input_size_ = sidecar_input_fingerprint->size_;
     sidecar_record.input_modified_time_ =
         sidecar_input_fingerprint->modified_time_;
+    sidecar_record.input_sha256_ = sidecar_input_fingerprint->sha256_;
     sidecar_record.analyzer_fingerprint_ = "sidecar-analyzer";
     sidecar_record.model_id_ = "sidecar-model";
     sidecar_record.general_threshold_ = 0.35;
@@ -840,11 +818,91 @@ int main() {
     sidecar_record.searchable_tags_ = { "sidecar_tag" };
     sidecar_record.analysis_id_ = sung::make_analysis_id(sidecar_record);
     sidecar_record.sidecar_path_ = sung::tostr(sidecar_path);
-    auto malformed_sidecar = sung::make_tag_sidecar_json(sidecar_record);
+    const auto sidecar_proxy_fingerprint = sung::fingerprint_file_with_sha256(
+        sidecar_proxy
+    );
+    if (!check(
+            sidecar_proxy_fingerprint.has_value(),
+            "fingerprints a sidecar proxy"
+        )) {
+        sung::fs::remove_all(temp);
+        return 1;
+    }
+    sidecar_record.proxy_path_ = sung::tostr(sidecar_proxy);
+    sidecar_record.proxy_size_ = sidecar_proxy_fingerprint->size_;
+    sidecar_record.proxy_modified_time_ =
+        sidecar_proxy_fingerprint->modified_time_;
+    sidecar_record.proxy_sha256_ = sidecar_proxy_fingerprint->sha256_;
+    sidecar_record.proxy_materialization_id_ = "portable-proxy";
+
+    const auto serialized_sidecar = sung::make_tag_sidecar_json(sidecar_record);
+    const auto serialized_text = serialized_sidecar.dump();
+    auto relocated_identity = sidecar_record;
+    relocated_identity.logical_path_ = "D:/different/root/tagged.png";
+    relocated_identity.input_path_ = "D:/different/root/tagged.png";
+    auto legacy_sidecar = serialized_sidecar;
+    legacy_sidecar["schemaVersion"] = 1;
+    auto malformed_sidecar = serialized_sidecar;
     malformed_sidecar["generalTags"][0]["confidence"] = 2.0;
     if (!check(
+            serialized_sidecar["schemaVersion"] == 2 &&
+                !serialized_sidecar.contains("logicalPath") &&
+                !serialized_sidecar["input"].contains("path") &&
+                !serialized_sidecar["proxy"].contains("path") &&
+                !serialized_text.contains(sung::tostr(sidecar_root)),
+            "serializes a path-independent version-two sidecar"
+        ) ||
+        !check(
+            sung::make_analysis_id(relocated_identity) ==
+                sidecar_record.analysis_id_,
+            "keeps the analysis ID stable across absolute paths"
+        ) ||
+        !check(
+            !sung::parse_tag_sidecar_json(legacy_sidecar, sidecar_path),
+            "rejects a legacy version-one sidecar"
+        ) ||
+        !check(
             !sung::parse_tag_sidecar_json(malformed_sidecar, sidecar_path),
             "rejects an out-of-range sidecar confidence"
+        )) {
+        sung::fs::remove_all(temp);
+        return 1;
+    }
+    auto invalid_digest = serialized_sidecar;
+    invalid_digest["input"]["sha256"] = "not-a-digest";
+    auto invalid_kind = serialized_sidecar;
+    invalid_kind["input"]["kind"] = "remote";
+    auto invalid_timestamp = serialized_sidecar;
+    invalid_timestamp["input"]["modifiedTimeUnixNs"] = 0;
+    auto proxy_input_record = sidecar_record;
+    proxy_input_record.input_kind_ = "proxy";
+    proxy_input_record.input_path_ = sung::tostr(sidecar_proxy);
+    proxy_input_record.input_size_ = sidecar_proxy_fingerprint->size_;
+    proxy_input_record.input_modified_time_ =
+        sidecar_proxy_fingerprint->modified_time_;
+    proxy_input_record.input_sha256_ = sidecar_proxy_fingerprint->sha256_;
+    proxy_input_record.analysis_id_ = sung::make_analysis_id(
+        proxy_input_record
+    );
+    const auto parsed_proxy_input = sung::parse_tag_sidecar_json(
+        sung::make_tag_sidecar_json(proxy_input_record), sidecar_path
+    );
+    if (!check(
+            !sung::parse_tag_sidecar_json(invalid_digest, sidecar_path),
+            "rejects an invalid sidecar digest"
+        ) ||
+        !check(
+            !sung::parse_tag_sidecar_json(invalid_kind, sidecar_path),
+            "rejects an invalid sidecar input kind"
+        ) ||
+        !check(
+            !sung::parse_tag_sidecar_json(invalid_timestamp, sidecar_path),
+            "rejects an invalid sidecar timestamp"
+        ) ||
+        !check(
+            parsed_proxy_input &&
+                parsed_proxy_input->input_path_ == sung::tostr(sidecar_proxy),
+            "derives a proxy input path from the sidecar filename"
         )) {
         sung::fs::remove_all(temp);
         return 1;
@@ -871,10 +929,92 @@ int main() {
                 "accepts current sidecar analysis for proxy generation"
             ) ||
             !check(
+                index.proxy_materialization_current(
+                    sidecar_proxy, "portable-proxy"
+                ),
+                "accepts a current sidecar proxy fingerprint"
+            ) ||
+            !check(
                 details &&
                     details->at("analysisId") == sidecar_record.analysis_id_ &&
                     !details->at("sourceMissing").get<bool>(),
                 "returns imported sidecar details"
+            )) {
+            sung::fs::remove_all(temp);
+            return 1;
+        }
+    }
+
+    const auto relocated_root = temp / "relocated-sidecar-images";
+    const auto relocated_source = relocated_root / sidecar_source.filename();
+    const auto relocated_proxy = sung::make_sprintboard_proxy_path(
+        relocated_source
+    );
+    const auto relocated_sidecar = sung::make_sprintboard_tag_sidecar_path(
+        relocated_source
+    );
+    const auto relocated_database = temp / "relocated-sidecar.sqlite3";
+    sung::fs::create_directories(relocated_root);
+    sung::fs::copy_file(sidecar_source, relocated_source);
+    sung::fs::copy_file(sidecar_proxy, relocated_proxy);
+    sung::fs::copy_file(sidecar_path, relocated_sidecar);
+    std::error_code relocated_time_error;
+    sung::fs::last_write_time(
+        relocated_source,
+        sung::fs::last_write_time(relocated_source) + std::chrono::seconds{ 2 },
+        relocated_time_error
+    );
+    const auto relocated_configs = make_configs(relocated_root);
+    {
+        sung::ImageIndex index{ relocated_database };
+        index.initialize(relocated_configs);
+        if (!check(
+                !relocated_time_error,
+                "changes relocated source metadata without changing content"
+            ) ||
+            !check(
+                index.current_tag_analysis(relocated_source).has_value(),
+                "reuses analysis after relocation and timestamp change"
+            ) ||
+            !check(
+                index.proxy_materialization_current(
+                    relocated_proxy, "portable-proxy"
+                ),
+                "reuses proxy materialization after relocation"
+            )) {
+            sung::fs::remove_all(temp);
+            return 1;
+        }
+    }
+
+    {
+        sung::ImageIndex index{ relocated_database };
+        index.initialize(relocated_configs);
+        if (!check(
+                index.current_tag_analysis(relocated_source).has_value(),
+                "reuses cached local validation after restart"
+            )) {
+            sung::fs::remove_all(temp);
+            return 1;
+        }
+        auto changed_bytes = sung::read_file(relocated_source);
+        changed_bytes.back() ^= 0xff;
+        if (!check(
+                sung::write_file(relocated_source, changed_bytes),
+                "changes relocated source content without changing its size"
+            )) {
+            sung::fs::remove_all(temp);
+            return 1;
+        }
+        sung::fs::last_write_time(
+            relocated_source,
+            sung::fs::last_write_time(relocated_source) +
+                std::chrono::seconds{ 2 },
+            relocated_time_error
+        );
+        if (!check(
+                !index.current_tag_analysis(relocated_source),
+                "rejects same-sized content with a different digest"
             )) {
             sung::fs::remove_all(temp);
             return 1;

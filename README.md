@@ -195,18 +195,25 @@ image.png.sprintboard.tags.json
 image.png.sprintboard.avif
 ```
 
-The versioned sidecar records the logical path, analyzed-input fingerprint,
-deterministic analysis ID, analyzer metadata, scored ratings/general/character
-groups, and the optional materialized-proxy fingerprint. Sidecars are written
-atomically. SQLite schema v4 caches the same successful result for fast search,
+The versioned sidecar records a location-independent analyzed-input
+fingerprint, deterministic analysis ID, analyzer metadata, scored
+ratings/general/character groups, and the optional materialized-proxy
+fingerprint. Source and proxy paths are derived from the adjacent sidecar
+filename, so a shared image directory can be mounted at different absolute
+paths on macOS and Windows. Sidecars are written atomically. SQLite schema v5
+caches the same successful result with machine-local paths for fast search,
 along with retry and proxy state. A valid sidecar can rebuild the cache; when a
 directory is read-only, a database-only result can still authorize generation.
 
 ```json
 {
-  "schemaVersion": 1,
-  "logicalPath": "/absolute/normalized/path/image.png",
-  "input": { "path": "/absolute/normalized/path/image.png", "size": 1234, "modifiedTime": 5678 },
+  "schemaVersion": 2,
+  "input": {
+    "kind": "source",
+    "size": 1234,
+    "modifiedTimeUnixNs": 5678,
+    "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  },
   "analysisId": "deterministic-id",
   "analyzerFingerprint": "model-and-threshold-fingerprint",
   "modelId": "SmilingWolf/wd-eva02-large-tagger-v3",
@@ -218,6 +225,12 @@ directory is read-only, a database-only result can still authorize generation.
   "characterTags": []
 }
 ```
+
+Size and the portable Unix timestamp provide the normal validation fast path.
+If an unchanged file receives a different timestamp while being copied or
+synchronized, Sprintboard verifies its SHA-256 digest before reusing the
+analysis. Schema-v1 sidecars and tag-cache records are intentionally retagged
+because their absolute paths and filesystem-clock values are machine-specific.
 
 The AVIF encoder embeds the scored analysis as a Sprintboard-specific
 `tagAnalysis` JSON value in XMP while encoding directly from the source PNG.
