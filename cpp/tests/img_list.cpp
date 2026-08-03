@@ -124,6 +124,20 @@ namespace {
         return response;
     }
 
+    sung::ImageListResponse make_folder_response(
+        const sung::ImageSortOrder sort_order
+    ) {
+        sung::ImageListResponse response;
+        response.add_dir("banana", sung::fromstr("folders/banana"), 200);
+        response.add_dir("alpha", sung::fromstr("folders/z/alpha"), 300);
+        response.add_dir("Alpha", sung::fromstr("folders/Alpha"), 300);
+        response.add_dir("alpha", sung::fromstr("folders/a/alpha"), 400);
+        response.add_dir("undated", sung::fromstr("folders/undated"));
+        response.add_dir("banana", sung::fromstr("folders/banana"), 500);
+        response.sort(sort_order);
+        return response;
+    }
+
     bool check_page(
         const nlohmann::json& page,
         const size_t expected_size,
@@ -192,6 +206,74 @@ int main() {
         !check(
             timestamp_files[1]["sortTimeMs"].is_null(),
             "serializes unavailable sort time as null"
+        )) {
+        return 1;
+    }
+
+    sung::ImageListResponse folder_timestamp_response;
+    folder_timestamp_response.add_dir(
+        "dated", sung::fromstr("folders/dated"), 1'234'567'890
+    );
+    folder_timestamp_response.add_dir(
+        "undated", sung::fromstr("folders/undated")
+    );
+    folder_timestamp_response.sort();
+    const auto timestamp_folders = folder_timestamp_response.make_json(
+        0, 10
+    )["folders"];
+    if (!check(
+            timestamp_folders[0]["sortTimeMs"] == 1234,
+            "serializes folder sort time in milliseconds"
+        ) ||
+        !check(
+            timestamp_folders[1]["sortTimeMs"].is_null(),
+            "serializes unavailable folder sort time as null"
+        )) {
+        return 1;
+    }
+
+    const auto newest_folders = make_folder_response(
+                                    sung::ImageSortOrder::date_desc
+    )
+                                    .make_json(0, 10)["folders"];
+    const auto oldest_folders = make_folder_response(
+                                    sung::ImageSortOrder::date_asc
+    )
+                                    .make_json(0, 10)["folders"];
+    const auto folder_names_ascending = make_folder_response(
+                                            sung::ImageSortOrder::name_asc
+    )
+                                            .make_json(0, 10)["folders"];
+    const auto folder_names_descending = make_folder_response(
+                                             sung::ImageSortOrder::name_desc
+    )
+                                             .make_json(0, 10)["folders"];
+    if (!check(
+            newest_folders[0]["name"] == "banana" &&
+                newest_folders[1]["path"] == "folders/a/alpha" &&
+                newest_folders[4]["name"] == "undated",
+            "sorts folders by newest timestamp and merges duplicate paths"
+        ) ||
+        !check(
+            oldest_folders[0]["name"] == "undated" &&
+                oldest_folders[1]["name"] == "Alpha" &&
+                oldest_folders[2]["path"] == "folders/z/alpha" &&
+                oldest_folders[4]["name"] == "banana",
+            "sorts folders by oldest timestamp with deterministic ties"
+        ) ||
+        !check(
+            folder_names_ascending[0]["name"] == "Alpha" &&
+                folder_names_ascending[1]["path"] == "folders/a/alpha" &&
+                folder_names_ascending[2]["path"] == "folders/z/alpha" &&
+                folder_names_ascending[4]["name"] == "undated",
+            "sorts folder names ascending with deterministic ties"
+        ) ||
+        !check(
+            folder_names_descending[0]["name"] == "undated" &&
+                folder_names_descending[2]["path"] == "folders/z/alpha" &&
+                folder_names_descending[3]["path"] == "folders/a/alpha" &&
+                folder_names_descending[4]["name"] == "Alpha",
+            "sorts folder names descending with deterministic ties"
         )) {
         return 1;
     }

@@ -53,6 +53,35 @@ namespace {
         return 0;
     }
 
+    template <typename Entry>
+    bool entry_before(
+        const Entry& a, const Entry& b, const sung::ImageSortOrder order
+    ) {
+        const bool ascending = order == sung::ImageSortOrder::date_asc ||
+                               order == sung::ImageSortOrder::name_asc;
+
+        if (order == sung::ImageSortOrder::date_desc ||
+            order == sung::ImageSortOrder::date_asc) {
+            if (a.sort_time_ns_ != b.sort_time_ns_) {
+                return ascending ? a.sort_time_ns_ < b.sort_time_ns_
+                                 : a.sort_time_ns_ > b.sort_time_ns_;
+            }
+        } else {
+            const auto name_order = compare_ascii_case_insensitive(
+                a.name_, b.name_
+            );
+            if (name_order != 0)
+                return ascending ? name_order < 0 : name_order > 0;
+        }
+
+        if (a.name_ != b.name_)
+            return ascending ? a.name_ < b.name_ : a.name_ > b.name_;
+
+        const auto a_path = sung::tostr(a.path_);
+        const auto b_path = sung::tostr(b.path_);
+        return ascending ? a_path < b_path : a_path > b_path;
+    }
+
 
     std::string encode_base64url(const std::string_view input) {
         std::string output;
@@ -427,15 +456,18 @@ namespace sung {
     }
 
     void ImageListResponse::add_dir(
-        const std::string& name, const sung::Path& path
+        const std::string& name,
+        const sung::Path& path,
+        const int64_t sort_time_ns
     ) {
         for (auto& x : dirs_) {
             if (x.path_ == path) {
+                x.sort_time_ns_ = std::max(x.sort_time_ns_, sort_time_ns);
                 return;
             }
         }
 
-        dirs_.push_back({ name, path });
+        dirs_.push_back({ name, path, sort_time_ns });
     }
 
     void ImageListResponse::add_file(
@@ -492,37 +524,23 @@ namespace sung {
             }
         );
 
-        std::sort(dirs_.begin(), dirs_.end(), [](const auto& a, const auto& b) {
-            return a.name_ > b.name_;
-        });
+        std::sort(
+            dirs_.begin(), dirs_.end(), [order](const auto& a, const auto& b) {
+                return dir_before(a, b, order);
+            }
+        );
     }
 
     bool ImageListResponse::file_before(
         const FileInfo& a, const FileInfo& b, const ImageSortOrder order
     ) {
-        const bool ascending = order == ImageSortOrder::date_asc ||
-                               order == ImageSortOrder::name_asc;
+        return ::entry_before(a, b, order);
+    }
 
-        if (order == ImageSortOrder::date_desc ||
-            order == ImageSortOrder::date_asc) {
-            if (a.sort_time_ns_ != b.sort_time_ns_) {
-                return ascending ? a.sort_time_ns_ < b.sort_time_ns_
-                                 : a.sort_time_ns_ > b.sort_time_ns_;
-            }
-        } else {
-            const auto name_order = ::compare_ascii_case_insensitive(
-                a.name_, b.name_
-            );
-            if (name_order != 0)
-                return ascending ? name_order < 0 : name_order > 0;
-        }
-
-        if (a.name_ != b.name_)
-            return ascending ? a.name_ < b.name_ : a.name_ > b.name_;
-
-        const auto a_path = sung::tostr(a.path_);
-        const auto b_path = sung::tostr(b.path_);
-        return ascending ? a_path < b_path : a_path > b_path;
+    bool ImageListResponse::dir_before(
+        const DirInfo& a, const DirInfo& b, const ImageSortOrder order
+    ) {
+        return ::entry_before(a, b, order);
     }
 
     nlohmann::json ImageListResponse::make_json(
@@ -593,6 +611,10 @@ namespace sung {
                 auto& dir_obj = dir_array.emplace_back();
                 dir_obj["name"] = dir_info.name_;
                 dir_obj["path"] = sung::tostr(dir_info.path_);
+                dir_obj["sortTimeMs"] =
+                    dir_info.sort_time_ns_ > 0
+                        ? nlohmann::json(dir_info.sort_time_ns_ / 1'000'000)
+                        : nlohmann::json(nullptr);
             }
         }
 

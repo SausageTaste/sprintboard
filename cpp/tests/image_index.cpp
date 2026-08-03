@@ -303,7 +303,18 @@ int main() {
 
         const auto folders = index.query(sung::fromstr("test"), "", true)
                                  .make_json(0, 100)["folders"];
-        if (!check(folders.size() == 1, "indexes child folders")) {
+        const auto namespaces = index.query(sung::fromstr(""), "", false)
+                                    .make_json(0, 100)["folders"];
+        if (!check(folders.size() == 1, "indexes child folders") ||
+            !check(
+                folders[0]["sortTimeMs"].is_number_integer(),
+                "indexes child folder timestamps"
+            ) ||
+            !check(
+                namespaces.size() == 1 &&
+                    namespaces[0]["sortTimeMs"].is_number_integer(),
+                "indexes namespace folder timestamps"
+            )) {
             sung::fs::remove_all(temp);
             return 1;
         }

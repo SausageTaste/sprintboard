@@ -25,6 +25,7 @@ type ImageFileInfo = {
 type FolderInfo = {
     name: string;
     path: string;
+    sortTimeMs?: number | null;
 };
 
 interface ImageListResponse {
@@ -473,20 +474,6 @@ function startViewerGeometryDiagnostics(pswp: PhotoSwipe): () => void {
 }
 
 
-const folderNameCollator = new Intl.Collator(undefined, { numeric: true });
-
-function sortFoldersNaturallyDescending(folders: FolderInfo[]): FolderInfo[] {
-    return [...folders].sort((a, b) => {
-        const naturalOrder = folderNameCollator.compare(b.name, a.name);
-        if (naturalOrder !== 0)
-            return naturalOrder;
-
-        if (a.name === b.name)
-            return 0;
-        return a.name < b.name ? 1 : -1;
-    });
-}
-
 let lockedPageScroll = { x: 0, y: 0 };
 
 function preventViewerPageScroll(event: TouchEvent) {
@@ -549,7 +536,7 @@ async function fetchImageList(
     const data = (await res.json()) as ImageListResponse;
     return {
         ...data,
-        folders: sortFoldersNaturallyDescending(data.folders ?? []),
+        folders: data.folders ?? [],
     };
 }
 
@@ -1507,21 +1494,26 @@ export default function Gallery({ settings, onChangeSettings }: GalleryProps) {
                     </div>
 
                     <div className="gallery-list-folders">
-                        {folders.map(folder => (
-                            <button
-                                key={folder.path}
-                                className="gallery-list-row gallery-list-folder-row"
-                                type="button"
-                                aria-label={`Open folder ${folder.name}`}
-                                onClick={() => navigate(`/images/${folder.path}`)}
-                            >
-                                <span className="gallery-list-thumbnail" aria-hidden="true">
-                                    <span className="gallery-list-folder-icon" />
-                                </span>
-                                <span className="gallery-list-name" title={folder.name}>{folder.name}</span>
-                                <span className="gallery-list-datetime" />
-                            </button>
-                        ))}
+                        {folders.map(folder => {
+                            const dateTime = formatImageDateTime(folder.sortTimeMs);
+                            return (
+                                <button
+                                    key={folder.path}
+                                    className="gallery-list-row gallery-list-folder-row"
+                                    type="button"
+                                    aria-label={`Open folder ${folder.name}${dateTime ? `, ${dateTime.display}` : ""}`}
+                                    onClick={() => navigate(`/images/${folder.path}`)}
+                                >
+                                    <span className="gallery-list-thumbnail" aria-hidden="true">
+                                        <span className="gallery-list-folder-icon" />
+                                    </span>
+                                    <span className="gallery-list-name" title={folder.name}>{folder.name}</span>
+                                    <span className="gallery-list-datetime">
+                                        {dateTime && <time dateTime={dateTime.iso}>{dateTime.display}</time>}
+                                    </span>
+                                </button>
+                            );
+                        })}
                     </div>
 
                     <VirtuosoGrid

@@ -193,6 +193,7 @@ namespace {
         std::string name_;
         std::string path_;
         std::string parent_path_;
+        int64_t sort_time_ns_ = 0;
     };
 
     struct IndexSnapshot {
@@ -200,6 +201,7 @@ namespace {
         std::vector<IndexedFile> files_;
         std::vector<IndexedFolder> folders_;
         std::set<std::string> namespaces_;
+        std::unordered_map<std::string, int64_t> namespace_sort_times_;
     };
 
 
@@ -654,8 +656,23 @@ public:
 
         std::unordered_set<std::string> seen_physical;
         std::unordered_set<std::string> seen_api_paths;
-        std::unordered_set<std::string> seen_folder_paths;
+        std::unordered_map<std::string, size_t> seen_folder_paths;
         std::vector<CachedMetadata> changed;
+
+        const auto add_folder = [&](IndexedFolder folder) {
+            const auto [it, inserted] = seen_folder_paths.try_emplace(
+                folder.path_, next->folders_.size()
+            );
+            if (inserted) {
+                next->folders_.push_back(std::move(folder));
+                return;
+            }
+
+            auto& existing = next->folders_[it->second];
+            existing.sort_time_ns_ = std::max(
+                existing.sort_time_ns_, folder.sort_time_ns_
+            );
+        };
 
         const auto preserve_root = [&](const std::string& root_key) {
             for (const auto& file : old_snapshot->files_) {
@@ -668,8 +685,7 @@ public:
             for (const auto& folder : old_snapshot->folders_) {
                 if (folder.root_key_ != root_key)
                     continue;
-                if (seen_folder_paths.insert(folder.path_).second)
-                    next->folders_.push_back(folder);
+                add_folder(folder);
             }
         };
 
@@ -686,6 +702,16 @@ public:
                 const auto root_key = make_root_key(namespace_name, root);
 
                 if (!fs::is_directory(root, ec) || ec) {
+                    const auto previous_time =
+                        old_snapshot->namespace_sort_times_.find(
+                            namespace_name
+                        );
+                    if (previous_time !=
+                        old_snapshot->namespace_sort_times_.end()) {
+                        auto& sort_time =
+                            next->namespace_sort_times_[namespace_name];
+                        sort_time = std::max(sort_time, previous_time->second);
+                    }
                     std::println(
                         "ImageIndex: Root unavailable, preserving previous "
                         "snapshot: {}",
@@ -694,6 +720,12 @@ public:
                     preserve_root(root_key);
                     continue;
                 }
+
+                auto& namespace_sort_time =
+                    next->namespace_sort_times_[namespace_name];
+                namespace_sort_time = std::max(
+                    namespace_sort_time, get_image_sort_time(root)
+                );
 
                 std::vector<Path> physical_files;
                 std::vector<IndexedFolder> root_folders;
@@ -722,6 +754,7 @@ public:
                                 sung::tostr(
                                     (namespace_path / relative).parent_path()
                                 ),
+                                get_image_sort_time(entry.path()),
                             }
                         );
                     } else if (!ec && entry.is_regular_file(ec) && !ec) {
@@ -748,10 +781,7 @@ public:
                     continue;
                 }
 
-                for (auto& folder : root_folders) {
-                    if (seen_folder_paths.insert(folder.path_).second)
-                        next->folders_.push_back(std::move(folder));
-                }
+                for (auto& folder : root_folders) add_folder(std::move(folder));
 
                 for (const auto& path : physical_files) {
                     const auto path_str = sung::tostr(path);
@@ -982,8 +1012,18 @@ public:
         const auto dir = sung::tostr(dir_path.lexically_normal());
 
         if (dir.empty() || dir == ".") {
-            for (const auto& namespace_name : current->namespaces_)
-                response.add_dir(namespace_name, sung::fromstr(namespace_name));
+            for (const auto& namespace_name : current->namespaces_) {
+                const auto sort_time = current->namespace_sort_times_.find(
+                    namespace_name
+                );
+                response.add_dir(
+                    namespace_name,
+                    sung::fromstr(namespace_name),
+                    sort_time == current->namespace_sort_times_.end()
+                        ? 0
+                        : sort_time->second
+                );
+            }
             response.sort(sort_order);
             return response;
         }
@@ -1023,7 +1063,11 @@ public:
 
         for (const auto& folder : current->folders_) {
             if (folder.parent_path_ == dir)
-                response.add_dir(folder.name_, sung::fromstr(folder.path_));
+                response.add_dir(
+                    folder.name_,
+                    sung::fromstr(folder.path_),
+                    folder.sort_time_ns_
+                );
         }
         response.sort(sort_order);
         return response;

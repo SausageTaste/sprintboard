@@ -37,7 +37,11 @@ namespace sung {
         };
 
     public:
-        void add_dir(const std::string& name, const sung::Path& path);
+        void add_dir(
+            const std::string& name,
+            const sung::Path& path,
+            int64_t sort_time_ns = 0
+        );
 
         void add_file(
             const std::string& name,
@@ -89,7 +93,14 @@ namespace sung {
         struct DirInfo {
             std::string name_;
             sung::Path path_;
+            int64_t sort_time_ns_ = 0;
         };
+
+        static bool dir_before(
+            const DirInfo& a,
+            const DirInfo& b,
+            ImageSortOrder order = ImageSortOrder::date_desc
+        );
 
         std::vector<DirInfo> dirs_;
         std::vector<FileInfo> files_;
