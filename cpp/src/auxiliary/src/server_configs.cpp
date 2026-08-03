@@ -1,5 +1,6 @@
 #include "sung/auxiliary/server_configs.hpp"
 
+#include <algorithm>
 #include <fstream>
 #include <print>
 
@@ -10,6 +11,8 @@ namespace {
 
     const std::string DEFAULT_HOST = "127.0.0.1";
     constexpr int DEFAULT_PORT = 8787;
+    const std::string DEFAULT_TAGGER_HOST = "127.0.0.1";
+    constexpr int DEFAULT_TAGGER_PORT = 8790;
 
 
     const std::map<sung::ServerConfigs::AvifPixelFormat, std::string>
@@ -137,13 +140,20 @@ namespace sung {
         avif_speed_ = 4;
         avif_gen_ = false;
         avif_gen_remove_src_ = false;
+
+        tagger_enabled_ = false;
+        tagger_host_ = DEFAULT_TAGGER_HOST;
+        tagger_port_ = DEFAULT_TAGGER_PORT;
+        tagger_batch_size_ = 4;
+        tagger_poll_interval_seconds_ = 30;
     }
 
     ServerConfigs::AvifOptions ServerConfigs::effective_avif_options(
         const BindingInfo& binding
     ) const {
         AvifOptions output;
-        output.pix_format_ = binding.avif_.pix_format_.value_or(avif_pix_format_
+        output.pix_format_ = binding.avif_.pix_format_.value_or(
+            avif_pix_format_
         );
         output.quality_ = binding.avif_.quality_.value_or(avif_quality_);
         output.speed_ = binding.avif_.speed_.value_or(avif_speed_);
@@ -267,6 +277,18 @@ namespace sung {
         avif_speed_ = try_get(json_data, "avif_speed", 4);
         avif_gen_ = try_get(json_data, "avif_gen", false);
         avif_gen_remove_src_ = try_get(json_data, "avif_gen_remove_src", false);
+
+        tagger_enabled_ = try_get(json_data, "tagger_enabled", false);
+        tagger_host_ = try_get(json_data, "tagger_host", DEFAULT_TAGGER_HOST);
+        tagger_port_ = std::clamp(
+            try_get(json_data, "tagger_port", DEFAULT_TAGGER_PORT), 1, 65535
+        );
+        tagger_batch_size_ = std::max(
+            try_get(json_data, "tagger_batch_size", 4), 1
+        );
+        tagger_poll_interval_seconds_ = std::max(
+            try_get(json_data, "tagger_poll_interval_seconds", 30.0), 1.0
+        );
     }
 
     nlohmann::json ServerConfigs::export_json() const {
@@ -319,6 +341,12 @@ namespace sung {
         output["avif_speed"] = avif_speed_;
         output["avif_gen"] = avif_gen_;
         output["avif_gen_remove_src"] = avif_gen_remove_src_;
+
+        output["tagger_enabled"] = tagger_enabled_;
+        output["tagger_host"] = tagger_host_;
+        output["tagger_port"] = tagger_port_;
+        output["tagger_batch_size"] = tagger_batch_size_;
+        output["tagger_poll_interval_seconds"] = tagger_poll_interval_seconds_;
 
         return output;
     }

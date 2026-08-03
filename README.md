@@ -77,6 +77,11 @@ Open it with any text editor.
   "avif_gen_remove_src": false,
   "avif_quality": 70.0,
   "avif_speed": 4,
+  "tagger_enabled": false,
+  "tagger_host": "127.0.0.1",
+  "tagger_port": 8790,
+  "tagger_batch_size": 4,
+  "tagger_poll_interval_seconds": 30.0,
   "dir_bindings": {
     "example": {
       "local_dirs": [
@@ -144,6 +149,11 @@ If you modify these values, the changes will take effect as soon as possible, wi
 |`avif_gen_remove_src` |Retained for configuration compatibility but not implemented. Sources are removed only by an explicit gallery delete action.
 |`avif_quality` |Quality option for AVIF encoder.
 |`avif_speed` |Speed option for AVIF encoder.
+|`tagger_enabled` |Analyze gallery images through the local tagging service and make its general and character tags searchable.
+|`tagger_host` |Host running the tagging service. The default is `127.0.0.1`.
+|`tagger_port` |Port used by the tagging service. The default is `8790`.
+|`tagger_batch_size` |Maximum number of image paths submitted in one analysis request. This must not exceed the service's `--batch-size`.
+|`tagger_poll_interval_seconds` |Minimum delay between checks for missing or stale analyses.
 |`dir_bindings` |Add folder entries here. Each key will appear as a folder in the root directory, and all contents in `local_dirs` will be placed inside it. You can use both absolute and relative paths for `local_dirs`. Although you can set multiple directories for a single binding, I strongly recommend using only one.
 
 The `.sprintboard.avif` suffix is reserved for generated proxies. Legacy
@@ -151,6 +161,42 @@ same-stem files such as `img.png` and `img.avif` are treated as independent
 source images by the server. If a source is removed outside Sprintboard, its
 remaining proxy continues to appear as an independent image after the next
 index refresh.
+
+## Local image tagging service
+
+Sprintboard includes a self-contained WD EVA02 tagging service in `python/`.
+Install [uv](https://docs.astral.sh/uv/), then start the service from the
+repository root:
+
+```sh
+uv run --project python sprintboard-tagger \
+  --host 127.0.0.1 \
+  --port 8790
+```
+
+The first analysis downloads and loads
+`SmilingWolf/wd-eva02-large-tagger-v3`. The service selects CUDA, then Apple
+MPS, then CPU unless `--device` is supplied. Other options include
+`--model-id`, `--batch-size`, `--general-threshold`, and
+`--character-threshold`.
+
+Set `tagger_enabled` to `true` in `server_configs.json` after starting the
+service. Sprintboard stores results in `.sprintboard/image-index.sqlite3` and
+does not modify image files. A generated `image.png.sprintboard.avif` shares
+the absolute normalized logical key of `image.png`; if that source exists, it
+is used for inference.
+
+The versioned HTTP interface consists of `GET /v1/info` and
+`POST /v1/analyze`. The latter accepts JSON shaped as
+`{"paths":["/absolute/image/path.png"]}`. The service returns results in the
+same order, with `ratings`, `generalTags`, and `characterTags`, or an `error`
+for an individual path. Both endpoints report protocol version `1` and an
+analyzer fingerprint derived from the model and thresholds.
+
+The service accepts local filesystem paths from clients. It binds only to
+localhost by default. Binding it to a network-visible address allows remote
+clients to request reads of local image paths and should be done only on a
+trusted network with appropriate external access controls.
 
 ## Migrating legacy AVIF proxy names
 

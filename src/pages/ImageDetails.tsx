@@ -15,6 +15,22 @@ interface AvifInfo {
     xmp: string;
 };
 
+interface ScoredTag {
+    name: string;
+    confidence: number;
+}
+
+interface TagAnalysis {
+    analyzerFingerprint: string;
+    modelId: string;
+    generalThreshold: number;
+    characterThreshold: number;
+    analyzedAt: number;
+    ratings: ScoredTag[];
+    generalTags: ScoredTag[];
+    characterTags: ScoredTag[];
+}
+
 interface ImageDetailsResponse {
     sdModelName: string;
     sdPrompt: Array<string>;
@@ -24,7 +40,44 @@ interface ImageDetailsResponse {
     comfyuiInfo?: ComfyuiInfo;
     pngInfo?: PngInfo;
     avifInfo?: AvifInfo;
+    tagAnalysis?: TagAnalysis;
 };
+
+function TagGroup({ title, tags }: { title: string; tags: ScoredTag[] }) {
+    return (
+        <>
+            <h3>{title}</h3>
+            {tags.length === 0 ? (
+                <p>None</p>
+            ) : (
+                <div
+                    style={{
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: 8,
+                        marginBottom: 16,
+                    }}
+                >
+                    {tags.map((tag) => (
+                        <span
+                            key={`${title}:${tag.name}`}
+                            title={`Confidence: ${tag.confidence.toFixed(6)}`}
+                            style={{
+                                padding: "5px 9px",
+                                borderRadius: 999,
+                                background: "rgba(255,255,255,0.08)",
+                                border: "1px solid rgba(255,255,255,0.12)",
+                                fontSize: 13,
+                            }}
+                        >
+                            {tag.name} · {(tag.confidence * 100).toFixed(1)}%
+                        </span>
+                    ))}
+                </div>
+            )}
+        </>
+    );
+}
 
 
 async function fetchImageDetails(path: string): Promise<ImageDetailsResponse> {
@@ -60,7 +113,7 @@ export default function ImageDetails() {
 
         return () => {
         };
-    }, []);
+    }, [imgSrc]);
 
     return (
         <div className="app-page">
@@ -120,6 +173,27 @@ export default function ImageDetails() {
                     >
                         {imageDetails.comfyuiInfo.workflowSrc}
                     </pre>
+                </>
+            )}
+
+            {imageDetails?.tagAnalysis && (
+                <>
+                    <h2>Analyzed Tags</h2>
+                    <p>
+                        Model: {imageDetails.tagAnalysis.modelId}
+                    </p>
+                    <TagGroup
+                        title="Ratings"
+                        tags={imageDetails.tagAnalysis.ratings}
+                    />
+                    <TagGroup
+                        title="Characters"
+                        tags={imageDetails.tagAnalysis.characterTags}
+                    />
+                    <TagGroup
+                        title="General Tags"
+                        tags={imageDetails.tagAnalysis.generalTags}
+                    />
                 </>
             )}
 

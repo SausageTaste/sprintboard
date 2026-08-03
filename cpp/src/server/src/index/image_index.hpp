@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -22,6 +23,8 @@ namespace sung {
         int64_t select_image_sort_time(
             int64_t creation_time_ns, int64_t modified_time_ns
         );
+
+        std::string logical_image_key(const Path& physical_path);
 
     }  // namespace detail
 
@@ -69,6 +72,11 @@ namespace sung {
             double interval_seconds
         );
 
+        void start_auto_tagging(
+            std::function<std::shared_ptr<const ServerConfigs>()>
+                configs_provider
+        );
+
         ImageListResponse query(
             const Path& dir,
             const std::string& query,
@@ -79,11 +87,17 @@ namespace sung {
 
         void remove_api_path(std::string_view api_path);
 
+        std::optional<nlohmann::json> tag_analysis(
+            const Path& physical_path
+        ) const;
+
     private:
         class Impl;
         std::unique_ptr<Impl> impl_;
         std::thread auto_refresh_thread_;
         std::atomic_bool auto_refresh_stop_{ false };
+        std::thread auto_tagging_thread_;
+        std::atomic_bool auto_tagging_stop_{ false };
     };
 
 }  // namespace sung

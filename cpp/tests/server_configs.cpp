@@ -33,7 +33,12 @@ int main() {
         "avif_pix_format": "yuv444",
         "avif_quality": 55.0,
         "avif_speed": 6,
-        "avif_gen": false
+        "avif_gen": false,
+        "tagger_enabled": true,
+        "tagger_host": "localhost",
+        "tagger_port": 9001,
+        "tagger_batch_size": 8,
+        "tagger_poll_interval_seconds": 12.5
     })");
 
     sung::ServerConfigs configs;
@@ -43,6 +48,16 @@ int main() {
     const auto* overriding = configs.find_binding(std::string{ "overriding" });
     if (!check(nullptr != inheriting, "parses the inheriting binding") ||
         !check(nullptr != overriding, "parses the overriding binding")) {
+        return 1;
+    }
+    if (!check(configs.tagger_enabled_, "parses tagger enabled") ||
+        !check(configs.tagger_host_ == "localhost", "parses tagger host") ||
+        !check(configs.tagger_port_ == 9001, "parses tagger port") ||
+        !check(configs.tagger_batch_size_ == 8, "parses tagger batch size") ||
+        !check(
+            configs.tagger_poll_interval_seconds_ == 12.5,
+            "parses tagger poll interval"
+        )) {
         return 1;
     }
 
@@ -73,6 +88,16 @@ int main() {
     }
 
     const auto exported = configs.export_json();
+    if (!check(
+            exported.at("tagger_enabled") == true &&
+                exported.at("tagger_host") == "localhost" &&
+                exported.at("tagger_port") == 9001 &&
+                exported.at("tagger_batch_size") == 8 &&
+                exported.at("tagger_poll_interval_seconds") == 12.5,
+            "exports tagger settings"
+        )) {
+        return 1;
+    }
     const auto& exported_inheriting =
         exported.at("dir_bindings").at("inheriting");
     const auto& exported_overriding =
@@ -100,8 +125,9 @@ int main() {
 
     sung::ServerConfigs reimported;
     reimported.import_json(exported);
-    const auto* round_tripped = reimported.find_binding(std::string{
-        "overriding" });
+    const auto* round_tripped = reimported.find_binding(
+        std::string{ "overriding" }
+    );
     if (!check(nullptr != round_tripped, "round-trips the binding") ||
         !check(
             round_tripped->avif_.quality_.has_value() &&

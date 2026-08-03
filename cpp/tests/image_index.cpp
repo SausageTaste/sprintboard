@@ -68,7 +68,7 @@ namespace {
         return result == SQLITE_OK;
     }
 
-    bool has_version_two_sort_times(
+    bool has_version_three_tag_table(
         const sung::Path& database_path, const size_t expected_count
     ) {
         sqlite3* database = nullptr;
@@ -103,8 +103,23 @@ namespace {
             );
         }
         sqlite3_finalize(statement);
+        bool tag_table_exists = false;
+        statement = nullptr;
+        if (sqlite3_prepare_v2(
+                database,
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND "
+                "name='image_tag_analysis';",
+                -1,
+                &statement,
+                nullptr
+            ) == SQLITE_OK &&
+            sqlite3_step(statement) == SQLITE_ROW) {
+            tag_table_exists = sqlite3_column_int(statement, 0) == 1;
+        }
+        sqlite3_finalize(statement);
         sqlite3_close(database);
-        return schema_version == 2 && timestamp_count == expected_count;
+        return schema_version == 3 && tag_table_exists &&
+               timestamp_count == expected_count;
     }
 
     bool set_sort_time(
@@ -177,6 +192,62 @@ namespace {
         return success;
     }
 
+    bool insert_tag_analysis(
+        const sung::Path& database_path, const sung::Path& image_path
+    ) {
+        sqlite3* database = nullptr;
+        const auto path = sung::tostr(database_path);
+        if (sqlite3_open(path.c_str(), &database) != SQLITE_OK) {
+            sqlite3_close(database);
+            return false;
+        }
+
+        const auto logical_path = sung::detail::logical_image_key(image_path);
+        const auto analysis =
+            nlohmann::json{
+                { "path", sung::tostr(image_path) },
+                { "ratings",
+                  nlohmann::json::array(
+                      { { { "name", "safe" }, { "confidence", 0.9 } } }
+                  ) },
+                { "generalTags",
+                  nlohmann::json::array(
+                      { { { "name", "blue_hair" }, { "confidence", 0.8 } } }
+                  ) },
+                { "characterTags", nlohmann::json::array() },
+            }
+                .dump();
+        sqlite3_stmt* statement = nullptr;
+        auto success = sqlite3_prepare_v2(
+                           database,
+                           "INSERT INTO image_tag_analysis ("
+                           "logical_path, input_path, analyzer_fingerprint, "
+                           "model_id, general_threshold, "
+                           "character_threshold, analysis_json, analyzed_at"
+                           ") VALUES (?, ?, 'fixture', 'fixture-model', 0.35, "
+                           "0.75, ?, 123);",
+                           -1,
+                           &statement,
+                           nullptr
+                       ) == SQLITE_OK;
+        if (success) {
+            sqlite3_bind_text(
+                statement, 1, logical_path.c_str(), -1, SQLITE_TRANSIENT
+            );
+            const auto input_path = sung::tostr(image_path);
+            sqlite3_bind_text(
+                statement, 2, input_path.c_str(), -1, SQLITE_TRANSIENT
+            );
+            sqlite3_bind_text(
+                statement, 3, analysis.c_str(), -1, SQLITE_TRANSIENT
+            );
+            success = sqlite3_step(statement) == SQLITE_DONE;
+        }
+        sqlite3_finalize(statement);
+        sqlite3_close(database);
+        return success;
+    }
+
 }  // namespace
 
 
@@ -195,6 +266,18 @@ int main() {
         !check(
             sung::detail::ImageQuery{ "-blocked" }.matches_metadata("", {}),
             "allows metadata-free images for exclusion-only queries"
+        ) ||
+        !check(
+            sung::detail::ImageQuery{ "wanted, blue_hair" }.matches_metadata(
+                "", { "wanted" }, { "blue_hair" }
+            ),
+            "combines prompt and analyzed tag inclusions"
+        ) ||
+        !check(
+            !sung::detail::ImageQuery{ "wanted, -blue_hair" }.matches_metadata(
+                "", { "wanted" }, { "blue_hair" }
+            ),
+            "applies exclusions to analyzed tags"
         )) {
         return 1;
     }
@@ -218,6 +301,18 @@ int main() {
         "images";
     const auto source_avif = fixtures / sung::fromstr("Émilie.avif");
     const auto source_png = fixtures / sung::fromstr("유우카.png");
+    const auto proxy_identity = sung::detail::logical_image_key(
+        fixtures / "nested" / ".." / "identity.png.sprintboard.avif"
+    );
+    const auto source_identity = sung::detail::logical_image_key(
+        fixtures / "identity.png"
+    );
+    if (!check(
+            proxy_identity == source_identity,
+            "uses an absolute normalized source path as the proxy key"
+        )) {
+        return 1;
+    }
 
     const auto unique =
         std::chrono::steady_clock::now().time_since_epoch().count();
@@ -321,6 +416,14 @@ int main() {
     }
 
     if (!check(
+            insert_tag_analysis(database_path, image_root / "one.avif"),
+            "stores a fixture tag analysis"
+        )) {
+        sung::fs::remove_all(temp);
+        return 1;
+    }
+
+    if (!check(
             downgrade_database_to_version_one(database_path),
             "creates a version-one migration fixture"
         )) {
@@ -338,8 +441,18 @@ int main() {
                 reopened.metadata_indexed_ == 0, "avoids repeated image reads"
             ) ||
             !check(
-                has_version_two_sort_times(database_path, 2),
-                "migrates and backfills sort timestamps without image reads"
+                image_count(index, "blue_hair") == 1,
+                "searches persisted analyzed tags"
+            ) ||
+            !check(
+                index.tag_analysis(image_root / "one.avif")
+                        .value_or(nlohmann::json::object())
+                        .at("modelId") == "fixture-model",
+                "returns persisted tags from image details lookup"
+            ) ||
+            !check(
+                has_version_three_tag_table(database_path, 2),
+                "migrates sort timestamps and creates the tag table"
             )) {
             sung::fs::remove_all(temp);
             return 1;

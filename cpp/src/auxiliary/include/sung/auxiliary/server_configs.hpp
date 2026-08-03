@@ -61,7 +61,8 @@ namespace sung {
         const BindingInfo* find_binding(const std::string& namespace_str) const;
         const BindingInfo* find_binding(const Path& namespace_path) const;
 
-        std::expected<Path, std::string> resolve_paths(const Path& base_dir
+        std::expected<Path, std::string> resolve_paths(
+            const Path& base_dir
         ) const;
 
         void import_json(const nlohmann::json& json_data);
@@ -82,6 +83,13 @@ namespace sung {
         int avif_speed_;
         bool avif_gen_;
         bool avif_gen_remove_src_;
+
+        // Local image-tagging service settings
+        bool tagger_enabled_;
+        std::string tagger_host_;
+        int tagger_port_;
+        int tagger_batch_size_;
+        double tagger_poll_interval_seconds_;
     };
 
 

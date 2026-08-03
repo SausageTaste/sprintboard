@@ -28,4 +28,9 @@ dist-ssr
 /.sprintboard
 /.vscode
 /build
+/python/.venv
 /server_configs.json
+
+# Python
+__pycache__/
+*.py[cod]

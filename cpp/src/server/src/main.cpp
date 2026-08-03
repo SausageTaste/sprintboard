@@ -199,6 +199,9 @@ int main() {
         [&server_configs]() { return server_configs.get(); },
         ::IMAGE_INDEX_REFRESH_INTERVAL
     );
+    image_index.start_auto_tagging([&server_configs]() {
+        return server_configs.get();
+    });
 
     sung::TaskManager tasks;
     auto power_req = std::make_shared<::PowerRequestTask>();
@@ -385,7 +388,9 @@ int main() {
             return;
         }
 
-        const auto json_data = response->make_json();
+        auto json_data = response->make_json();
+        if (const auto tag_analysis = image_index.tag_analysis(*full_path))
+            json_data["tagAnalysis"] = *tag_analysis;
         const auto json_str = json_data.dump();
         res.status = 200;
         res.set_content(json_str, "application/json");

@@ -53,10 +53,30 @@ target_include_directories(
 target_link_libraries(${PROJECT_NAME}_test_img_list sprintboard_img)
 
 add_executable(
+    ${PROJECT_NAME}_test_tagger_client
+    tagger_client.cpp
+    ../src/server/src/tagger_client.cpp
+)
+add_test(
+    NAME ${PROJECT_NAME}_test_tagger_client
+    COMMAND ${PROJECT_NAME}_test_tagger_client
+)
+set_target_properties(
+    ${PROJECT_NAME}_test_tagger_client PROPERTIES FOLDER "${PROJECT_NAME}/test"
+)
+target_include_directories(
+    ${PROJECT_NAME}_test_tagger_client PRIVATE ../src/server/src
+)
+target_link_libraries(
+    ${PROJECT_NAME}_test_tagger_client httplib::httplib sprintboard_aux
+)
+
+add_executable(
     ${PROJECT_NAME}_test_image_index
     image_index.cpp
     ../src/server/src/index/image_index.cpp
     ../src/server/src/response/img_list.cpp
+    ../src/server/src/tagger_client.cpp
 )
 add_test(NAME ${PROJECT_NAME}_test_image_index COMMAND ${PROJECT_NAME}_test_image_index)
 set_target_properties(${PROJECT_NAME}_test_image_index PROPERTIES FOLDER "${PROJECT_NAME}/test")
@@ -65,6 +85,7 @@ target_include_directories(
 )
 target_link_libraries(
     ${PROJECT_NAME}_test_image_index
+    httplib::httplib
     sprintboard_img
     TBB::tbb
     unofficial::sqlite3::sqlite3

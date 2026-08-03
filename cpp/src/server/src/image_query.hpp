@@ -64,33 +64,36 @@ namespace sung::detail {
         }
 
         bool matches_metadata(
-            const std::string& model, const std::vector<std::string>& prompts
+            const std::string& model,
+            const std::vector<std::string>& prompts,
+            const std::vector<std::string>& tags = {}
         ) const {
             if (!model_.empty() && !model.contains(model_))
                 return false;
 
-            for (const auto& prompt : prompts) {
-                for (const auto& term : excluded_terms_) {
+            const auto contains_term = [&](const std::string& term) {
+                for (const auto& prompt : prompts) {
                     if (prompt.contains(term))
-                        return false;
+                        return true;
                 }
+                for (const auto& tag : tags) {
+                    if (tag.contains(term))
+                        return true;
+                }
+                return false;
+            };
+
+            for (const auto& term : excluded_terms_) {
+                if (contains_term(term))
+                    return false;
             }
 
-            if (included_terms_.empty())
-                return true;
-
-            for (const auto& prompt : prompts) {
-                bool matched = true;
-                for (const auto& term : included_terms_) {
-                    if (!prompt.contains(term)) {
-                        matched = false;
-                        break;
-                    }
-                }
-                if (matched)
-                    return true;
+            for (const auto& term : included_terms_) {
+                if (!contains_term(term))
+                    return false;
             }
-            return false;
+
+            return true;
         }
 
     private:
