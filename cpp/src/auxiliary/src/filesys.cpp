@@ -1,7 +1,11 @@
 #include "sung/auxiliary/filesys.hpp"
 
+#include <chrono>
+#include <format>
 #include <fstream>
+#include <functional>
 #include <sstream>
+#include <thread>
 
 #ifdef _WIN32
     #include <Windows.h>
@@ -102,6 +106,50 @@ namespace sung {
             static_cast<std::streamsize>(size)
         );
         return static_cast<size_t>(ofs.tellp()) == size;
+    }
+
+    bool write_file_atomically(
+        const Path& path,
+        const void* data,
+        const size_t size,
+        std::error_code& error
+    ) {
+        error.clear();
+        const auto nonce =
+            std::chrono::steady_clock::now().time_since_epoch().count();
+        const auto temp_path = path_concat(
+            path,
+            std::format(
+                ".tmp-{}-{}",
+                std::hash<std::thread::id>{}(std::this_thread::get_id()),
+                nonce
+            )
+        );
+        if (!write_file(temp_path, data, size)) {
+            error = std::make_error_code(std::errc::io_error);
+            return false;
+        }
+
+#ifdef _WIN32
+        if (!MoveFileExW(
+                temp_path.c_str(),
+                path.c_str(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH
+            )) {
+            error = ::last_windows_error();
+            std::error_code cleanup_error;
+            fs::remove(temp_path, cleanup_error);
+            return false;
+        }
+#else
+        fs::rename(temp_path, path, error);
+        if (error) {
+            std::error_code cleanup_error;
+            fs::remove(temp_path, cleanup_error);
+            return false;
+        }
+#endif
+        return true;
     }
 
     std::error_code read_file_timestamps(

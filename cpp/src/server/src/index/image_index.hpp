@@ -14,6 +14,7 @@
 
 #include "response/img_list.hpp"
 #include "sung/auxiliary/server_configs.hpp"
+#include "tag_sidecar.hpp"
 
 
 namespace sung {
@@ -90,6 +91,20 @@ namespace sung {
         std::optional<nlohmann::json> tag_analysis(
             const Path& physical_path
         ) const;
+
+        std::optional<TagAnalysisRecord> current_tag_analysis(
+            const Path& source_path, bool require_current_analyzer = true
+        ) const;
+
+        bool proxy_materialization_current(
+            const Path& proxy_path, std::string_view materialization_id
+        ) const;
+
+        void mark_proxy_materialized(
+            const Path& source_path,
+            const Path& proxy_path,
+            std::string materialization_id
+        );
 
     private:
         class Impl;

@@ -21,6 +21,8 @@ interface ScoredTag {
 }
 
 interface TagAnalysis {
+    analysisId?: string;
+    sourceMissing?: boolean;
     analyzerFingerprint: string;
     modelId: string;
     generalThreshold: number;
@@ -182,6 +184,11 @@ export default function ImageDetails() {
                     <p>
                         Model: {imageDetails.tagAnalysis.modelId}
                     </p>
+                    {imageDetails.tagAnalysis.sourceMissing && (
+                        <p className="metadata-note">
+                            Original source is missing; showing the retained proxy analysis.
+                        </p>
+                    )}
                     <TagGroup
                         title="Ratings"
                         tags={imageDetails.tagAnalysis.ratings}

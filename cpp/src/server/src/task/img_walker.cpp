@@ -1,5 +1,6 @@
 #include "task/img_walker.hpp"
 
+#include <optional>
 #include <print>
 
 #include <absl/strings/ascii.h>
@@ -7,6 +8,7 @@
 #include <sung/basic/os_detect.hpp>
 #include <sung/basic/time.hpp>
 
+#include "index/image_index.hpp"
 #include "sung/auxiliary/filesys.hpp"
 #include "sung/image/avif.hpp"
 #include "sung/image/png.hpp"
@@ -39,6 +41,23 @@ namespace {
         }
 
         throw std::runtime_error("Unsupported pixel format");
+    }
+
+    std::string_view pix_format_name(
+        const sung::ServerConfigs::AvifPixelFormat pix_format
+    ) {
+        using Format = sung::ServerConfigs::AvifPixelFormat;
+        switch (pix_format) {
+            case Format::yuv444:
+                return "yuv444";
+            case Format::yuv422:
+                return "yuv422";
+            case Format::yuv420:
+                return "yuv420";
+            case Format::yuv400:
+                return "yuv400";
+        }
+        return "unknown";
     }
 
     std::expected<std::vector<uint8_t>, std::string> encode_avif(
@@ -118,6 +137,9 @@ namespace {
     struct PngWorkItem {
         sung::Path path_;
         const sung::ServerConfigs::BindingInfo* binding_;
+        sung::FileFingerprint source_fingerprint_;
+        std::optional<sung::TagAnalysisRecord> analysis_;
+        std::string materialization_id_;
     };
 
 #if HAS_GENERATOR
@@ -125,7 +147,7 @@ namespace {
 #else
     std::vector<PngWorkItem> gen_png_files(
 #endif
-        const sung::ServerConfigs& cfg
+        const sung::ServerConfigs& cfg, const sung::ImageIndex& image_index
     ) {
 #if !HAS_GENERATOR
         std::vector<PngWorkItem> result;
@@ -177,8 +199,55 @@ namespace {
                         auto ext_str = sung::tostr(entry.path().extension());
                         ext_str = absl::AsciiStrToLower(ext_str);
                         if (ext_str == ".png") {
+                            std::error_code absolute_error;
+                            auto source_path = sung::fs::absolute(
+                                entry.path(), absolute_error
+                            );
+                            if (absolute_error)
+                                source_path = entry.path().lexically_normal();
+                            else
+                                source_path = source_path.lexically_normal();
+
+                            const auto source_fingerprint =
+                                sung::fingerprint_file(source_path);
+                            auto analysis =
+                                source_fingerprint
+                                    ? image_index.current_tag_analysis(
+                                          source_path, cfg.tagger_enabled_
+                                      )
+                                    : std::nullopt;
+                            if (!source_fingerprint ||
+                                (cfg.tagger_enabled_ && !analysis)) {
+                                entry_it.increment(iter_error);
+                                if (iter_error) {
+                                    std::println(
+                                        "ImgWalker: Stopping scan of "
+                                        "directory {}: {}",
+                                        sung::tostr(dir),
+                                        iter_error.message()
+                                    );
+                                    break;
+                                }
+                                continue;
+                            }
+
+                            const auto avif_opts = cfg.effective_avif_options(
+                                binding_info
+                            );
+                            std::string materialization_id;
+                            if (analysis) {
+                                materialization_id =
+                                    sung::make_proxy_materialization_id(
+                                        *analysis,
+                                        ::pix_format_name(
+                                            avif_opts.pix_format_
+                                        ),
+                                        avif_opts.quality_,
+                                        avif_opts.speed_
+                                    );
+                            }
                             const auto avif = sung::make_sprintboard_proxy_path(
-                                entry.path()
+                                source_path
                             );
 
                             // A generated AVIF carries the source's mtime
@@ -198,16 +267,35 @@ namespace {
                                 const auto png_time = entry.last_write_time(
                                     png_error
                                 );
-                                up_to_date = png_error || png_time == avif_time;
+                                up_to_date = !png_error &&
+                                             png_time == avif_time;
+                                if (up_to_date && analysis) {
+                                    up_to_date =
+                                        image_index
+                                            .proxy_materialization_current(
+                                                avif, materialization_id
+                                            );
+                                }
                             }
 
                             if (!up_to_date) {
 #if HAS_GENERATOR
-                                co_yield PngWorkItem{ entry.path(),
-                                                      &binding_info };
+                                co_yield PngWorkItem{
+                                    source_path,
+                                    &binding_info,
+                                    *source_fingerprint,
+                                    std::move(analysis),
+                                    std::move(materialization_id),
+                                };
 #else
                                 result.push_back(
-                                    { entry.path(), &binding_info }
+                                    {
+                                        source_path,
+                                        &binding_info,
+                                        *source_fingerprint,
+                                        std::move(analysis),
+                                        std::move(materialization_id),
+                                    }
                                 );
 #endif
                             }
@@ -242,9 +330,10 @@ namespace {
     public:
         Task(
             const sung::ServerConfigManager& cfg,
-            sung::GatedPowerRequest& power_req
+            sung::GatedPowerRequest& power_req,
+            sung::ImageIndex& image_index
         )
-            : cfg_(cfg), power_req_(power_req) {}
+            : cfg_(cfg), power_req_(power_req), image_index_(image_index) {}
 
         ~Task() noexcept override { tg_.wait(); }
 
@@ -254,13 +343,18 @@ namespace {
                 return;
 
             size_t count = 0;
-            for (const auto& item : ::gen_png_files(*svrcfg)) {
+            for (const auto& item : ::gen_png_files(*svrcfg, image_index_)) {
                 ++count;
 
                 const auto avif_opts = svrcfg->effective_avif_options(
                     *item.binding_
                 );
-                tg_.run([p = item.path_, avif_opts, this]() {
+                tg_.run([p = item.path_,
+                         source_fingerprint = item.source_fingerprint_,
+                         analysis = item.analysis_,
+                         materialization_id = item.materialization_id_,
+                         avif_opts,
+                         this]() {
                     const sung::ScopedWakeLock wake_lock{ power_req_ };
                     sung::MonotonicRealtimeTimer one_timer;
 
@@ -280,7 +374,16 @@ namespace {
                     sung::AvifEncodeParams avif_params;
                     avif_params.set_quality(avif_opts.quality_);
                     avif_params.set_speed(avif_opts.speed_);
-                    avif_params.set_xmp(sung::make_xmp_packet(*png_data));
+                    if (analysis) {
+                        avif_params.set_xmp(
+                            sung::make_xmp_packet(
+                                *png_data,
+                                sung::make_embedded_tag_analysis(*analysis)
+                            )
+                        );
+                    } else {
+                        avif_params.set_xmp(sung::make_xmp_packet(*png_data));
+                    }
                     avif_params.set_yuv_format(
                         ::conv_pix_format(avif_opts.pix_format_)
                     );
@@ -296,18 +399,24 @@ namespace {
                     }
 
                     const auto avif_path = sung::make_sprintboard_proxy_path(p);
-                    if (!sung::fs::exists(p)) {
+                    const auto current_fingerprint = sung::fingerprint_file(p);
+                    if (!current_fingerprint ||
+                        *current_fingerprint != source_fingerprint) {
                         std::println(
-                            "ImgWalker: Source PNG missing, skipping: {}",
+                            "ImgWalker: Source PNG changed, skipping: {}",
                             sung::tostr(p)
                         );
                         return;
                     }
 
-                    if (!sung::write_file(avif_path, *avif_blob)) {
+                    std::error_code write_error;
+                    if (!sung::write_file_atomically(
+                            avif_path, *avif_blob, write_error
+                        )) {
                         std::println(
-                            "ImgWalker: Failed to save AVIF: {}",
-                            sung::tostr(avif_path)
+                            "ImgWalker: Failed to save AVIF {}: {}",
+                            sung::tostr(avif_path),
+                            write_error.message()
                         );
                         return;
                     }
@@ -324,6 +433,12 @@ namespace {
                             sung::tostr(p),
                             sung::tostr(avif_path),
                             timestamp_error.message()
+                        );
+                    }
+
+                    if (analysis) {
+                        image_index_.mark_proxy_materialized(
+                            p, avif_path, materialization_id
                         );
                     }
 
@@ -344,6 +459,7 @@ namespace {
     private:
         const sung::ServerConfigManager& cfg_;
         sung::GatedPowerRequest& power_req_;
+        sung::ImageIndex& image_index_;
         tbb::task_group tg_;
     };
 
@@ -353,9 +469,11 @@ namespace {
 namespace sung {
 
     std::shared_ptr<ITask> create_img_walker_task(
-        const ServerConfigManager& cfg, sung::GatedPowerRequest& power_req
+        const ServerConfigManager& cfg,
+        sung::GatedPowerRequest& power_req,
+        ImageIndex& image_index
     ) {
-        return std::make_shared<::Task>(cfg, power_req);
+        return std::make_shared<::Task>(cfg, power_req, image_index);
     }
 
 }  // namespace sung

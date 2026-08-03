@@ -23,6 +23,7 @@
 #include "sung/image/img_info.hpp"
 
 #include "image_query.hpp"
+#include "tag_sidecar.hpp"
 #include "tagger_client.hpp"
 
 #if defined(SUNG_OS_WINDOWS)
@@ -73,7 +74,7 @@ namespace sung::detail {
 
 namespace {
 
-    constexpr int DATABASE_SCHEMA_VERSION = 3;
+    constexpr int DATABASE_SCHEMA_VERSION = 4;
     constexpr int64_t NANOSECONDS_PER_SECOND = 1'000'000'000;
 
 
@@ -196,44 +197,7 @@ namespace {
         std::vector<std::string> prompts_;
     };
 
-    struct CachedTagAnalysis {
-        std::string logical_path_;
-        std::string input_path_;
-        int64_t input_size_ = 0;
-        int64_t input_modified_time_ = 0;
-        std::string analyzer_fingerprint_;
-        std::string model_id_;
-        double general_threshold_ = 0;
-        double character_threshold_ = 0;
-        nlohmann::json analysis_;
-        std::vector<std::string> searchable_tags_;
-        int64_t analyzed_at_ = 0;
-
-        std::string attempt_input_path_;
-        int64_t attempt_input_size_ = 0;
-        int64_t attempt_input_modified_time_ = 0;
-        std::string attempt_analyzer_fingerprint_;
-        int64_t last_attempt_at_ = 0;
-        int failure_count_ = 0;
-        std::string last_error_;
-    };
-
-    std::vector<std::string> searchable_tags_from_analysis(
-        const nlohmann::json& analysis
-    ) {
-        std::vector<std::string> output;
-        for (const auto* group : { "generalTags", "characterTags" }) {
-            if (!analysis.contains(group) || !analysis.at(group).is_array())
-                continue;
-            for (const auto& tag : analysis.at(group)) {
-                if (tag.is_object() && tag.contains("name") &&
-                    tag.at("name").is_string()) {
-                    output.push_back(tag.at("name").get<std::string>());
-                }
-            }
-        }
-        return output;
-    }
+    using CachedTagAnalysis = sung::TagAnalysisRecord;
 
     struct IndexedFile {
         std::string root_key_;
@@ -540,20 +504,53 @@ public:
             "attempt_analyzer_fingerprint TEXT NOT NULL DEFAULT '',"
             "last_attempt_at INTEGER NOT NULL DEFAULT 0,"
             "failure_count INTEGER NOT NULL DEFAULT 0,"
-            "last_error TEXT NOT NULL DEFAULT ''"
+            "last_error TEXT NOT NULL DEFAULT '',"
+            "analysis_id TEXT NOT NULL DEFAULT '',"
+            "sidecar_path TEXT NOT NULL DEFAULT '',"
+            "proxy_path TEXT NOT NULL DEFAULT '',"
+            "proxy_size INTEGER NOT NULL DEFAULT 0,"
+            "proxy_modified_time INTEGER NOT NULL DEFAULT 0,"
+            "proxy_materialization_id TEXT NOT NULL DEFAULT ''"
             ");";
 
         if (schema_version == 2) {
             if (!execute_sql(database_, "BEGIN IMMEDIATE;") ||
                 !execute_sql(database_, create_tag_table) ||
-                !execute_sql(database_, "PRAGMA user_version=3;") ||
+                !execute_sql(database_, "PRAGMA user_version=4;") ||
                 !execute_sql(database_, "COMMIT;")) {
                 execute_sql(database_, "ROLLBACK;");
                 sqlite3_close(database_);
                 database_ = nullptr;
                 return;
             }
-            schema_version = 3;
+            schema_version = 4;
+        }
+
+        if (schema_version == 3) {
+            if (!execute_sql(
+                    database_,
+                    "BEGIN IMMEDIATE;"
+                    "ALTER TABLE image_tag_analysis ADD COLUMN analysis_id "
+                    "TEXT NOT NULL DEFAULT '';"
+                    "ALTER TABLE image_tag_analysis ADD COLUMN sidecar_path "
+                    "TEXT NOT NULL DEFAULT '';"
+                    "ALTER TABLE image_tag_analysis ADD COLUMN proxy_path "
+                    "TEXT NOT NULL DEFAULT '';"
+                    "ALTER TABLE image_tag_analysis ADD COLUMN proxy_size "
+                    "INTEGER NOT NULL DEFAULT 0;"
+                    "ALTER TABLE image_tag_analysis ADD COLUMN "
+                    "proxy_modified_time INTEGER NOT NULL DEFAULT 0;"
+                    "ALTER TABLE image_tag_analysis ADD COLUMN "
+                    "proxy_materialization_id TEXT NOT NULL DEFAULT '';"
+                    "PRAGMA user_version=4;"
+                    "COMMIT;"
+                )) {
+                execute_sql(database_, "ROLLBACK;");
+                sqlite3_close(database_);
+                database_ = nullptr;
+                return;
+            }
+            schema_version = 4;
         }
 
         if (schema_version != DATABASE_SCHEMA_VERSION) {
@@ -575,7 +572,7 @@ public:
                     ");"
                 ) ||
                 !execute_sql(database_, create_tag_table) ||
-                !execute_sql(database_, "PRAGMA user_version=3;") ||
+                !execute_sql(database_, "PRAGMA user_version=4;") ||
                 !execute_sql(database_, "COMMIT;")) {
                 execute_sql(database_, "ROLLBACK;");
                 sqlite3_close(database_);
@@ -668,7 +665,9 @@ public:
             "general_threshold, character_threshold, analysis_json, "
             "analyzed_at, attempt_input_path, attempt_input_size, "
             "attempt_input_modified_time, attempt_analyzer_fingerprint, "
-            "last_attempt_at, failure_count, last_error "
+            "last_attempt_at, failure_count, last_error, analysis_id, "
+            "sidecar_path, proxy_path, proxy_size, proxy_modified_time, "
+            "proxy_materialization_id "
             "FROM image_tag_analysis;";
         if (sqlite3_prepare_v2(database_, query, -1, &statement, nullptr) !=
             SQLITE_OK) {
@@ -703,9 +702,8 @@ public:
             if (json_text && *json_text) {
                 try {
                     analysis.analysis_ = nlohmann::json::parse(json_text);
-                    analysis.searchable_tags_ = searchable_tags_from_analysis(
-                        analysis.analysis_
-                    );
+                    analysis.searchable_tags_ =
+                        sung::searchable_tags_from_analysis(analysis.analysis_);
                 } catch (const std::exception&) {
                     analysis.analysis_ = nlohmann::json{};
                 }
@@ -727,6 +725,24 @@ public:
             analysis.last_error_ = reinterpret_cast<const char*>(
                 sqlite3_column_text(statement, 16)
             );
+            analysis.analysis_id_ = reinterpret_cast<const char*>(
+                sqlite3_column_text(statement, 17)
+            );
+            analysis.sidecar_path_ = reinterpret_cast<const char*>(
+                sqlite3_column_text(statement, 18)
+            );
+            analysis.proxy_path_ = reinterpret_cast<const char*>(
+                sqlite3_column_text(statement, 19)
+            );
+            analysis.proxy_size_ = sqlite3_column_int64(statement, 20);
+            analysis.proxy_modified_time_ = sqlite3_column_int64(statement, 21);
+            analysis.proxy_materialization_id_ = reinterpret_cast<const char*>(
+                sqlite3_column_text(statement, 22)
+            );
+            if (analysis.analysis_id_.empty() &&
+                !analysis.analysis_.is_null()) {
+                analysis.analysis_id_ = sung::make_analysis_id(analysis);
+            }
             tag_analyses_.insert_or_assign(
                 analysis.logical_path_, std::move(analysis)
             );
@@ -829,8 +845,11 @@ public:
             "character_threshold, analysis_json, analyzed_at, "
             "attempt_input_path, attempt_input_size, "
             "attempt_input_modified_time, attempt_analyzer_fingerprint, "
-            "last_attempt_at, failure_count, last_error"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "last_attempt_at, failure_count, last_error, analysis_id, "
+            "sidecar_path, proxy_path, proxy_size, proxy_modified_time, "
+            "proxy_materialization_id"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+            "?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(logical_path) DO UPDATE SET "
             "input_path=excluded.input_path, input_size=excluded.input_size, "
             "input_modified_time=excluded.input_modified_time, "
@@ -848,7 +867,12 @@ public:
             "excluded.attempt_analyzer_fingerprint, "
             "last_attempt_at=excluded.last_attempt_at, "
             "failure_count=excluded.failure_count, "
-            "last_error=excluded.last_error;";
+            "last_error=excluded.last_error, "
+            "analysis_id=excluded.analysis_id, "
+            "sidecar_path=excluded.sidecar_path, "
+            "proxy_path=excluded.proxy_path, proxy_size=excluded.proxy_size, "
+            "proxy_modified_time=excluded.proxy_modified_time, "
+            "proxy_materialization_id=excluded.proxy_materialization_id;";
 
         sqlite3_stmt* statement = nullptr;
         if (sqlite3_prepare_v2(database_, sql, -1, &statement, nullptr) !=
@@ -881,6 +905,12 @@ public:
         sqlite3_bind_int64(statement, 15, item.last_attempt_at_);
         sqlite3_bind_int(statement, 16, item.failure_count_);
         bind_text(17, item.last_error_);
+        bind_text(18, item.analysis_id_);
+        bind_text(19, item.sidecar_path_);
+        bind_text(20, item.proxy_path_);
+        sqlite3_bind_int64(statement, 21, item.proxy_size_);
+        sqlite3_bind_int64(statement, 22, item.proxy_modified_time_);
+        bind_text(23, item.proxy_materialization_id_);
 
         const auto success = sqlite3_step(statement) == SQLITE_DONE;
         sqlite3_finalize(statement);
@@ -930,6 +960,7 @@ public:
         std::unordered_set<std::string> seen_physical;
         std::unordered_set<std::string> seen_api_paths;
         std::unordered_map<std::string, size_t> seen_folder_paths;
+        std::unordered_map<std::string, Path> seen_sidecars;
         std::vector<CachedMetadata> changed;
         bool all_roots_accessible = true;
 
@@ -1003,6 +1034,7 @@ public:
                 );
 
                 std::vector<Path> physical_files;
+                std::vector<Path> sidecar_files;
                 std::vector<IndexedFolder> root_folders;
                 fs::recursive_directory_iterator iterator{
                     root, fs::directory_options::skip_permission_denied, ec
@@ -1033,9 +1065,12 @@ public:
                             }
                         );
                     } else if (!ec && entry.is_regular_file(ec) && !ec) {
-                        physical_files.push_back(
-                            fs::absolute(entry.path(), ec).lexically_normal()
-                        );
+                        auto path =
+                            fs::absolute(entry.path(), ec).lexically_normal();
+                        if (!ec && sung::is_sprintboard_tag_sidecar_path(path))
+                            sidecar_files.push_back(std::move(path));
+                        else if (!ec)
+                            physical_files.push_back(std::move(path));
                     }
 
                     if (ec) {
@@ -1059,6 +1094,77 @@ public:
 
                 for (auto& folder : root_folders) add_folder(std::move(folder));
 
+                for (const auto& sidecar_path : sidecar_files) {
+                    const auto parsed = sung::read_tag_sidecar(sidecar_path);
+                    if (!parsed) {
+                        std::println(
+                            "ImageIndex: Ignoring invalid tag sidecar {}: {}",
+                            sung::tostr(sidecar_path),
+                            parsed.error()
+                        );
+                        continue;
+                    }
+                    seen_sidecars.insert_or_assign(
+                        parsed->logical_path_, sidecar_path
+                    );
+
+                    const auto existing = tag_analyses_.find(
+                        parsed->logical_path_
+                    );
+                    if (existing != tag_analyses_.end()) {
+                        if (existing->second.analyzed_at_ >
+                            parsed->analyzed_at_) {
+                            continue;
+                        }
+                        if (existing->second.analyzed_at_ ==
+                                parsed->analyzed_at_ &&
+                            existing->second.analysis_id_ !=
+                                parsed->analysis_id_) {
+                            continue;
+                        }
+                        if (existing->second.analysis_id_ ==
+                                parsed->analysis_id_ &&
+                            existing->second.sidecar_path_ ==
+                                sung::tostr(sidecar_path) &&
+                            existing->second.proxy_path_ ==
+                                parsed->proxy_path_ &&
+                            existing->second.proxy_size_ ==
+                                parsed->proxy_size_ &&
+                            existing->second.proxy_modified_time_ ==
+                                parsed->proxy_modified_time_ &&
+                            existing->second.proxy_materialization_id_ ==
+                                parsed->proxy_materialization_id_) {
+                            continue;
+                        }
+                    }
+
+                    auto imported = *parsed;
+                    if (existing != tag_analyses_.end()) {
+                        imported.attempt_input_path_ =
+                            existing->second.attempt_input_path_;
+                        imported.attempt_input_size_ =
+                            existing->second.attempt_input_size_;
+                        imported.attempt_input_modified_time_ =
+                            existing->second.attempt_input_modified_time_;
+                        imported.attempt_analyzer_fingerprint_ =
+                            existing->second.attempt_analyzer_fingerprint_;
+                        imported.last_attempt_at_ =
+                            existing->second.last_attempt_at_;
+                        imported.failure_count_ =
+                            existing->second.failure_count_;
+                        imported.last_error_ = existing->second.last_error_;
+                    }
+                    tag_analyses_.insert_or_assign(
+                        imported.logical_path_, imported
+                    );
+                    if (!persist_tag_analysis(imported)) {
+                        std::println(
+                            "ImageIndex: Failed to cache tag sidecar {}",
+                            sung::tostr(sidecar_path)
+                        );
+                    }
+                }
+
                 for (const auto& path : physical_files) {
                     const auto path_str = sung::tostr(path);
                     seen_physical.insert(path_str);
@@ -1077,6 +1183,7 @@ public:
 
                 std::unordered_map<std::string, Path> proxy_sources;
                 std::unordered_set<std::string> paired_sources;
+                std::unordered_set<std::string> stale_proxies;
                 for (const auto& path : physical_files) {
                     const auto source_path =
                         sung::sprintboard_proxy_source_path(path);
@@ -1087,6 +1194,20 @@ public:
                     );
                     if (source == sources_by_path.end())
                         continue;
+
+                    std::error_code source_time_error;
+                    std::error_code proxy_time_error;
+                    const auto source_time = fs::last_write_time(
+                        source->second, source_time_error
+                    );
+                    const auto proxy_time = fs::last_write_time(
+                        path, proxy_time_error
+                    );
+                    if (source_time_error || proxy_time_error ||
+                        source_time != proxy_time) {
+                        stale_proxies.insert(make_path_key(path));
+                        continue;
+                    }
                     proxy_sources.insert_or_assign(
                         make_path_key(path), source->second
                     );
@@ -1129,7 +1250,8 @@ public:
                                 }
                                 probes[i] = probe_file(
                                     physical_files[i],
-                                    paired_sources.contains(path_key),
+                                    paired_sources.contains(path_key) ||
+                                        stale_proxies.contains(path_key),
                                     sort_time_source,
                                     existing
                                 );
@@ -1260,6 +1382,23 @@ public:
                     ++it;
                     continue;
                 }
+                const auto source_path = sung::fromstr(it->first);
+                const auto proxy_path = sung::make_sprintboard_proxy_path(
+                    source_path
+                );
+                std::error_code source_error;
+                std::error_code proxy_error;
+                const bool source_exists = sung::fs::exists(
+                    source_path, source_error
+                );
+                const bool proxy_exists = sung::fs::exists(
+                    proxy_path, proxy_error
+                );
+                if (source_error || proxy_error || source_exists ||
+                    proxy_exists) {
+                    ++it;
+                    continue;
+                }
                 if (!erase_tag_analysis(it->first)) {
                     std::println(
                         "ImageIndex: Failed to remove stale tag analysis for "
@@ -1268,6 +1407,19 @@ public:
                     );
                     ++it;
                     continue;
+                }
+                if (const auto sidecar = seen_sidecars.find(it->first);
+                    sidecar != seen_sidecars.end()) {
+                    std::error_code sidecar_error;
+                    fs::remove(sidecar->second, sidecar_error);
+                    if (sidecar_error) {
+                        std::println(
+                            "ImageIndex: Failed to remove orphan tag sidecar "
+                            "{}: {}",
+                            sung::tostr(sidecar->second),
+                            sidecar_error.message()
+                        );
+                    }
                 }
                 it = tag_analyses_.erase(it);
             }
@@ -1340,6 +1492,11 @@ public:
             return;
         }
 
+        {
+            std::lock_guard refresh_lock{ refresh_mutex_ };
+            current_analyzer_fingerprint_ = info->fingerprint_;
+        }
+
         struct Candidate {
             std::string logical_path_;
             Path input_path_;
@@ -1363,6 +1520,20 @@ public:
                 }
 
                 const auto existing = tag_analyses_.find(file.logical_path_);
+                if (existing != tag_analyses_.end() &&
+                    !existing->second.analysis_.is_null() &&
+                    existing->second.input_path_ != file.tag_input_path_ &&
+                    sung::is_sprintboard_proxy_path(
+                        sung::fromstr(file.tag_input_path_)
+                    )) {
+                    std::error_code old_input_error;
+                    if (!sung::fs::is_regular_file(
+                            sung::fromstr(existing->second.input_path_),
+                            old_input_error
+                        )) {
+                        continue;
+                    }
+                }
                 const bool current_analysis =
                     existing != tag_analyses_.end() &&
                     !existing->second.analysis_.is_null() &&
@@ -1502,6 +1673,16 @@ public:
                     analysis.analysis_ = result.analysis_;
                     analysis.searchable_tags_ = result.searchable_tags_;
                     analysis.analyzed_at_ = now;
+                    analysis.analysis_id_ = sung::make_analysis_id(analysis);
+                    analysis.sidecar_path_ = sung::tostr(
+                        sung::make_sprintboard_tag_sidecar_path(
+                            candidate.input_path_
+                        )
+                    );
+                    analysis.proxy_path_.clear();
+                    analysis.proxy_size_ = 0;
+                    analysis.proxy_modified_time_ = 0;
+                    analysis.proxy_materialization_id_.clear();
                     analysis.failure_count_ = 0;
                     analysis.last_error_.clear();
                     snapshot_changed = true;
@@ -1520,6 +1701,18 @@ public:
                         "ImageTagger: Failed to persist analysis state for {}",
                         candidate.logical_path_
                     );
+                }
+                if (result.error_.empty()) {
+                    const auto sidecar_result = sung::write_tag_sidecar(
+                        sung::fromstr(analysis.sidecar_path_), analysis
+                    );
+                    if (!sidecar_result) {
+                        std::println(
+                            "ImageTagger: Failed to write sidecar for {}: {}",
+                            candidate.logical_path_,
+                            sidecar_result.error()
+                        );
+                    }
                 }
             }
 
@@ -1556,7 +1749,100 @@ public:
         output["generalThreshold"] = found->second.general_threshold_;
         output["characterThreshold"] = found->second.character_threshold_;
         output["analyzedAt"] = found->second.analyzed_at_;
+        output["analysisId"] = found->second.analysis_id_;
+        bool source_missing = false;
+        if (const auto source =
+                sung::sprintboard_proxy_source_path(physical_path)) {
+            std::error_code error;
+            source_missing = !sung::fs::is_regular_file(*source, error) ||
+                             error;
+        }
+        output["sourceMissing"] = source_missing;
         return output;
+    }
+
+    std::optional<TagAnalysisRecord> current_tag_analysis(
+        const Path& source_path, const bool require_current_analyzer
+    ) const {
+        std::lock_guard refresh_lock{ refresh_mutex_ };
+        const auto logical_path = sung::detail::logical_image_key(source_path);
+        const auto found = tag_analyses_.find(logical_path);
+        if (found == tag_analyses_.end() || found->second.analysis_.is_null())
+            return std::nullopt;
+
+        const auto fingerprint = sung::fingerprint_file(source_path);
+        if (!fingerprint ||
+            found->second.input_path_ != sung::tostr(source_path) ||
+            found->second.input_size_ != fingerprint->size_ ||
+            found->second.input_modified_time_ != fingerprint->modified_time_) {
+            return std::nullopt;
+        }
+        if (require_current_analyzer &&
+            !current_analyzer_fingerprint_.empty() &&
+            found->second.analyzer_fingerprint_ !=
+                current_analyzer_fingerprint_) {
+            return std::nullopt;
+        }
+        return found->second;
+    }
+
+    bool proxy_materialization_current(
+        const Path& proxy_path, const std::string_view materialization_id
+    ) const {
+        std::lock_guard refresh_lock{ refresh_mutex_ };
+        const auto logical_path = sung::detail::logical_image_key(proxy_path);
+        const auto found = tag_analyses_.find(logical_path);
+        if (found == tag_analyses_.end() ||
+            found->second.proxy_materialization_id_ != materialization_id ||
+            found->second.proxy_path_ != sung::tostr(proxy_path)) {
+            return false;
+        }
+        const auto fingerprint = sung::fingerprint_file(proxy_path);
+        return fingerprint && found->second.proxy_size_ == fingerprint->size_ &&
+               found->second.proxy_modified_time_ ==
+                   fingerprint->modified_time_;
+    }
+
+    void mark_proxy_materialized(
+        const Path& source_path,
+        const Path& proxy_path,
+        std::string materialization_id
+    ) {
+        std::lock_guard refresh_lock{ refresh_mutex_ };
+        const auto logical_path = sung::detail::logical_image_key(source_path);
+        const auto found = tag_analyses_.find(logical_path);
+        if (found == tag_analyses_.end() || found->second.analysis_.is_null())
+            return;
+        const auto fingerprint = sung::fingerprint_file(proxy_path);
+        if (!fingerprint)
+            return;
+
+        auto& analysis = found->second;
+        analysis.proxy_path_ = sung::tostr(proxy_path);
+        analysis.proxy_size_ = fingerprint->size_;
+        analysis.proxy_modified_time_ = fingerprint->modified_time_;
+        analysis.proxy_materialization_id_ = std::move(materialization_id);
+        if (analysis.sidecar_path_.empty()) {
+            analysis.sidecar_path_ = sung::tostr(
+                sung::make_sprintboard_tag_sidecar_path(source_path)
+            );
+        }
+        if (!persist_tag_analysis(analysis)) {
+            std::println(
+                "ImgWalker: Failed to cache proxy materialization for {}",
+                logical_path
+            );
+        }
+        const auto sidecar_result = sung::write_tag_sidecar(
+            sung::fromstr(analysis.sidecar_path_), analysis
+        );
+        if (!sidecar_result) {
+            std::println(
+                "ImgWalker: Failed to update tag sidecar for {}: {}",
+                logical_path,
+                sidecar_result.error()
+            );
+        }
     }
 
     ImageListResponse query(
@@ -1676,6 +1962,7 @@ private:
     bool database_dirty_ = false;
     std::unordered_map<std::string, CachedMetadata> metadata_;
     std::unordered_map<std::string, CachedTagAnalysis> tag_analyses_;
+    std::string current_analyzer_fingerprint_;
     std::shared_ptr<const IndexSnapshot> snapshot_;
     mutable std::mutex refresh_mutex_;
     mutable std::mutex snapshot_mutex_;
@@ -1786,6 +2073,32 @@ namespace sung {
         const Path& physical_path
     ) const {
         return impl_->tag_analysis(physical_path);
+    }
+
+    std::optional<TagAnalysisRecord> ImageIndex::current_tag_analysis(
+        const Path& source_path, const bool require_current_analyzer
+    ) const {
+        return impl_->current_tag_analysis(
+            source_path, require_current_analyzer
+        );
+    }
+
+    bool ImageIndex::proxy_materialization_current(
+        const Path& proxy_path, const std::string_view materialization_id
+    ) const {
+        return impl_->proxy_materialization_current(
+            proxy_path, materialization_id
+        );
+    }
+
+    void ImageIndex::mark_proxy_materialized(
+        const Path& source_path,
+        const Path& proxy_path,
+        std::string materialization_id
+    ) {
+        impl_->mark_proxy_materialized(
+            source_path, proxy_path, std::move(materialization_id)
+        );
     }
 
 }  // namespace sung

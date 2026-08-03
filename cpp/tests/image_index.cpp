@@ -7,6 +7,7 @@
 
 #include "image_query.hpp"
 #include "index/image_index.hpp"
+#include "sung/auxiliary/filesys.hpp"
 
 
 namespace {
@@ -32,7 +33,7 @@ namespace {
         return response.make_json(0, 100)["totalImageCount"].get<size_t>();
     }
 
-    bool downgrade_database_to_version_one(const sung::Path& database_path) {
+    bool downgrade_database_to_version_three(const sung::Path& database_path) {
         sqlite3* database = nullptr;
         const auto path = sung::tostr(database_path);
         if (sqlite3_open(path.c_str(), &database) != SQLITE_OK) {
@@ -43,22 +44,36 @@ namespace {
         const auto result = sqlite3_exec(
             database,
             "BEGIN IMMEDIATE;"
-            "ALTER TABLE image_metadata RENAME TO image_metadata_v2;"
-            "CREATE TABLE image_metadata ("
-            "physical_path TEXT PRIMARY KEY,"
-            "file_size INTEGER NOT NULL,"
-            "modified_time INTEGER NOT NULL,"
-            "eligible INTEGER NOT NULL,"
-            "width INTEGER NOT NULL,"
-            "height INTEGER NOT NULL,"
-            "model TEXT NOT NULL,"
-            "prompts_json TEXT NOT NULL"
+            "ALTER TABLE image_tag_analysis RENAME TO "
+            "image_tag_analysis_v4;"
+            "CREATE TABLE image_tag_analysis ("
+            "logical_path TEXT PRIMARY KEY,"
+            "input_path TEXT NOT NULL DEFAULT '',"
+            "input_size INTEGER NOT NULL DEFAULT 0,"
+            "input_modified_time INTEGER NOT NULL DEFAULT 0,"
+            "analyzer_fingerprint TEXT NOT NULL DEFAULT '',"
+            "model_id TEXT NOT NULL DEFAULT '',"
+            "general_threshold REAL NOT NULL DEFAULT 0,"
+            "character_threshold REAL NOT NULL DEFAULT 0,"
+            "analysis_json TEXT NOT NULL DEFAULT '',"
+            "analyzed_at INTEGER NOT NULL DEFAULT 0,"
+            "attempt_input_path TEXT NOT NULL DEFAULT '',"
+            "attempt_input_size INTEGER NOT NULL DEFAULT 0,"
+            "attempt_input_modified_time INTEGER NOT NULL DEFAULT 0,"
+            "attempt_analyzer_fingerprint TEXT NOT NULL DEFAULT '',"
+            "last_attempt_at INTEGER NOT NULL DEFAULT 0,"
+            "failure_count INTEGER NOT NULL DEFAULT 0,"
+            "last_error TEXT NOT NULL DEFAULT ''"
             ");"
-            "INSERT INTO image_metadata "
-            "SELECT physical_path, file_size, modified_time, eligible, width, "
-            "height, model, prompts_json FROM image_metadata_v2;"
-            "DROP TABLE image_metadata_v2;"
-            "PRAGMA user_version=1;"
+            "INSERT INTO image_tag_analysis SELECT logical_path, input_path, "
+            "input_size, input_modified_time, analyzer_fingerprint, model_id, "
+            "general_threshold, character_threshold, analysis_json, "
+            "analyzed_at, attempt_input_path, attempt_input_size, "
+            "attempt_input_modified_time, attempt_analyzer_fingerprint, "
+            "last_attempt_at, failure_count, last_error FROM "
+            "image_tag_analysis_v4;"
+            "DROP TABLE image_tag_analysis_v4;"
+            "PRAGMA user_version=3;"
             "COMMIT;",
             nullptr,
             nullptr,
@@ -68,7 +83,7 @@ namespace {
         return result == SQLITE_OK;
     }
 
-    bool has_version_three_tag_table(
+    bool has_version_four_tag_table(
         const sung::Path& database_path, const size_t expected_count
     ) {
         sqlite3* database = nullptr;
@@ -118,7 +133,7 @@ namespace {
         }
         sqlite3_finalize(statement);
         sqlite3_close(database);
-        return schema_version == 3 && tag_table_exists &&
+        return schema_version == 4 && tag_table_exists &&
                timestamp_count == expected_count;
     }
 
@@ -424,8 +439,8 @@ int main() {
     }
 
     if (!check(
-            downgrade_database_to_version_one(database_path),
-            "creates a version-one migration fixture"
+            downgrade_database_to_version_three(database_path),
+            "creates a version-three migration fixture"
         )) {
         sung::fs::remove_all(temp);
         return 1;
@@ -451,8 +466,8 @@ int main() {
                 "returns persisted tags from image details lookup"
             ) ||
             !check(
-                has_version_three_tag_table(database_path, 2),
-                "migrates sort timestamps and creates the tag table"
+                has_version_four_tag_table(database_path, 2),
+                "migrates the tag cache from schema three to four"
             )) {
             sung::fs::remove_all(temp);
             return 1;
@@ -580,6 +595,16 @@ int main() {
         sung::fs::copy_file(
             source_avif, image_root / "shadow.png.sprintboard.avif"
         );
+        if (!check(
+                !sung::copy_file_timestamps(
+                    image_root / "shadow.png",
+                    image_root / "shadow.png.sprintboard.avif"
+                ),
+                "aligns the managed proxy timestamp"
+            )) {
+            sung::fs::remove_all(temp);
+            return 1;
+        }
         index.refresh(configs);
         const auto shadow_files = index.query(sung::fromstr("test"), "", true)
                                       .make_json(0, 100)["imageFiles"];
@@ -691,6 +716,15 @@ int main() {
     }
     const auto paired_proxy = source_date_root / "paired.png.sprintboard.avif";
     sung::fs::copy_file(source_avif, paired_proxy);
+    if (!check(
+            !sung::copy_file_timestamps(
+                source_date_root / "paired.png", paired_proxy
+            ),
+            "aligns the source-date proxy timestamp"
+        )) {
+        sung::fs::remove_all(temp);
+        return 1;
+    }
     {
         sung::ImageIndex index{ source_date_database };
         index.initialize(source_date_configs);
@@ -743,6 +777,168 @@ int main() {
                     orphan[0]["name"] == "paired.png.sprintboard.avif" &&
                     orphan[0]["src"] == "/img/test/paired.png.sprintboard.avif",
                 "lists an orphan proxy using its physical filename"
+            )) {
+            sung::fs::remove_all(temp);
+            return 1;
+        }
+    }
+
+    const auto sidecar_root = temp / "sidecar-images";
+    const auto sidecar_database = temp / "sidecar.sqlite3";
+    const auto sidecar_source = sidecar_root / "tagged.png";
+    const auto sidecar_proxy = sung::make_sprintboard_proxy_path(
+        sidecar_source
+    );
+    const auto sidecar_path = sung::make_sprintboard_tag_sidecar_path(
+        sidecar_source
+    );
+    sung::fs::create_directories(sidecar_root);
+    sung::fs::copy_file(source_png, sidecar_source);
+    sung::fs::copy_file(source_avif, sidecar_proxy);
+    if (!check(
+            !sung::copy_file_timestamps(sidecar_source, sidecar_proxy),
+            "aligns the sidecar fixture proxy timestamp"
+        )) {
+        sung::fs::remove_all(temp);
+        return 1;
+    }
+
+    sung::TagAnalysisRecord sidecar_record;
+    sidecar_record.logical_path_ = sung::detail::logical_image_key(
+        sidecar_source
+    );
+    sidecar_record.input_path_ = sung::tostr(sidecar_source);
+    const auto sidecar_input_fingerprint = sung::fingerprint_file(
+        sidecar_source
+    );
+    if (!check(
+            sidecar_input_fingerprint.has_value(),
+            "fingerprints a sidecar source"
+        )) {
+        sung::fs::remove_all(temp);
+        return 1;
+    }
+    sidecar_record.input_size_ = sidecar_input_fingerprint->size_;
+    sidecar_record.input_modified_time_ =
+        sidecar_input_fingerprint->modified_time_;
+    sidecar_record.analyzer_fingerprint_ = "sidecar-analyzer";
+    sidecar_record.model_id_ = "sidecar-model";
+    sidecar_record.general_threshold_ = 0.35;
+    sidecar_record.character_threshold_ = 0.75;
+    sidecar_record.analyzed_at_ = 456;
+    sidecar_record.analysis_ = {
+        { "ratings",
+          nlohmann::json::array(
+              { { { "name", "safe" }, { "confidence", 0.99 } } }
+          ) },
+        { "generalTags",
+          nlohmann::json::array(
+              { { { "name", "sidecar_tag" }, { "confidence", 0.88 } } }
+          ) },
+        { "characterTags", nlohmann::json::array() },
+    };
+    sidecar_record.searchable_tags_ = { "sidecar_tag" };
+    sidecar_record.analysis_id_ = sung::make_analysis_id(sidecar_record);
+    sidecar_record.sidecar_path_ = sung::tostr(sidecar_path);
+    auto malformed_sidecar = sung::make_tag_sidecar_json(sidecar_record);
+    malformed_sidecar["generalTags"][0]["confidence"] = 2.0;
+    if (!check(
+            !sung::parse_tag_sidecar_json(malformed_sidecar, sidecar_path),
+            "rejects an out-of-range sidecar confidence"
+        )) {
+        sung::fs::remove_all(temp);
+        return 1;
+    }
+    const auto sidecar_write = sung::write_tag_sidecar(
+        sidecar_path, sidecar_record
+    );
+    if (!check(sidecar_write.has_value(), "writes a valid tag sidecar")) {
+        sung::fs::remove_all(temp);
+        return 1;
+    }
+
+    const auto sidecar_configs = make_configs(sidecar_root);
+    {
+        sung::ImageIndex index{ sidecar_database };
+        index.initialize(sidecar_configs);
+        const auto details = index.tag_analysis(sidecar_proxy);
+        if (!check(
+                image_count(index, "sidecar_tag") == 1,
+                "rebuilds searchable analysis from a sidecar"
+            ) ||
+            !check(
+                index.current_tag_analysis(sidecar_source).has_value(),
+                "accepts current sidecar analysis for proxy generation"
+            ) ||
+            !check(
+                details &&
+                    details->at("analysisId") == sidecar_record.analysis_id_ &&
+                    !details->at("sourceMissing").get<bool>(),
+                "returns imported sidecar details"
+            )) {
+            sung::fs::remove_all(temp);
+            return 1;
+        }
+    }
+
+    sung::fs::remove(sidecar_path);
+    {
+        sung::ImageIndex index{ sidecar_database };
+        index.initialize(sidecar_configs);
+        if (!check(
+                image_count(index, "sidecar_tag") == 1,
+                "uses SQLite when the sidecar is unavailable"
+            )) {
+            sung::fs::remove_all(temp);
+            return 1;
+        }
+        const auto rewrite = sung::write_tag_sidecar(
+            sidecar_path, sidecar_record
+        );
+        if (!check(
+                rewrite.has_value(), "restores the orphan sidecar fixture"
+            )) {
+            sung::fs::remove_all(temp);
+            return 1;
+        }
+        sung::fs::remove(sidecar_source);
+        index.refresh(sidecar_configs);
+        const auto orphan_details = index.tag_analysis(sidecar_proxy);
+        if (!check(
+                image_count(index, "sidecar_tag") == 1,
+                "keeps sidecar tags for an orphan proxy"
+            ) ||
+            !check(
+                orphan_details &&
+                    orphan_details->at("sourceMissing").get<bool>(),
+                "marks an orphan proxy analysis as source missing"
+            )) {
+            sung::fs::remove_all(temp);
+            return 1;
+        }
+
+        sung::fs::remove(sidecar_proxy);
+        if (!check(
+                sung::write_file(sidecar_source, std::string{ "not an image" }),
+                "creates an unreadable source fixture"
+            )) {
+            sung::fs::remove_all(temp);
+            return 1;
+        }
+        index.refresh(sidecar_configs);
+        if (!check(
+                sung::fs::exists(sidecar_path) &&
+                    index.tag_analysis(sidecar_source).has_value(),
+                "retains analysis while an unreadable source still exists"
+            )) {
+            sung::fs::remove_all(temp);
+            return 1;
+        }
+        sung::fs::remove(sidecar_source);
+        index.refresh(sidecar_configs);
+        if (!check(
+                !sung::fs::exists(sidecar_path),
+                "removes a sidecar after confirmed source and proxy deletion"
             )) {
             sung::fs::remove_all(temp);
             return 1;

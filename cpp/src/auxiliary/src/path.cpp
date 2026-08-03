@@ -80,4 +80,33 @@ namespace sung {
         return proxy_path.parent_path() / fromstr(filename);
     }
 
+    Path make_sprintboard_tag_sidecar_path(const Path& image_path) {
+        const auto logical_path =
+            sprintboard_proxy_source_path(image_path).value_or(image_path);
+        return path_concat(
+            logical_path, std::string{ SPRINTBOARD_TAG_SIDECAR_SUFFIX }
+        );
+    }
+
+    bool is_sprintboard_tag_sidecar_path(const Path& path) {
+        const auto filename = tostr(path.filename());
+        return filename.size() > SPRINTBOARD_TAG_SIDECAR_SUFFIX.size() &&
+               ends_with_case_insensitive(
+                   filename, SPRINTBOARD_TAG_SIDECAR_SUFFIX
+               );
+    }
+
+    std::optional<Path> sprintboard_tag_sidecar_source_path(
+        const Path& sidecar_path
+    ) {
+        if (!is_sprintboard_tag_sidecar_path(sidecar_path))
+            return std::nullopt;
+
+        auto filename = tostr(sidecar_path.filename());
+        filename.resize(
+            filename.size() - SPRINTBOARD_TAG_SIDECAR_SUFFIX.size()
+        );
+        return sidecar_path.parent_path() / fromstr(filename);
+    }
+
 }  // namespace sung

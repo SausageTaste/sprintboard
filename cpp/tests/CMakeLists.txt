@@ -76,6 +76,7 @@ add_executable(
     image_index.cpp
     ../src/server/src/index/image_index.cpp
     ../src/server/src/response/img_list.cpp
+    ../src/server/src/tag_sidecar.cpp
     ../src/server/src/tagger_client.cpp
 )
 add_test(NAME ${PROJECT_NAME}_test_image_index COMMAND ${PROJECT_NAME}_test_image_index)
@@ -90,3 +91,38 @@ target_link_libraries(
     TBB::tbb
     unofficial::sqlite3::sqlite3
 )
+
+add_executable(
+    ${PROJECT_NAME}_test_img_walker
+    img_walker.cpp
+    ../src/server/src/index/image_index.cpp
+    ../src/server/src/response/img_list.cpp
+    ../src/server/src/tag_sidecar.cpp
+    ../src/server/src/tagger_client.cpp
+    ../src/server/src/task/img_walker.cpp
+    ../src/server/src/util/wake.cpp
+)
+add_test(
+    NAME ${PROJECT_NAME}_test_img_walker
+    COMMAND ${PROJECT_NAME}_test_img_walker
+)
+set_target_properties(
+    ${PROJECT_NAME}_test_img_walker PROPERTIES FOLDER "${PROJECT_NAME}/test"
+)
+target_include_directories(
+    ${PROJECT_NAME}_test_img_walker PRIVATE ../src/server/src
+)
+target_link_libraries(
+    ${PROJECT_NAME}_test_img_walker
+    httplib::httplib
+    sprintboard_img
+    TBB::tbb
+    unofficial::sqlite3::sqlite3
+)
+if (APPLE)
+    target_link_libraries(
+        ${PROJECT_NAME}_test_img_walker
+        "-framework CoreFoundation"
+        "-framework IOKit"
+    )
+endif()

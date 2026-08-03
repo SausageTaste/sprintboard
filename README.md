@@ -145,7 +145,7 @@ If you modify these values, the changes will take effect as soon as possible, wi
 
 |Key |Description
 |- |-
-|`avif_gen` |Generate an AVIF proxy for each PNG source. A source such as `img.png` produces `img.png.sprintboard.avif`; Sprintboard serves the proxy without modifying the source.
+|`avif_gen` |Generate an AVIF proxy for each PNG source. A source such as `img.png` produces `img.png.sprintboard.avif`. When tagging is enabled, current analysis is required before a new proxy is encoded.
 |`avif_gen_remove_src` |Retained for configuration compatibility but not implemented. Sources are removed only by an explicit gallery delete action.
 |`avif_quality` |Quality option for AVIF encoder.
 |`avif_speed` |Speed option for AVIF encoder.
@@ -181,10 +181,61 @@ MPS, then CPU unless `--device` is supplied. Other options include
 `--character-threshold`.
 
 Set `tagger_enabled` to `true` in `server_configs.json` after starting the
-service. Sprintboard stores results in `.sprintboard/image-index.sqlite3` and
-does not modify image files. A generated `image.png.sprintboard.avif` shares
-the absolute normalized logical key of `image.png`; if that source exists, it
-is used for inference.
+service. A generated `image.png.sprintboard.avif` shares the absolute
+normalized logical key of `image.png`; if that source exists, it is used for
+inference. When tagging is enabled, a new proxy waits for successful current
+analysis. Existing proxies remain usable while replacement analysis is
+pending, and a stale proxy never hides a changed source image.
+
+Successful analysis is written beside the image as a JSON sidecar:
+
+```text
+image.png
+image.png.sprintboard.tags.json
+image.png.sprintboard.avif
+```
+
+The versioned sidecar records the logical path, analyzed-input fingerprint,
+deterministic analysis ID, analyzer metadata, scored ratings/general/character
+groups, and the optional materialized-proxy fingerprint. Sidecars are written
+atomically. SQLite schema v4 caches the same successful result for fast search,
+along with retry and proxy state. A valid sidecar can rebuild the cache; when a
+directory is read-only, a database-only result can still authorize generation.
+
+```json
+{
+  "schemaVersion": 1,
+  "logicalPath": "/absolute/normalized/path/image.png",
+  "input": { "path": "/absolute/normalized/path/image.png", "size": 1234, "modifiedTime": 5678 },
+  "analysisId": "deterministic-id",
+  "analyzerFingerprint": "model-and-threshold-fingerprint",
+  "modelId": "SmilingWolf/wd-eva02-large-tagger-v3",
+  "generalThreshold": 0.35,
+  "characterThreshold": 0.85,
+  "analyzedAt": 1785729600,
+  "ratings": [{ "name": "safe", "confidence": 0.99 }],
+  "generalTags": [{ "name": "outdoors", "confidence": 0.91 }],
+  "characterTags": []
+}
+```
+
+The AVIF encoder embeds the scored analysis as a Sprintboard-specific
+`tagAnalysis` JSON value in XMP while encoding directly from the source PNG.
+It does not publish standard `dc:subject` keywords and does not put the source's
+absolute path in the AVIF. No ExifTool process or post-encode metadata rewrite
+is required.
+
+If the source is deleted but its managed proxy remains, Sprintboard keeps the
+sidecar and searchable analysis and reports the source as missing in Image
+Details. If the source later returns, its fingerprint is checked before the
+analysis is reused. Analysis and sidecars are removed only after an accessible
+root confirms that neither source nor proxy exists; temporarily unavailable
+roots retain their last known state. The gallery delete action removes the
+source, managed proxy, and sidecar together.
+
+If the tagging service is unavailable, indexing and HTTP requests continue.
+With tagging enabled, only missing or stale proxy generation waits for the
+service; already-current proxies remain available.
 
 The versioned HTTP interface consists of `GET /v1/info` and
 `POST /v1/analyze`. The latter accepts JSON shaped as

@@ -4,6 +4,7 @@
 #include <sstream>
 #include <string_view>
 
+#include <nlohmann/json.hpp>
 #include <pugixml.hpp>
 
 
@@ -37,7 +38,9 @@ namespace {
 
 namespace sung {
 
-    std::string make_xmp_packet(const PngMeta& src) {
+    std::string make_xmp_packet_impl(
+        const PngMeta& src, const nlohmann::json* tag_analysis
+    ) {
         pugi::xml_document doc;
 
         std::string xpacket_begin = "begin=\"";
@@ -69,6 +72,11 @@ namespace sung {
             append_cdata_safely(node, kv.value);
         }
 
+        if (tag_analysis) {
+            auto node = desc.append_child("sprintboard:tagAnalysis");
+            append_cdata_safely(node, tag_analysis->dump());
+        }
+
         auto pi_end = doc.append_child(pugi::node_pi);
         pi_end.set_name("xpacket");
         pi_end.set_value(R"(end="w")");
@@ -81,6 +89,16 @@ namespace sung {
             pugi::encoding_utf8
         );
         return oss.str();
+    }
+
+    std::string make_xmp_packet(const PngMeta& src) {
+        return make_xmp_packet_impl(src, nullptr);
+    }
+
+    std::string make_xmp_packet(
+        const PngMeta& src, const nlohmann::json& tag_analysis
+    ) {
+        return make_xmp_packet_impl(src, &tag_analysis);
     }
 
 }  // namespace sung

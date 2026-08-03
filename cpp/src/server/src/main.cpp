@@ -210,7 +210,9 @@ int main() {
     tasks.add_periodic_task([&server_configs]() { server_configs.tick(); }, 1);
 
     tasks.add_periodic_task(
-        sung::create_img_walker_task(server_configs, power_req->get()),
+        sung::create_img_walker_task(
+            server_configs, power_req->get(), image_index
+        ),
         sung::AVIF_ENCODE_TIME_INTERVAL
     );
 
@@ -487,7 +489,11 @@ int main() {
 
         const auto paths = sung::image_source_proxy_paths(*full_path);
 
-        for (const auto& file_path : { paths.source_, paths.proxy_ }) {
+        const auto sidecar_path = sung::make_sprintboard_tag_sidecar_path(
+            paths.source_
+        );
+        for (const auto& file_path :
+             { paths.source_, paths.proxy_, sidecar_path }) {
             std::error_code file_error;
             if (!sung::fs::is_regular_file(file_path, file_error) || file_error)
                 continue;

@@ -4,6 +4,7 @@
 #include <string>
 #include <string_view>
 
+#include <nlohmann/json.hpp>
 #include <pugixml.hpp>
 
 #include "sung/auxiliary/path.hpp"
@@ -105,6 +106,37 @@ int main() {
             std::string(restored_workflow.begin(), restored_workflow.end()) ==
                 workflow,
             "workflow containing ]]> did not round-trip"
+        )) {
+        return 1;
+    }
+
+    const auto tag_analysis = nlohmann::json{
+        { "schemaVersion", 1 },
+        { "analysisId", "fixture-analysis" },
+        { "ratings",
+          nlohmann::json::array(
+              { { { "name", "safe" }, { "confidence", 0.99 } } }
+          ) },
+        { "generalTags", nlohmann::json::array() },
+        { "characterTags", nlohmann::json::array() },
+    };
+    const auto tagged_packet = sung::make_xmp_packet(synthetic, tag_analysis);
+    pugi::xml_document tagged_doc;
+    const auto tagged_parse = tagged_doc.load_buffer(
+        tagged_packet.data(), tagged_packet.size(), pugi::parse_full
+    );
+    const auto tag_node = find_node_by_name(
+        tagged_doc, "sprintboard:tagAnalysis"
+    );
+    if (!check(tagged_parse, "tagged XMP is invalid") ||
+        !check(tag_node, "tagged XMP is missing structured analysis") ||
+        !check(
+            nlohmann::json::parse(collect_text(tag_node)) == tag_analysis,
+            "structured tag analysis did not round-trip"
+        ) ||
+        !check(
+            !find_node_by_name(tagged_doc, "dc:subject"),
+            "tagged XMP unexpectedly publishes standard keywords"
         )) {
         return 1;
     }

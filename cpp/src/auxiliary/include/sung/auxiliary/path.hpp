@@ -28,10 +28,21 @@ namespace sung {
     inline constexpr std::string_view SPRINTBOARD_PROXY_SUFFIX =
         ".sprintboard.avif";
 
+    inline constexpr std::string_view SPRINTBOARD_TAG_SIDECAR_SUFFIX =
+        ".sprintboard.tags.json";
+
     Path make_sprintboard_proxy_path(const Path& source_path);
 
     bool is_sprintboard_proxy_path(const Path& path);
 
     std::optional<Path> sprintboard_proxy_source_path(const Path& proxy_path);
+
+    Path make_sprintboard_tag_sidecar_path(const Path& image_path);
+
+    bool is_sprintboard_tag_sidecar_path(const Path& path);
+
+    std::optional<Path> sprintboard_tag_sidecar_source_path(
+        const Path& sidecar_path
+    );
 
 }  // namespace sung

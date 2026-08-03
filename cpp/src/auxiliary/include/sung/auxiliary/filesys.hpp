@@ -16,6 +16,10 @@ namespace sung {
 
     bool write_file(const Path& path, const void* data, size_t size);
 
+    bool write_file_atomically(
+        const Path& path, const void* data, size_t size, std::error_code& error
+    );
+
     // Captured by `read_file_timestamps`, applied by `set_file_timestamps`.
     // Treat the contents as opaque; the fields differ per platform.
     struct FileTimestamps {
@@ -43,6 +47,18 @@ namespace sung {
             path,
             static_cast<const void*>(data.data()),
             data.size() * sizeof(typename TContainer::value_type)
+        );
+    }
+
+    template <typename TContainer>
+    bool write_file_atomically(
+        const Path& path, const TContainer& data, std::error_code& error
+    ) {
+        return write_file_atomically(
+            path,
+            static_cast<const void*>(data.data()),
+            data.size() * sizeof(typename TContainer::value_type),
+            error
         );
     }
 

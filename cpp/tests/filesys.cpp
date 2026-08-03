@@ -80,6 +80,9 @@ int main() {
     const auto unicode_proxy = sung::fromstr(
         "folder/Émilie.final.PNG.sprintboard.avif"
     );
+    const auto unicode_sidecar = sung::fromstr(
+        "folder/Émilie.final.PNG.sprintboard.tags.json"
+    );
     auto success =
         check(
             sung::make_sprintboard_proxy_path(unicode_source) == unicode_proxy,
@@ -101,6 +104,19 @@ int main() {
                 sung::fromstr(".sprintboard.avif")
             ),
             "rejects an empty source filename"
+        ) &&
+        check(
+            sung::make_sprintboard_tag_sidecar_path(unicode_source) ==
+                    unicode_sidecar &&
+                sung::make_sprintboard_tag_sidecar_path(unicode_proxy) ==
+                    unicode_sidecar,
+            "maps a source and proxy to one tag sidecar"
+        ) &&
+        check(
+            sung::is_sprintboard_tag_sidecar_path(
+                sung::fromstr("image.png.SPRINTBOARD.TAGS.JSON")
+            ),
+            "recognizes the sidecar suffix case-insensitively"
         );
     const auto recovered_source = sung::sprintboard_proxy_source_path(
         unicode_proxy
@@ -113,6 +129,11 @@ int main() {
         check(
             !sung::sprintboard_proxy_source_path(sung::fromstr("legacy.avif")),
             "does not classify a legacy AVIF as a proxy"
+        ) &&
+        check(
+            sung::sprintboard_tag_sidecar_source_path(unicode_sidecar) ==
+                unicode_source,
+            "recovers the logical source from a tag sidecar"
         ) &&
         success;
 
@@ -132,6 +153,16 @@ int main() {
     if (!check(sung::write_file(source, contents), "writes source file") ||
         !check(
             sung::write_file(destination, contents), "writes destination file"
+        )) {
+        sung::fs::remove_all(temp, error);
+        return 1;
+    }
+
+    const std::vector<uint8_t> replacement{ 4, 5, 6, 7 };
+    if (!check(
+            sung::write_file_atomically(destination, replacement, error) &&
+                !error && sung::read_file(destination) == replacement,
+            "atomically replaces a file"
         )) {
         sung::fs::remove_all(temp, error);
         return 1;
