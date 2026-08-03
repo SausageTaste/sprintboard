@@ -19,6 +19,7 @@ type ImageFileInfo = {
     thumb?: string;
     w?: number;
     h?: number;
+    sortTimeMs?: number | null;
 };
 
 type FolderInfo = {
@@ -46,6 +47,29 @@ const IMAGE_SORT_OPTIONS: ReadonlyArray<{ value: ImageSortOrder; label: string }
     { value: "name-asc", label: "Name A–Z" },
     { value: "name-desc", label: "Name Z–A" },
 ];
+const IMAGE_DATETIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+});
+
+type FormattedDateTime = {
+    display: string;
+    iso: string;
+};
+
+function formatImageDateTime(sortTimeMs: number | null | undefined): FormattedDateTime | null {
+    if (sortTimeMs === null || sortTimeMs === undefined)
+        return null;
+
+    const date = new Date(sortTimeMs);
+    if (Number.isNaN(date.getTime()))
+        return null;
+
+    return {
+        display: IMAGE_DATETIME_FORMATTER.format(date),
+        iso: date.toISOString(),
+    };
+}
 
 type SafeAreaInsets = {
     top: number;
@@ -548,6 +572,7 @@ export default function Gallery({ settings, onChangeSettings }: GalleryProps) {
     const [searchBoxText, setSearchBoxText] = React.useState(settings.searchText || "");
     const [sortMenuOpen, setSortMenuOpen] = React.useState(false);
     const effectiveThumbnailSize = Math.max(MIN_THUMBNAIL_SIZE, settings.thumbnailSize);
+    const isListView = settings.imageViewMode === "list";
     const currentSortLabel = IMAGE_SORT_OPTIONS.find(option => option.value === settings.imageSortOrder)?.label
         ?? "Image order";
 
@@ -1317,10 +1342,22 @@ export default function Gallery({ settings, onChangeSettings }: GalleryProps) {
         };
     }, [settings.imageSortOrder, sortMenuOpen]);
 
-    const selectImageSortOrder = (imageSortOrder: ImageSortOrder) => {
+    const changeImageSortOrder = (imageSortOrder: ImageSortOrder) => {
         onChangeSettings(current => ({ ...current, imageSortOrder }));
+    };
+
+    const selectImageSortOrder = (imageSortOrder: ImageSortOrder) => {
+        changeImageSortOrder(imageSortOrder);
         setSortMenuOpen(false);
         sortButtonRef.current?.focus();
+    };
+
+    const toggleNameSortOrder = () => {
+        changeImageSortOrder(settings.imageSortOrder === "name-asc" ? "name-desc" : "name-asc");
+    };
+
+    const toggleDateSortOrder = () => {
+        changeImageSortOrder(settings.imageSortOrder === "date-desc" ? "date-asc" : "date-desc");
     };
 
     return (
@@ -1354,106 +1391,236 @@ export default function Gallery({ settings, onChangeSettings }: GalleryProps) {
                     />
                 </form>
 
-                <div className="gallery-sort" ref={sortMenuRef}>
-                    <button
-                        ref={sortButtonRef}
-                        className="gallery-sort-button"
-                        type="button"
-                        aria-label={`Sort images. Current order: ${currentSortLabel}`}
-                        aria-haspopup="menu"
-                        aria-expanded={sortMenuOpen}
-                        title={`Sort images: ${currentSortLabel}`}
-                        onClick={() => setSortMenuOpen(open => !open)}
-                    >
-                        <svg viewBox="0 0 24 24" aria-hidden="true">
-                            <path d="M4 6h10M4 12h7M4 18h4M18 5v14m-3-3 3 3 3-3" />
-                        </svg>
-                    </button>
+                <div className="gallery-toolbar-actions">
+                    <div className="gallery-sort" ref={sortMenuRef}>
+                        <button
+                            ref={sortButtonRef}
+                            className="gallery-sort-button"
+                            type="button"
+                            aria-label={`Sort images. Current order: ${currentSortLabel}`}
+                            aria-haspopup="menu"
+                            aria-expanded={sortMenuOpen}
+                            title={`Sort images: ${currentSortLabel}`}
+                            onClick={() => setSortMenuOpen(open => !open)}
+                        >
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M4 6h10M4 12h7M4 18h4M18 5v14m-3-3 3 3 3-3" />
+                            </svg>
+                        </button>
 
-                    {sortMenuOpen && (
-                        <div className="gallery-sort-menu" role="menu" aria-label="Image order">
-                            {IMAGE_SORT_OPTIONS.map(option => {
-                                const selected = option.value === settings.imageSortOrder;
-                                return (
-                                    <button
-                                        key={option.value}
-                                        className={`gallery-sort-option${selected ? " selected" : ""}`}
-                                        type="button"
-                                        role="menuitemradio"
-                                        aria-checked={selected}
-                                        data-sort-order={option.value}
-                                        onClick={() => selectImageSortOrder(option.value)}
-                                    >
-                                        <span>{option.label}</span>
-                                        <span className="gallery-sort-check" aria-hidden="true">✓</span>
-                                    </button>
-                                );
-                            })}
-                        </div>
-                    )}
+                        {sortMenuOpen && (
+                            <div className="gallery-sort-menu" role="menu" aria-label="Image order">
+                                {IMAGE_SORT_OPTIONS.map(option => {
+                                    const selected = option.value === settings.imageSortOrder;
+                                    return (
+                                        <button
+                                            key={option.value}
+                                            className={`gallery-sort-option${selected ? " selected" : ""}`}
+                                            type="button"
+                                            role="menuitemradio"
+                                            aria-checked={selected}
+                                            data-sort-order={option.value}
+                                            onClick={() => selectImageSortOrder(option.value)}
+                                        >
+                                            <span>{option.label}</span>
+                                            <span className="gallery-sort-check" aria-hidden="true">✓</span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="gallery-view-toggle" role="group" aria-label="Image view">
+                        <button
+                            className="gallery-view-button"
+                            type="button"
+                            aria-label="Grid view"
+                            aria-pressed={!isListView}
+                            title="Grid view"
+                            onClick={() => onChangeSettings(current => ({ ...current, imageViewMode: "grid" }))}
+                        >
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <rect x="4" y="4" width="6" height="6" rx="1" />
+                                <rect x="14" y="4" width="6" height="6" rx="1" />
+                                <rect x="4" y="14" width="6" height="6" rx="1" />
+                                <rect x="14" y="14" width="6" height="6" rx="1" />
+                            </svg>
+                        </button>
+                        <button
+                            className="gallery-view-button"
+                            type="button"
+                            aria-label="List view"
+                            aria-pressed={isListView}
+                            title="List view"
+                            onClick={() => onChangeSettings(current => ({ ...current, imageViewMode: "list" }))}
+                        >
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M9 6h11M9 12h11M9 18h11" />
+                                <rect x="4" y="4" width="2.5" height="2.5" rx=".5" />
+                                <rect x="4" y="10.75" width="2.5" height="2.5" rx=".5" />
+                                <rect x="4" y="17.5" width="2.5" height="2.5" rx=".5" />
+                            </svg>
+                        </button>
+                    </div>
                 </div>
             </div>
 
             <div style={{ height: 12 }} />
 
-            <div
-                style={{
-                    display: "grid",
-                    gridTemplateColumns: `repeat(auto-fill, minmax(${effectiveThumbnailSize}px, 1fr))`,
-                    gap: 12,
-                }}
-            >
-                {folders.map((d) => (
-                    <FolderCard key={d.path} name={d.name} onClick={() => navigate(`/images/${d.path}`)} />
-                ))}
-            </div>
+            {isListView ? (
+                <div className="gallery-list" role="region" aria-label="Images and folders">
+                    <div className="gallery-list-header">
+                        <div className="gallery-list-thumbnail-heading" role="columnheader">Thumbnail</div>
+                        <div
+                            className="gallery-list-column-heading"
+                            role="columnheader"
+                            aria-sort={settings.imageSortOrder === "name-asc"
+                                ? "ascending"
+                                : settings.imageSortOrder === "name-desc" ? "descending" : "none"}
+                        >
+                            <button type="button" onClick={toggleNameSortOrder}>
+                                <span>Name</span>
+                                <span className="gallery-list-sort-indicator" aria-hidden="true">
+                                    {settings.imageSortOrder === "name-asc"
+                                        ? "↑"
+                                        : settings.imageSortOrder === "name-desc" ? "↓" : ""}
+                                </span>
+                            </button>
+                        </div>
+                        <div
+                            className="gallery-list-column-heading gallery-list-datetime"
+                            role="columnheader"
+                            aria-sort={settings.imageSortOrder === "date-asc"
+                                ? "ascending"
+                                : settings.imageSortOrder === "date-desc" ? "descending" : "none"}
+                        >
+                            <button type="button" onClick={toggleDateSortOrder}>
+                                <span>Datetime</span>
+                                <span className="gallery-list-sort-indicator" aria-hidden="true">
+                                    {settings.imageSortOrder === "date-asc"
+                                        ? "↑"
+                                        : settings.imageSortOrder === "date-desc" ? "↓" : ""}
+                                </span>
+                            </button>
+                        </div>
+                    </div>
 
-            <div style={{ height: 12 }} />
+                    <div className="gallery-list-folders">
+                        {folders.map(folder => (
+                            <button
+                                key={folder.path}
+                                className="gallery-list-row gallery-list-folder-row"
+                                type="button"
+                                aria-label={`Open folder ${folder.name}`}
+                                onClick={() => navigate(`/images/${folder.path}`)}
+                            >
+                                <span className="gallery-list-thumbnail" aria-hidden="true">
+                                    <span className="gallery-list-folder-icon" />
+                                </span>
+                                <span className="gallery-list-name" title={folder.name}>{folder.name}</span>
+                                <span className="gallery-list-datetime" />
+                            </button>
+                        ))}
+                    </div>
 
-            <VirtuosoGrid
-                ref={virtuosoRef}
-                useWindowScroll
-                key={curDir}
-                style={{ height: "100%" }}
-                data={imgItems}
-                endReached={loadMore}
-                overscan={600}
-                listClassName="grid"
-                itemContent={(index, it) => (
-                    <div
-                        onClick={(e) => {
-                            e.preventDefault();
-                            openAt(index); // ✅ open by index
+                    <VirtuosoGrid
+                        ref={virtuosoRef}
+                        useWindowScroll
+                        key={`${curDir}:list`}
+                        style={{ height: "100%" }}
+                        data={imgItems}
+                        endReached={loadMore}
+                        overscan={600}
+                        listClassName="gallery-list-images"
+                        itemContent={(index, it) => {
+                            const dateTime = formatImageDateTime(it.sortTimeMs);
+                            return (
+                                <button
+                                    className="gallery-list-row gallery-list-image-row"
+                                    type="button"
+                                    aria-label={`Open image ${it.name}${dateTime ? `, ${dateTime.display}` : ""}`}
+                                    onClick={() => openAt(index)}
+                                >
+                                    <span className="gallery-list-thumbnail">
+                                        <img
+                                            src={it.thumb || it.src}
+                                            alt=""
+                                            loading="lazy"
+                                            decoding="auto"
+                                        />
+                                    </span>
+                                    <span className="gallery-list-name" title={it.name}>{it.name}</span>
+                                    <span className="gallery-list-datetime">
+                                        {dateTime && <time dateTime={dateTime.iso}>{dateTime.display}</time>}
+                                    </span>
+                                </button>
+                            );
                         }}
+                    />
+                </div>
+            ) : (
+                <>
+                    <div
                         style={{
-                            borderRadius: 10,
-                            overflow: "hidden",
-                            border: "1px solid rgba(255,255,255,0.10)",
+                            display: "grid",
+                            gridTemplateColumns: `repeat(auto-fill, minmax(${effectiveThumbnailSize}px, 1fr))`,
+                            gap: 12,
                         }}
                     >
-                        <a
-                            href={it.src}
-                            data-pswp
-                            data-pswp-width={it.w ?? 512}
-                            data-pswp-height={it.h ?? 512}
-                            style={{ display: "block", borderRadius: 10, overflow: "hidden" }}
-                        >
-                            <img
-                                src={it.thumb || it.src}
-                                alt={it.name}
-                                loading="lazy"
-                                decoding="auto"
-                                style={{
-                                    width: "100%",
-                                    aspectRatio: `${thumbnailWidth} / ${thumbnailHeight}`,
-                                    objectFit: "cover",
-                                    display: "block",
-                                }}
-                            />
-                        </a>
+                        {folders.map((d) => (
+                            <FolderCard key={d.path} name={d.name} onClick={() => navigate(`/images/${d.path}`)} />
+                        ))}
                     </div>
-                )}
-            />
+
+                    <div style={{ height: 12 }} />
+
+                    <VirtuosoGrid
+                        ref={virtuosoRef}
+                        useWindowScroll
+                        key={`${curDir}:grid`}
+                        style={{ height: "100%" }}
+                        data={imgItems}
+                        endReached={loadMore}
+                        overscan={600}
+                        listClassName="grid"
+                        itemContent={(index, it) => (
+                            <div
+                                onClick={(e) => {
+                                    e.preventDefault();
+                                    openAt(index);
+                                }}
+                                style={{
+                                    borderRadius: 10,
+                                    overflow: "hidden",
+                                    border: "1px solid rgba(255,255,255,0.10)",
+                                }}
+                            >
+                                <a
+                                    href={it.src}
+                                    data-pswp
+                                    data-pswp-width={it.w ?? 512}
+                                    data-pswp-height={it.h ?? 512}
+                                    style={{ display: "block", borderRadius: 10, overflow: "hidden" }}
+                                >
+                                    <img
+                                        src={it.thumb || it.src}
+                                        alt={it.name}
+                                        loading="lazy"
+                                        decoding="auto"
+                                        style={{
+                                            width: "100%",
+                                            aspectRatio: `${thumbnailWidth} / ${thumbnailHeight}`,
+                                            objectFit: "cover",
+                                            display: "block",
+                                        }}
+                                    />
+                                </a>
+                            </div>
+                        )}
+                    />
+                </>
+            )}
 
             <style>{`
         .grid {

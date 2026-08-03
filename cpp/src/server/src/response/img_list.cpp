@@ -569,6 +569,10 @@ namespace sung {
                 file_obj["src"] = sung::tostr(file_info.path_);
                 file_obj["w"] = file_info.width_;
                 file_obj["h"] = file_info.height_;
+                file_obj["sortTimeMs"] =
+                    file_info.sort_time_ns_ > 0
+                        ? nlohmann::json(file_info.sort_time_ns_ / 1'000'000)
+                        : nlohmann::json(nullptr);
             }
             output["totalImageCount"] = files_.size();
             output["hasMore"] = last < files_.size();

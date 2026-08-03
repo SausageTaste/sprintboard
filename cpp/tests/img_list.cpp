@@ -170,6 +170,32 @@ int main() {
 
     auto response = make_response();
 
+    sung::ImageListResponse timestamp_response;
+    timestamp_response.add_file(
+        std::string{ "dated.png" },
+        sung::fromstr("/img/dated.png"),
+        10,
+        10,
+        1'234'567'890
+    );
+    timestamp_response.add_file(
+        std::string{ "undated.png" }, sung::fromstr("/img/undated.png"), 10, 10
+    );
+    timestamp_response.sort();
+    const auto timestamp_files = timestamp_response.make_json(
+        0, 10
+    )["imageFiles"];
+    if (!check(
+            timestamp_files[0]["sortTimeMs"] == 1234,
+            "serializes sort time in milliseconds"
+        ) ||
+        !check(
+            timestamp_files[1]["sortTimeMs"].is_null(),
+            "serializes unavailable sort time as null"
+        )) {
+        return 1;
+    }
+
     const auto first = response.make_json(0, 2);
     if (!check_page(first, 2, 5, true) ||
         !check(first["nextOffset"] == 2, "first page has next offset") ||

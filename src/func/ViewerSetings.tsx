@@ -1,10 +1,12 @@
 
 type ImageSortOrder = "date-desc" | "date-asc" | "name-asc" | "name-desc";
+type ImageViewMode = "grid" | "list";
 
 type ViewerSettings = {
     searchText: string;
     thumbnailSize: number;
     imageSortOrder: ImageSortOrder;
+    imageViewMode: ImageViewMode;
     fillScreen: boolean;
     edgeToEdge: boolean;
     filesRecursive: boolean;
@@ -16,6 +18,7 @@ const DEFAULT_SETTINGS: ViewerSettings = {
     searchText: "",
     thumbnailSize: 150,
     imageSortOrder: "date-desc",
+    imageViewMode: "grid",
     fillScreen: false,
     edgeToEdge: true,
     filesRecursive: false,
@@ -50,5 +53,6 @@ export {
 
 export type {
     ImageSortOrder,
+    ImageViewMode,
     ViewerSettings,
 };
