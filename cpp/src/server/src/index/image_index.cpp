@@ -228,6 +228,7 @@ namespace {
         std::vector<IndexedFolder> folders_;
         std::set<std::string> namespaces_;
         std::unordered_map<std::string, int64_t> namespace_sort_times_;
+        std::unordered_map<std::string, CachedTagAnalysis> tag_analyses_;
     };
 
 
@@ -1514,6 +1515,7 @@ public:
             }
         }
 
+        next->tag_analyses_ = tag_analyses_;
         std::sort(next->files_.begin(), next->files_.end(), file_before);
         std::sort(
             next->folders_.begin(),
@@ -1834,6 +1836,7 @@ public:
                         file.tags_ = found->second.searchable_tags_;
                     }
                 }
+                next->tag_analyses_ = tag_analyses_;
                 ++next->generation_;
                 store_snapshot(std::move(next));
             }
@@ -1843,13 +1846,15 @@ public:
     std::optional<nlohmann::json> tag_analysis(
         const Path& physical_path
     ) const {
-        std::lock_guard refresh_lock{ refresh_mutex_ };
+        const auto current = load_snapshot();
         const auto logical_path = sung::detail::logical_image_key(
             physical_path
         );
-        const auto found = tag_analyses_.find(logical_path);
-        if (found == tag_analyses_.end() || found->second.analysis_.is_null())
+        const auto found = current->tag_analyses_.find(logical_path);
+        if (found == current->tag_analyses_.end() ||
+            found->second.analysis_.is_null()) {
             return std::nullopt;
+        }
 
         auto output = found->second.analysis_;
         output.erase("path");
@@ -2057,6 +2062,7 @@ public:
         });
         for (const auto& logical_path : removed_logical_paths) {
             tag_analyses_.erase(logical_path);
+            next->tag_analyses_.erase(logical_path);
             if (!erase_tag_analysis(logical_path)) {
                 std::println(
                     "ImageIndex: Failed to remove tag analysis for {}",

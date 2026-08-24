@@ -362,6 +362,10 @@ int main() {
             !check(
                 image_count(index, "model:not-a-real-model") == 0,
                 "rejects non-matching indexed model metadata"
+            ) ||
+            !check(
+                !index.tag_analysis(image_root / "one.avif"),
+                "returns no tag details from an empty published snapshot"
             )) {
             sung::fs::remove_all(temp);
             return 1;
@@ -938,7 +942,7 @@ int main() {
                 details &&
                     details->at("analysisId") == sidecar_record.analysis_id_ &&
                     !details->at("sourceMissing").get<bool>(),
-                "returns imported sidecar details"
+                "returns imported sidecar details from the published snapshot"
             )) {
             sung::fs::remove_all(temp);
             return 1;
@@ -1025,9 +1029,15 @@ int main() {
     {
         sung::ImageIndex index{ sidecar_database };
         index.initialize(sidecar_configs);
+        const auto cached_details = index.tag_analysis(sidecar_proxy);
         if (!check(
                 image_count(index, "sidecar_tag") == 1,
                 "uses SQLite when the sidecar is unavailable"
+            ) ||
+            !check(
+                cached_details && cached_details->at("analysisId") ==
+                                      sidecar_record.analysis_id_,
+                "publishes SQLite tag details when the sidecar is unavailable"
             )) {
             sung::fs::remove_all(temp);
             return 1;
