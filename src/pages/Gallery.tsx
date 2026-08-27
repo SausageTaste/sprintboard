@@ -1458,7 +1458,7 @@ export default function Gallery({ settings, onChangeSettings }: GalleryProps) {
             {isListView ? (
                 <div className="gallery-list" role="region" aria-label="Images and folders">
                     <div className="gallery-list-header">
-                        <div className="gallery-list-thumbnail-heading" role="columnheader">Thumbnail</div>
+                        <div aria-hidden="true" />
                         <div
                             className="gallery-list-column-heading"
                             role="columnheader"

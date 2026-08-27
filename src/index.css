@@ -481,7 +481,6 @@ img,
   font-weight: 650;
 }
 
-.gallery-list-thumbnail-heading,
 .gallery-list-column-heading {
   min-width: 0;
   padding: 0 12px;
@@ -603,7 +602,6 @@ img,
     display: none;
   }
 
-  .gallery-list-thumbnail-heading,
   .gallery-list-column-heading,
   .gallery-list-name {
     padding-right: 9px;
