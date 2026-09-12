@@ -1042,14 +1042,51 @@ int main() {
             sung::fs::remove_all(temp);
             return 1;
         }
-        const auto rewrite = sung::write_tag_sidecar(
-            sidecar_path, sidecar_record
-        );
         if (!check(
-                rewrite.has_value(), "restores the orphan sidecar fixture"
+                !sung::fs::exists(sidecar_path),
+                "does not restore sidecars while tagging is disabled"
             )) {
             sung::fs::remove_all(temp);
             return 1;
+        }
+        auto recovery_configs = std::make_shared<sung::ServerConfigs>(
+            *sidecar_configs
+        );
+        recovery_configs->tagger_enabled_ = true;
+        sung::fs::create_directory(sidecar_path);
+        index.refresh(recovery_configs);
+        if (!check(
+                sung::fs::is_directory(sidecar_path) &&
+                    index.tag_analysis(sidecar_source).has_value(),
+                "retains cached tags when a sidecar write remains blocked"
+            )) {
+            sung::fs::remove_all(temp);
+            return 1;
+        }
+        sung::fs::remove(sidecar_path);
+        index.refresh(recovery_configs);
+        const auto restored = sung::read_tag_sidecar(sidecar_path);
+        if (!check(
+                restored &&
+                    restored->analysis_id_ == sidecar_record.analysis_id_ &&
+                    restored->analyzed_at_ == sidecar_record.analyzed_at_,
+                "restores a missing sidecar from cached tags without reanalysis"
+            )) {
+            sung::fs::remove_all(temp);
+            return 1;
+        }
+        sung::fs::remove(sidecar_path);
+        {
+            sung::ImageIndex restarted{ sidecar_database };
+            restarted.initialize(recovery_configs);
+            const auto recovered = sung::read_tag_sidecar(sidecar_path);
+            if (!check(
+                    recovered &&
+                        recovered->analysis_id_ == sidecar_record.analysis_id_,
+                    "restores missing sidecars from SQLite after restart"
+                )) {
+                return 1;
+            }
         }
         sung::fs::remove(sidecar_source);
         index.refresh(sidecar_configs);

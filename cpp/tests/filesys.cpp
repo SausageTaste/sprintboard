@@ -2,6 +2,7 @@
 #include <format>
 #include <print>
 #include <string_view>
+#include <thread>
 
 #include "sung/auxiliary/filesys.hpp"
 
@@ -200,6 +201,72 @@ int main() {
         sung::fs::remove_all(temp, error);
         return 1;
     }
+
+#ifdef _WIN32
+    const auto transient_lock = CreateFileW(
+        destination.c_str(),
+        GENERIC_READ,
+        FILE_SHARE_READ,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr
+    );
+    if (!check(
+            transient_lock != INVALID_HANDLE_VALUE, "locks the destination"
+        )) {
+        sung::fs::remove_all(temp, error);
+        return 1;
+    }
+    std::thread release_lock([transient_lock] {
+        std::this_thread::sleep_for(std::chrono::milliseconds{ 250 });
+        CloseHandle(transient_lock);
+    });
+    const auto retried = sung::write_file_atomically(
+        destination, contents, error
+    );
+    release_lock.join();
+    success =
+        check(
+            retried && !error && sung::read_file(destination) == contents,
+            "retries a transient rename lock without losing the new contents"
+        ) &&
+        success;
+
+    const auto persistent_lock = CreateFileW(
+        destination.c_str(),
+        GENERIC_READ,
+        FILE_SHARE_READ,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr
+    );
+    if (!check(
+            persistent_lock != INVALID_HANDLE_VALUE,
+            "keeps the destination locked"
+        )) {
+        sung::fs::remove_all(temp, error);
+        return 1;
+    }
+    const auto failed = !sung::write_file_atomically(
+        destination, replacement, error
+    );
+    CloseHandle(persistent_lock);
+    success =
+        check(
+            failed && error && sung::read_file(destination) == contents,
+            "reports an exhausted retry and preserves the existing destination"
+        ) &&
+        success;
+    size_t remaining_files = 0;
+    for (const auto& entry : sung::fs::directory_iterator(temp))
+        ++remaining_files;
+    success = check(
+                  remaining_files == 2, "cleans up the failed temporary write"
+              ) &&
+              success;
+#endif
 
     const auto expected_time = sung::fs::file_time_type::clock::now() -
                                std::chrono::hours(24);

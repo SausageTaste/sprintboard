@@ -1498,6 +1498,56 @@ public:
             }
         }
 
+        // A successful analysis remains cached even when publishing its
+        // sidecar fails. Repair missing sidecars on subsequent scans (also
+        // after restart), without sending those images back to the tagger.
+        if (configs->tagger_enabled_ && all_roots_accessible) {
+            size_t attempts = 0;
+            std::unordered_set<std::string> checked;
+            // Rotate the bounded batch so persistent failures cannot starve
+            // sidecars later in the scan.
+            const auto count = next->files_.size();
+            const auto start = count == 0 ? 0 : sidecar_repair_cursor_ % count;
+            for (size_t offset = 0; offset < count; ++offset) {
+                const auto position = (start + offset) % count;
+                const auto& file = next->files_[position];
+                if (seen_sidecars.contains(file.logical_path_) ||
+                    !checked.insert(file.logical_path_).second) {
+                    continue;
+                }
+                const auto found = tag_analyses_.find(file.logical_path_);
+                if (found == tag_analyses_.end())
+                    continue;
+                const auto& analysis = found->second;
+                if (analysis.sidecar_path_.empty() ||
+                    analysis.analysis_.is_null() ||
+                    !::validate_fingerprint(
+                        sung::fromstr(analysis.input_path_),
+                        analysis.input_size_,
+                        analysis.input_modified_time_,
+                        analysis.input_sha256_
+                    )) {
+                    continue;
+                }
+                const auto result = sung::write_tag_sidecar(
+                    sung::fromstr(analysis.sidecar_path_), analysis
+                );
+                sidecar_repair_cursor_ = position + 1;
+                if (!result) {
+                    std::println(
+                        "ImageIndex: Failed to restore tag sidecar {}: {}",
+                        analysis.sidecar_path_,
+                        result.error()
+                    );
+                }
+                if (++attempts >= static_cast<size_t>(
+                                      std::max(configs->tagger_batch_size_, 1)
+                                  )) {
+                    break;
+                }
+            }
+        }
+
         if (database_) {
             std::vector<CachedMetadata> persistence_items;
             if (database_dirty_) {
@@ -2097,6 +2147,7 @@ private:
     bool database_dirty_ = false;
     std::unordered_map<std::string, CachedMetadata> metadata_;
     std::unordered_map<std::string, CachedTagAnalysis> tag_analyses_;
+    size_t sidecar_repair_cursor_ = 0;
     std::string current_analyzer_fingerprint_;
     std::shared_ptr<const IndexSnapshot> snapshot_;
     mutable std::mutex refresh_mutex_;

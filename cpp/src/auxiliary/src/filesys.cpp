@@ -4,6 +4,7 @@
 #include <format>
 #include <fstream>
 #include <functional>
+#include <print>
 #include <sstream>
 #include <thread>
 
@@ -38,6 +39,13 @@ namespace {
         return std::error_code(
             static_cast<int>(GetLastError()), std::system_category()
         );
+    }
+
+    bool retryable_rename_error(const std::error_code& error) {
+        return error.value() == ERROR_SHARING_VIOLATION ||
+               error.value() == ERROR_LOCK_VIOLATION ||
+               error.value() == ERROR_ACCESS_DENIED ||
+               error.value() == ERROR_IO_DEVICE;
     }
 
     uint64_t filetime_to_ticks(const FILETIME& filetime) {
@@ -105,7 +113,9 @@ namespace sung {
             reinterpret_cast<const char*>(data),
             static_cast<std::streamsize>(size)
         );
-        return static_cast<size_t>(ofs.tellp()) == size;
+        const bool written = static_cast<size_t>(ofs.tellp()) == size;
+        ofs.close();
+        return written && !ofs.fail();
     }
 
     bool write_file_atomically(
@@ -133,16 +143,42 @@ namespace sung {
         }
 
 #ifdef _WIN32
-        if (!MoveFileExW(
-                temp_path.c_str(),
-                path.c_str(),
-                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH
-            )) {
+        // Cloud-backed mounts can temporarily reject a rename even after the
+        // data was written successfully. Retry the same completed temp file
+        // without exposing a partial destination or repeating the encoder.
+        constexpr int max_attempts = 6;
+        int attempts = 0;
+        for (; attempts < max_attempts; ++attempts) {
+            if (MoveFileExW(
+                    temp_path.c_str(),
+                    path.c_str(),
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH
+                )) {
+                error.clear();
+                return true;
+            }
             error = ::last_windows_error();
-            std::error_code cleanup_error;
-            fs::remove(temp_path, cleanup_error);
-            return false;
+            if (!::retryable_rename_error(error) ||
+                attempts + 1 == max_attempts) {
+                break;
+            }
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds{ 100 << attempts }
+            );
         }
+        std::println(
+            "AtomicWrite: Failed to rename {} to {} after {} attempts "
+            "({}:{}): {}",
+            tostr(temp_path),
+            tostr(path),
+            attempts + 1,
+            error.category().name(),
+            error.value(),
+            error.message()
+        );
+        std::error_code cleanup_error;
+        fs::remove(temp_path, cleanup_error);
+        return false;
 #else
         fs::rename(temp_path, path, error);
         if (error) {
