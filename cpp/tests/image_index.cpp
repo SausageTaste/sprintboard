@@ -1193,6 +1193,74 @@ int main() {
         }
     }
 
+    const auto staging_root = temp / "staging-images";
+    const auto staging_database = temp / "staging.sqlite3";
+    const auto staging_proxy = staging_root /
+                               "image.png.sprintboard.avif.tmp-123-456";
+    sung::fs::create_directories(staging_root);
+    sung::fs::copy_file(source_avif, staging_root / "extensionless-image");
+    sung::fs::copy_file(source_avif, staging_proxy);
+    sung::fs::copy_file(
+        source_avif, staging_root / "image.png.SPRINTBOARD.AVIF.TMP-789-012"
+    );
+    // Image bytes ensure discovery filters names before content probing.
+    sung::fs::copy_file(
+        source_avif,
+        staging_root / "image.png.sprintboard.tags.json.tmp-123-456"
+    );
+    sung::fs::copy_file(
+        source_avif, sung::make_sprintboard_tag_sidecar_path(staging_proxy)
+    );
+    const auto staging_configs = make_configs(staging_root);
+    {
+        sung::ImageIndex index{ staging_database };
+        const auto initial = index.initialize(staging_configs);
+        const auto refreshed = index.refresh(staging_configs);
+        if (!check(
+                initial.files_scanned_ == 1 && initial.metadata_indexed_ == 1 &&
+                    refreshed.metadata_reused_ == 1 && image_count(index) == 1,
+                "ignores temporary artifacts while indexing extensionless "
+                "images"
+            )) {
+            sung::fs::remove_all(temp);
+            return 1;
+        }
+    }
+    if (!check(
+            insert_tag_analysis(staging_database, staging_proxy),
+            "seeds a temporary image analysis from an older index"
+        )) {
+        sung::fs::remove_all(temp);
+        return 1;
+    }
+    {
+        sung::ImageIndex index{ staging_database };
+        const auto reopened = index.initialize(staging_configs);
+        if (!check(
+                reopened.metadata_reused_ == 1 && image_count(index) == 1 &&
+                    !index.tag_analysis(staging_proxy),
+                "drops cached temporary image analysis after restart"
+            ) ||
+            !check(
+                sung::fs::exists(staging_proxy),
+                "leaves temporary files owned by active writers untouched"
+            )) {
+            sung::fs::remove_all(temp);
+            return 1;
+        }
+        sung::fs::rename(
+            staging_proxy, staging_root / "image.png.sprintboard.avif"
+        );
+        index.refresh(staging_configs);
+        if (!check(
+                image_count(index) == 2,
+                "discovers a proxy after its atomic write is published"
+            )) {
+            sung::fs::remove_all(temp);
+            return 1;
+        }
+    }
+
     sung::fs::remove_all(temp);
     return 0;
 }

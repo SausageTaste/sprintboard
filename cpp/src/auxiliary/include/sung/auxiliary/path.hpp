@@ -41,6 +41,9 @@ namespace sung {
 
     bool is_sprintboard_tag_sidecar_path(const Path& path);
 
+    // Includes artifacts mistakenly derived from an atomic write's temp file.
+    bool is_sprintboard_temporary_path(const Path& path);
+
     std::optional<Path> sprintboard_tag_sidecar_source_path(
         const Path& sidecar_path
     );

@@ -522,6 +522,12 @@ int main() {
     sung::fs::copy_file(fixture_png, temp / "paired.png");
     sung::fs::copy_file(fixture_avif, temp / "paired.png.sprintboard.avif");
     sung::fs::copy_file(fixture_avif, temp / "orphan.png.sprintboard.avif");
+    sung::fs::copy_file(
+        fixture_avif, temp / "paired.png.sprintboard.avif.tmp-123-456"
+    );
+    sung::fs::copy_file(
+        fixture_avif, temp / "orphan.png.SPRINTBOARD.AVIF.TMP-789-012"
+    );
 
     sung::ImageListResponse directory_response;
     directory_response.fetch_directory(
@@ -544,7 +550,10 @@ int main() {
                        file["name"] == "orphan.png.sprintboard.avif";
     }
     const auto directory_success =
-        check(directory_files.size() == 4, "lists one item per proxy pair") &&
+        check(
+            directory_files.size() == 4,
+            "lists one item per proxy pair and excludes temporary proxies"
+        ) &&
         check(
             found_legacy_png && found_legacy_avif,
             "keeps legacy same-stem files independent"

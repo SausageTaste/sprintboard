@@ -54,7 +54,7 @@ int main() {
     const auto source_path = sung::fromstr(current_loc.file_name());
     const auto png_path =
         source_path.parent_path().parent_path().parent_path() / "fixtures" /
-        "images" / "유우카.png";
+        "images" / sung::fromstr("유우카.png");
 
     const auto png = sung::read_png_metadata_only(png_path);
     if (!check(png.has_value(), "failed to read ComfyUI PNG fixture"))

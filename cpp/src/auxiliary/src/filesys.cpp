@@ -127,6 +127,8 @@ namespace sung {
         );
         if (!write_file(temp_path, data, size)) {
             error = std::make_error_code(std::errc::io_error);
+            std::error_code cleanup_error;
+            fs::remove(temp_path, cleanup_error);
             return false;
         }
 

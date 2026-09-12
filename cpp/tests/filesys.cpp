@@ -118,6 +118,39 @@ int main() {
             ),
             "recognizes the sidecar suffix case-insensitively"
         );
+    for (const auto* path : {
+             "image.png.sprintboard.avif.tmp-123-456",
+             "image.png.SPRINTBOARD.AVIF.TMP-123-456",
+             "image.png.sprintboard.tags.json.tmp-123-456",
+             "image.png.SPRINTBOARD.TAGS.JSON.TMP-123-456",
+             "image.png.sprintboard.avif.tmp-123-456.sprintboard.tags.json",
+             "image.tmp-123-456.png.sprintboard.avif.tmp-789-012",
+         }) {
+        success =
+            check(
+                sung::is_sprintboard_temporary_path(sung::fromstr(path)),
+                "recognizes Sprintboard staging files and derived artifacts"
+            ) &&
+            success;
+    }
+    for (const auto* path : {
+             "image.png",
+             "image.png.sprintboard.avif",
+             "image.png.sprintboard.tags.json",
+             "image.tmp-123-456.png.sprintboard.avif",
+             "image.avif.tmp-123-456",
+             "image.png.sprintboard.avif.tmpest",
+             ".sprintboard.avif.tmp-123-456",
+             "folder.sprintboard.avif.tmp-123-456/image.png",
+         }) {
+        success = check(
+                      !sung::is_sprintboard_temporary_path(sung::fromstr(path)),
+                      "does not classify ordinary files or parent paths as "
+                      "staging files"
+                  ) &&
+                  success;
+    }
+
     const auto recovered_source = sung::sprintboard_proxy_source_path(
         unicode_proxy
     );

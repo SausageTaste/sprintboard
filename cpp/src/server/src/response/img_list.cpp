@@ -239,6 +239,9 @@ namespace {
     std::optional<refimg::SimpleImageInfo> is_file_eligible(
         const sung::Path& file_path, const sung::detail::ImageQuery& query
     ) {
+        if (sung::is_sprintboard_temporary_path(file_path))
+            return std::nullopt;
+
         const auto proxy_path = sung::make_sprintboard_proxy_path(file_path);
         if (!sung::is_sprintboard_proxy_path(file_path) &&
             sung::fs::exists(proxy_path)) {

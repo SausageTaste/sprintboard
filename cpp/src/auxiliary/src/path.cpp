@@ -96,6 +96,25 @@ namespace sung {
                );
     }
 
+    bool is_sprintboard_temporary_path(const Path& path) {
+        auto filename = tostr(path.filename());
+        for (auto& ch : filename) ch = ascii_lower(ch);
+
+        for (auto marker = filename.find(".tmp-"); marker != std::string::npos;
+             marker = filename.find(".tmp-", marker + 5)) {
+            const auto destination = std::string_view{ filename }.substr(
+                0, marker
+            );
+            if ((destination.size() > SPRINTBOARD_PROXY_SUFFIX.size() &&
+                 destination.ends_with(SPRINTBOARD_PROXY_SUFFIX)) ||
+                (destination.size() > SPRINTBOARD_TAG_SIDECAR_SUFFIX.size() &&
+                 destination.ends_with(SPRINTBOARD_TAG_SIDECAR_SUFFIX))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     std::optional<Path> sprintboard_tag_sidecar_source_path(
         const Path& sidecar_path
     ) {

@@ -1093,10 +1093,12 @@ public:
                     } else if (!ec && entry.is_regular_file(ec) && !ec) {
                         auto path =
                             fs::absolute(entry.path(), ec).lexically_normal();
-                        if (!ec && sung::is_sprintboard_tag_sidecar_path(path))
-                            sidecar_files.push_back(std::move(path));
-                        else if (!ec)
-                            physical_files.push_back(std::move(path));
+                        if (!ec && !sung::is_sprintboard_temporary_path(path)) {
+                            if (sung::is_sprintboard_tag_sidecar_path(path))
+                                sidecar_files.push_back(std::move(path));
+                            else
+                                physical_files.push_back(std::move(path));
+                        }
                     }
 
                     if (ec) {
@@ -1452,21 +1454,23 @@ public:
                     continue;
                 }
                 const auto source_path = sung::fromstr(it->first);
-                const auto proxy_path = sung::make_sprintboard_proxy_path(
-                    source_path
-                );
-                std::error_code source_error;
-                std::error_code proxy_error;
-                const bool source_exists = sung::fs::exists(
-                    source_path, source_error
-                );
-                const bool proxy_exists = sung::fs::exists(
-                    proxy_path, proxy_error
-                );
-                if (source_error || proxy_error || source_exists ||
-                    proxy_exists) {
-                    ++it;
-                    continue;
+                if (!sung::is_sprintboard_temporary_path(source_path)) {
+                    const auto proxy_path = sung::make_sprintboard_proxy_path(
+                        source_path
+                    );
+                    std::error_code source_error;
+                    std::error_code proxy_error;
+                    const bool source_exists = sung::fs::exists(
+                        source_path, source_error
+                    );
+                    const bool proxy_exists = sung::fs::exists(
+                        proxy_path, proxy_error
+                    );
+                    if (source_error || proxy_error || source_exists ||
+                        proxy_exists) {
+                        ++it;
+                        continue;
+                    }
                 }
                 if (!erase_tag_analysis(it->first)) {
                     std::println(
@@ -1797,11 +1801,6 @@ public:
                     analysis.failure_count_ = 0;
                     analysis.last_error_.clear();
                     snapshot_changed = true;
-                    std::println(
-                        "ImageTagger: Saved {} tags for {}",
-                        analysis.searchable_tags_.size(),
-                        candidate.logical_path_
-                    );
                 }
 
                 tag_analyses_.insert_or_assign(
@@ -1812,6 +1811,12 @@ public:
                         "ImageTagger: Failed to persist analysis state for {}",
                         candidate.logical_path_
                     );
+                } else if (result.error_.empty()) {
+                    std::println(
+                        "ImageTagger: Cached {} tags for {}",
+                        analysis.searchable_tags_.size(),
+                        candidate.logical_path_
+                    );
                 }
                 if (result.error_.empty()) {
                     const auto sidecar_result = sung::write_tag_sidecar(
@@ -1819,8 +1824,8 @@ public:
                     );
                     if (!sidecar_result) {
                         std::println(
-                            "ImageTagger: Failed to write sidecar for {}: {}",
-                            candidate.logical_path_,
+                            "ImageTagger: Failed to write sidecar {}: {}",
+                            analysis.sidecar_path_,
                             sidecar_result.error()
                         );
                     }
