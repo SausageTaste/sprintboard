@@ -907,6 +907,20 @@ int main() {
     sung::fs::copy_file(
         source_avif, sung::make_sprintboard_tag_sidecar_path(staging_proxy)
     );
+#ifndef _WIN32
+    // Following these links fails with ELOOP. Reserved names must be filtered
+    // before status queries, including the iterator's recursive descent check.
+    for (const auto* name : {
+             "broken.png.sprintboard.avif.tmp-123-456",
+             "broken.png.sprintboard.tags.json",
+             "broken.png.sprintboard.tags.json.tmp-123-456",
+         }) {
+        sung::fs::create_symlink(name, staging_root / name);
+    }
+    const auto reserved_parent = staging_root / "nested";
+    sung::fs::create_directories(reserved_parent);
+    sung::fs::create_symlink(".sprintboard", reserved_parent / ".sprintboard");
+#endif
     const auto staging_configs = make_configs(staging_root);
     {
         sung::ImageIndex index;

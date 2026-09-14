@@ -1600,8 +1600,9 @@ public:
                 }
                 std::println(
                     "ImageIndex: Root unavailable, preserving previous "
-                    "snapshot: {}",
-                    sung::tostr(root)
+                    "snapshot: {} ({})",
+                    sung::tostr(root),
+                    ec ? ec.message() : "not a directory"
                 );
                 preserve_root(root_key);
                 continue;
@@ -1619,12 +1620,20 @@ public:
                 root, fs::directory_options::skip_permission_denied, ec
             };
             bool scan_failed = static_cast<bool>(ec);
+            Path scan_path = root;
+            const char* scan_operation = "open directory";
             const fs::recursive_directory_iterator end;
             while (!scan_failed && iterator != end) {
                 const auto entry = *iterator;
-                if (entry.path().filename() == ".sprintboard") {
-                    if (entry.is_directory(ec) && !ec)
-                        iterator.disable_recursion_pending();
+                scan_path = entry.path();
+                scan_operation = "read entry metadata";
+                // Exclude reserved names before any status call. In particular,
+                // inaccessible legacy artifacts must not abort image discovery.
+                if (entry.path().filename() == ".sprintboard" ||
+                    sung::is_sprintboard_temporary_path(entry.path()) ||
+                    sung::is_sprintboard_tag_sidecar_path(entry.path())) {
+                    iterator.disable_recursion_pending();
+                    scan_operation = "advance directory iterator";
                     iterator.increment(ec);
                     if (ec)
                         scan_failed = true;
@@ -1650,16 +1659,15 @@ public:
                 } else if (!ec && entry.is_regular_file(ec) && !ec) {
                     auto path =
                         fs::absolute(entry.path(), ec).lexically_normal();
-                    if (!ec && !sung::is_sprintboard_temporary_path(path)) {
-                        if (!sung::is_sprintboard_tag_sidecar_path(path))
-                            physical_files.push_back(std::move(path));
-                    }
+                    if (!ec)
+                        physical_files.push_back(std::move(path));
                 }
 
                 if (ec) {
                     scan_failed = true;
                     break;
                 }
+                scan_operation = "advance directory iterator";
                 iterator.increment(ec);
                 scan_failed = static_cast<bool>(ec);
             }
@@ -1668,8 +1676,13 @@ public:
                 all_roots_accessible = false;
                 std::println(
                     "ImageIndex: Scan failed, preserving previous snapshot "
-                    "for: {}",
-                    sung::tostr(root)
+                    "for: {} ({} at {}: {} [{}:{}])",
+                    sung::tostr(root),
+                    scan_operation,
+                    sung::tostr(scan_path),
+                    ec.message(),
+                    ec.category().name(),
+                    ec.value()
                 );
                 preserve_root(root_key);
                 continue;
