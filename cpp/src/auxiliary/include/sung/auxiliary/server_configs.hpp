@@ -73,6 +73,7 @@ namespace sung {
         // Server settings
         std::string tls_keyfile_;
         std::string tls_certfile_;
+        std::string cache_dir_ = ".sprintboard/cache";
         std::string server_host_;
         int server_port_;
 

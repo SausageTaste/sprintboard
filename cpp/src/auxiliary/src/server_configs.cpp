@@ -129,6 +129,7 @@ namespace sung {
             binding.local_dir_ = sung::fromstr("./fixtures/images");
         }
 
+        cache_dir_ = ".sprintboard/cache";
         server_host_ = DEFAULT_HOST;
         server_port_ = DEFAULT_PORT;
         tls_keyfile_ = "";
@@ -252,6 +253,11 @@ namespace sung {
             }
         }
 
+        cache_dir_ = try_get(
+            json_data, "cache_dir", std::string{ ".sprintboard/cache" }
+        );
+        if (cache_dir_.empty())
+            throw std::runtime_error("cache_dir must not be empty");
         server_host_ = try_get(json_data, "server_host", DEFAULT_HOST);
         server_port_ = try_get(json_data, "server_port", DEFAULT_PORT);
         tls_keyfile_ = try_get(json_data, "tls-keyfile", std::string());
@@ -322,6 +328,7 @@ namespace sung {
             output["dir_bindings"] = dir_bindings;
         }
 
+        output["cache_dir"] = cache_dir_;
         output["server_host"] = server_host_;
         output["server_port"] = server_port_;
         output["tls-keyfile"] = tls_keyfile_;

@@ -73,6 +73,7 @@ Open it with any text editor.
 
 ```json
 {
+  "cache_dir": ".sprintboard/cache",
   "avif_gen": false,
   "avif_gen_remove_src": false,
   "avif_quality": 70.0,
@@ -153,6 +154,7 @@ If you modify these values, the changes will take effect as soon as possible, wi
 |`tagger_port` |Port used by the tagging service. The default is `8790`.
 |`tagger_batch_size` |Maximum number of image paths submitted in one analysis request. This must not exceed the service's `--batch-size`.
 |`tagger_poll_interval_seconds` |Minimum delay between checks for missing or stale analyses.
+|`cache_dir` |External fallback cache directory, used when an image root cannot host a writable database. Defaults to `.sprintboard/cache`; relative paths resolve against the server working directory. Must be a nonempty string.
 |`dir_bindings` |Add folder entries here. Each key will appear as a folder in the root directory, and all contents in `local_dir` will be placed inside it. You can use both absolute and relative paths for `local_dir`. Each binding maps to exactly one local directory.
 
 The `.sprintboard.avif` suffix is reserved for generated proxies. Legacy
@@ -241,10 +243,34 @@ fingerprint, deterministic analysis ID, analyzer metadata, scored
 ratings/general/character groups, and the optional materialized-proxy
 fingerprint. Source and proxy paths are derived from the adjacent sidecar
 filename, so a shared image directory can be mounted at different absolute
-paths on macOS and Windows. Sidecars are written atomically. SQLite schema v5
-caches the same successful result with machine-local paths for fast search,
+paths on macOS and Windows. Sidecars are written atomically. SQLite schema v6
+caches the same successful result with root-relative paths for fast search,
 along with retry and proxy state. A valid sidecar can rebuild the cache; when a
 directory is read-only, a database-only result can still authorize generation.
+
+Each distinct `local_dir` stores its cache at
+`<local_dir>/.sprintboard/image-index.sqlite3`. The reserved `.sprintboard`
+directories are excluded from browsing and image processing. Bindings that
+resolve to the same physical directory share a database; with nested roots,
+the most specific configured root owns each image's cached records. Browsing
+and search still combine the bindings in memory.
+
+All filesystem paths in the database are relative to its image root, so moving
+the collection together with its `.sprintboard` directory preserves cache reuse,
+subject to the existing image fingerprint checks. When copying a live collection,
+stop Sprintboard first so SQLite can close and checkpoint its database.
+
+If the root cannot host a writable cache, Sprintboard uses
+`<cache_dir>/<SHA-256 of canonical root path>/image-index.sqlite3`. If that also
+fails, it continues in memory and retries persistence on later refreshes. The
+selected fallback location stays fixed for that root during the running session;
+a restart tries the local directory again. Logs report cache locations and write
+failures. The index's `persistent` status is true only when all configured roots
+have working persistent stores, and false when no roots are configured.
+
+The former working-directory `.sprintboard/image-index.sqlite3` is left untouched
+and is not imported. The first scan rebuilds metadata and imports valid adjacent
+tag sidecars. Analysis present only in the old database may need retagging.
 
 ```json
 {

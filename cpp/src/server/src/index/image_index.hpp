@@ -46,7 +46,7 @@ namespace sung {
     class ImageIndex {
 
     public:
-        explicit ImageIndex(Path database_path);
+        ImageIndex();
         ~ImageIndex();
 
         ImageIndex(const ImageIndex&) = delete;

@@ -267,5 +267,34 @@ int main() {
             return 1;
     }
 
+    {
+        sung::ServerConfigs defaults;
+        defaults.fill_default();
+        if (!check(
+                defaults.cache_dir_ == ".sprintboard/cache",
+                "defaults the external cache directory"
+            ))
+            return 1;
+        defaults.import_json({ { "cache_dir", "./external-cache" } });
+        if (!check(
+                defaults.cache_dir_ == "./external-cache" &&
+                    defaults.export_json().at("cache_dir") ==
+                        "./external-cache",
+                "round trips cache_dir"
+            ))
+            return 1;
+        for (const auto& invalid : { nlohmann::json(""),
+                                     nlohmann::json(nullptr),
+                                     nlohmann::json::array({ "cache" }) }) {
+            bool threw = false;
+            try {
+                defaults.import_json({ { "cache_dir", invalid } });
+            } catch (const std::exception&) {
+                threw = true;
+            }
+            if (!check(threw, "rejects invalid cache_dir"))
+                return 1;
+        }
+    }
     return 0;
 }

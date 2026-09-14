@@ -94,6 +94,28 @@ target_link_libraries(
 )
 
 add_executable(
+    ${PROJECT_NAME}_test_root_cache
+    root_cache.cpp
+    ../src/server/src/index/image_index.cpp
+    ../src/server/src/response/img_list.cpp
+    ../src/server/src/tag_sidecar.cpp
+    ../src/server/src/tagger_client.cpp
+)
+add_test(NAME ${PROJECT_NAME}_test_root_cache COMMAND ${PROJECT_NAME}_test_root_cache)
+set_target_properties(${PROJECT_NAME}_test_root_cache PROPERTIES FOLDER "${PROJECT_NAME}/test")
+target_include_directories(
+    ${PROJECT_NAME}_test_root_cache PRIVATE ../src/server/src
+)
+target_link_libraries(
+    ${PROJECT_NAME}_test_root_cache
+    httplib::httplib
+    OpenSSL::Crypto
+    sprintboard_img
+    TBB::tbb
+    unofficial::sqlite3::sqlite3
+)
+
+add_executable(
     ${PROJECT_NAME}_test_img_walker
     img_walker.cpp
     ../src/server/src/index/image_index.cpp

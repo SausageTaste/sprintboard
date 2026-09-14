@@ -74,7 +74,6 @@ int main() {
     const auto source = root / "gated.png";
     const auto proxy = sung::make_sprintboard_proxy_path(source);
     const auto sidecar = sung::make_sprintboard_tag_sidecar_path(source);
-    const auto database = temp / "index.sqlite3";
     std::error_code error;
     sung::fs::create_directories(root, error);
     if (!check(
@@ -92,7 +91,7 @@ int main() {
     binding.avif_.gen_ = true;
     configs->tagger_enabled_ = true;
 
-    sung::ImageIndex index{ database };
+    sung::ImageIndex index;
     index.initialize(configs);
     sung::GatedPowerRequest power_request;
 
@@ -171,7 +170,19 @@ int main() {
     auto plain_task = sung::create_img_walker_task(
         plain_manager, power_request, index
     );
+    const auto hidden_source = root / ".sprintboard" / "hidden.png";
+    if (!check(
+            sung::write_file(hidden_source, fixture),
+            "creates reserved-directory fixture"
+        ))
+        return 1;
     plain_task->run();
+    success =
+        check(
+            !sung::fs::exists(sung::make_sprintboard_proxy_path(hidden_source)),
+            "does not process images in reserved cache directories"
+        ) &&
+        success;
     success = check(
                   sung::fs::is_regular_file(plain_proxy),
                   "preserves proxy generation when tagging is disabled"

@@ -191,9 +191,7 @@ int main() {
         return 1;
     }
 
-    sung::ImageIndex image_index{
-        sung::fromstr(".sprintboard/image-index.sqlite3")
-    };
+    sung::ImageIndex image_index;
     image_index.initialize(server_configs.get());
     image_index.start_auto_refresh(
         [&server_configs]() { return server_configs.get(); },

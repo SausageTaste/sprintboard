@@ -214,7 +214,15 @@ namespace {
 #endif
 
         if (recursive) {
-            for (auto& e : sung::fs::recursive_directory_iterator(path)) {
+            auto iterator = sung::fs::recursive_directory_iterator(path);
+            for (const auto end = sung::fs::recursive_directory_iterator{};
+                 iterator != end;
+                 ++iterator) {
+                const auto& e = *iterator;
+                if (e.path().filename() == ".sprintboard" && e.is_directory()) {
+                    iterator.disable_recursion_pending();
+                    continue;
+                }
 #if HAS_GENERATOR
                 co_yield e;
 #else
@@ -223,6 +231,8 @@ namespace {
             }
         } else {
             for (auto& e : sung::fs::directory_iterator(path)) {
+                if (e.path().filename() == ".sprintboard" && e.is_directory())
+                    continue;
 #if HAS_GENERATOR
                 co_yield e;
 #else
@@ -381,6 +391,9 @@ namespace {
         const std::string& query,
         const bool recursive
     ) {
+        for (const auto& part : folder_path.lexically_relative(local_dir))
+            if (part == ".sprintboard")
+                return;
         const sung::detail::ImageQuery image_query{ query };
 
         const auto api_path_prefix = "/img" / namespace_path;

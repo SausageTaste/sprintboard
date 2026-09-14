@@ -190,7 +190,8 @@ namespace {
                     // matching recursive_directory_iterator's default.
                     std::error_code type_error;
                     if (entry.is_directory(type_error) && !type_error) {
-                        if (!entry.is_symlink(type_error) && !type_error)
+                        if (entry.path().filename() != ".sprintboard" &&
+                            !entry.is_symlink(type_error) && !type_error)
                             pending.push_back(entry.path());
                     }
 

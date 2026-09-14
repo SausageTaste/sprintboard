@@ -48,7 +48,7 @@ namespace {
         return result == SQLITE_OK;
     }
 
-    bool has_version_five_tag_table(
+    bool has_version_six_tag_table(
         const sung::Path& database_path, const size_t expected_count
     ) {
         sqlite3* database = nullptr;
@@ -111,7 +111,7 @@ namespace {
         }
         sqlite3_finalize(statement);
         sqlite3_close(database);
-        return schema_version == 5 && tag_table_exists && tag_count == 0 &&
+        return schema_version == 6 && tag_table_exists && tag_count == 0 &&
                timestamp_count == expected_count;
     }
 
@@ -136,7 +136,7 @@ namespace {
                            &statement,
                            nullptr
                        ) == SQLITE_OK;
-        const auto pattern = "%/" + std::string{ filename };
+        const auto pattern = "%" + std::string{ filename };
         if (success) {
             sqlite3_bind_int64(statement, 1, sort_time_ns);
             sqlite3_bind_text(
@@ -171,7 +171,7 @@ namespace {
                            &statement,
                            nullptr
                        ) == SQLITE_OK;
-        const auto pattern = "%/" + std::string{ filename };
+        const auto pattern = "%" + std::string{ filename };
         if (success) {
             sqlite3_bind_text(
                 statement, 1, pattern.c_str(), -1, SQLITE_TRANSIENT
@@ -195,7 +195,14 @@ namespace {
             return false;
         }
 
-        const auto logical_path = sung::detail::logical_image_key(image_path);
+        const auto logical_path = sung::tostr(
+            sung::fromstr(sung::detail::logical_image_key(image_path))
+                .lexically_relative(
+                    sung::fs::weakly_canonical(
+                        database_path.parent_path().parent_path()
+                    )
+                )
+        );
         const auto analysis =
             nlohmann::json{
                 { "path", sung::tostr(image_path) },
@@ -227,7 +234,9 @@ namespace {
             sqlite3_bind_text(
                 statement, 1, logical_path.c_str(), -1, SQLITE_TRANSIENT
             );
-            const auto input_path = sung::tostr(image_path);
+            const auto input_path = sung::tostr(image_path.lexically_relative(
+                database_path.parent_path().parent_path()
+            ));
             sqlite3_bind_text(
                 statement, 2, input_path.c_str(), -1, SQLITE_TRANSIENT
             );
@@ -314,14 +323,15 @@ int main() {
                           std::format("sprintboard-index-test-{}", unique)
                       );
     const auto image_root = temp / "images";
-    const auto database_path = temp / "cache.sqlite3";
+    const auto database_path = image_root / ".sprintboard" /
+                               "image-index.sqlite3";
     sung::fs::create_directories(image_root / "nested");
     sung::fs::copy_file(source_avif, image_root / "one.avif");
     sung::fs::copy_file(source_png, image_root / "nested" / "two.png");
     auto configs = make_configs(image_root);
 
     {
-        sung::ImageIndex index{ database_path };
+        sung::ImageIndex index;
         const auto first = index.initialize(configs);
         if (!check(first.persistent_, "opens a persistent SQLite cache") ||
             !check(first.metadata_indexed_ == 2, "indexes initial metadata") ||
@@ -429,13 +439,15 @@ int main() {
     }
 
     {
-        sung::ImageIndex index{ database_path };
+        sung::ImageIndex index;
         const auto reopened = index.initialize(configs);
         if (!check(
-                reopened.metadata_reused_ == 2, "reuses persisted metadata"
+                reopened.metadata_reused_ == 0,
+                "does not reuse absolute-path schema metadata"
             ) ||
             !check(
-                reopened.metadata_indexed_ == 0, "avoids repeated image reads"
+                reopened.metadata_indexed_ == 2,
+                "rebuilds an older root cache schema"
             ) ||
             !check(
                 image_count(index, "blue_hair") == 0,
@@ -446,8 +458,8 @@ int main() {
                 "removes legacy tag details"
             ) ||
             !check(
-                has_version_five_tag_table(database_path, 2),
-                "migrates the tag cache to schema five without reindexing"
+                has_version_six_tag_table(database_path, 2),
+                "rebuilds the cache as relative-path schema six"
             )) {
             sung::fs::remove_all(temp);
             return 1;
@@ -485,7 +497,8 @@ int main() {
         }
         const auto removed = index.refresh(configs);
         if (!check(
-                removed.metadata_removed_ == 1, "removes deleted metadata"
+                removed.metadata_removed_ == 0,
+                "deleted metadata was already removed by the API"
             ) ||
             !check(
                 image_count(index) == 2, "removes deleted files from snapshot"
@@ -538,7 +551,7 @@ int main() {
             return 1;
         }
         {
-            sung::ImageIndex reopened_after_failure{ database_path };
+            sung::ImageIndex reopened_after_failure;
             const auto reopened_stats = reopened_after_failure.initialize(
                 configs
             );
@@ -651,7 +664,7 @@ int main() {
     }
     sqlite3_close(database);
     {
-        sung::ImageIndex index{ database_path };
+        sung::ImageIndex index;
         const auto rebuilt = index.initialize(configs);
         if (!check(
                 rebuilt.metadata_indexed_ >= 4, "rebuilds unknown schemas"
@@ -661,10 +674,12 @@ int main() {
         }
     }
 
-    const auto invalid_database = temp / "database-directory";
-    sung::fs::create_directory(invalid_database);
+    const auto saved_database = temp / "saved-database.sqlite3";
+    sung::fs::rename(database_path, saved_database);
+    sung::fs::create_directory(database_path);
+    configs->cache_dir_ = sung::tostr(saved_database);
     {
-        sung::ImageIndex index{ invalid_database };
+        sung::ImageIndex index;
         const auto fallback = index.initialize(configs);
         if (!check(
                 !fallback.persistent_, "falls back when SQLite cannot open"
@@ -675,13 +690,18 @@ int main() {
         }
     }
 
+    sung::fs::remove(database_path);
+    sung::fs::rename(saved_database, database_path);
+    configs->cache_dir_ = sung::tostr(temp / "fallback");
+
     const auto source_date_root = temp / "source-date-images";
-    const auto source_date_database = temp / "source-date.sqlite3";
+    const auto source_date_database = source_date_root / ".sprintboard" /
+                                      "image-index.sqlite3";
     sung::fs::create_directories(source_date_root);
     sung::fs::copy_file(source_png, source_date_root / "paired.png");
     const auto source_date_configs = make_configs(source_date_root);
     {
-        sung::ImageIndex index{ source_date_database };
+        sung::ImageIndex index;
         index.initialize(source_date_configs);
     }
     int64_t source_sort_time = 0;
@@ -706,7 +726,7 @@ int main() {
         return 1;
     }
     {
-        sung::ImageIndex index{ source_date_database };
+        sung::ImageIndex index;
         index.initialize(source_date_configs);
     }
     if (!check(
@@ -719,7 +739,7 @@ int main() {
         return 1;
     }
     {
-        sung::ImageIndex index{ source_date_database };
+        sung::ImageIndex index;
         index.initialize(source_date_configs);
     }
     int64_t avif_sort_time = 0;
@@ -735,7 +755,7 @@ int main() {
         return 1;
     }
     {
-        sung::ImageIndex index{ source_date_database };
+        sung::ImageIndex index;
         index.initialize(source_date_configs);
         const auto paired = index.query(sung::fromstr("test"), "", true)
                                 .make_json(0, 100)["imageFiles"];
@@ -764,7 +784,6 @@ int main() {
     }
 
     const auto sidecar_root = temp / "sidecar-images";
-    const auto sidecar_database = temp / "sidecar.sqlite3";
     const auto sidecar_source = sidecar_root / "tagged.png";
     const auto sidecar_proxy = sung::make_sprintboard_proxy_path(
         sidecar_source
@@ -921,7 +940,7 @@ int main() {
 
     const auto sidecar_configs = make_configs(sidecar_root);
     {
-        sung::ImageIndex index{ sidecar_database };
+        sung::ImageIndex index;
         index.initialize(sidecar_configs);
         const auto details = index.tag_analysis(sidecar_proxy);
         if (!check(
@@ -957,7 +976,6 @@ int main() {
     const auto relocated_sidecar = sung::make_sprintboard_tag_sidecar_path(
         relocated_source
     );
-    const auto relocated_database = temp / "relocated-sidecar.sqlite3";
     sung::fs::create_directories(relocated_root);
     sung::fs::copy_file(sidecar_source, relocated_source);
     sung::fs::copy_file(sidecar_proxy, relocated_proxy);
@@ -970,7 +988,7 @@ int main() {
     );
     const auto relocated_configs = make_configs(relocated_root);
     {
-        sung::ImageIndex index{ relocated_database };
+        sung::ImageIndex index;
         index.initialize(relocated_configs);
         if (!check(
                 !relocated_time_error,
@@ -992,7 +1010,7 @@ int main() {
     }
 
     {
-        sung::ImageIndex index{ relocated_database };
+        sung::ImageIndex index;
         index.initialize(relocated_configs);
         if (!check(
                 index.current_tag_analysis(relocated_source).has_value(),
@@ -1027,7 +1045,7 @@ int main() {
 
     sung::fs::remove(sidecar_path);
     {
-        sung::ImageIndex index{ sidecar_database };
+        sung::ImageIndex index;
         index.initialize(sidecar_configs);
         const auto cached_details = index.tag_analysis(sidecar_proxy);
         if (!check(
@@ -1077,7 +1095,7 @@ int main() {
         }
         sung::fs::remove(sidecar_path);
         {
-            sung::ImageIndex restarted{ sidecar_database };
+            sung::ImageIndex restarted;
             restarted.initialize(recovery_configs);
             const auto recovered = sung::read_tag_sidecar(sidecar_path);
             if (!check(
@@ -1133,7 +1151,8 @@ int main() {
     }
 
     const auto ordering_root = temp / "ordering-images";
-    const auto ordering_database = temp / "ordering.sqlite3";
+    const auto ordering_database = ordering_root / ".sprintboard" /
+                                   "image-index.sqlite3";
     sung::fs::create_directories(ordering_root / "nested");
     sung::fs::copy_file(source_avif, ordering_root / "z-old.avif");
     sung::fs::copy_file(source_avif, ordering_root / "a-new.avif");
@@ -1142,7 +1161,7 @@ int main() {
     );
     const auto ordering_configs = make_configs(ordering_root);
     {
-        sung::ImageIndex index{ ordering_database };
+        sung::ImageIndex index;
         index.initialize(ordering_configs);
     }
     if (!check(
@@ -1161,7 +1180,7 @@ int main() {
         return 1;
     }
     {
-        sung::ImageIndex index{ ordering_database };
+        sung::ImageIndex index;
         const auto reopened = index.initialize(ordering_configs);
         const auto direct = index.query(sung::fromstr("test"), "", false)
                                 .make_json(0, 100)["imageFiles"];
@@ -1231,7 +1250,8 @@ int main() {
     }
 
     const auto staging_root = temp / "staging-images";
-    const auto staging_database = temp / "staging.sqlite3";
+    const auto staging_database = staging_root / ".sprintboard" /
+                                  "image-index.sqlite3";
     const auto staging_proxy = staging_root /
                                "image.png.sprintboard.avif.tmp-123-456";
     sung::fs::create_directories(staging_root);
@@ -1250,7 +1270,7 @@ int main() {
     );
     const auto staging_configs = make_configs(staging_root);
     {
-        sung::ImageIndex index{ staging_database };
+        sung::ImageIndex index;
         const auto initial = index.initialize(staging_configs);
         const auto refreshed = index.refresh(staging_configs);
         if (!check(
@@ -1271,7 +1291,7 @@ int main() {
         return 1;
     }
     {
-        sung::ImageIndex index{ staging_database };
+        sung::ImageIndex index;
         const auto reopened = index.initialize(staging_configs);
         if (!check(
                 reopened.metadata_reused_ == 1 && image_count(index) == 1 &&
