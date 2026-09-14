@@ -189,8 +189,8 @@ namespace {
                 "migration preserves successful analysis and retry state"
             );
             require(
-                scalar(root, "PRAGMA user_version;") == "7",
-                "schema seven committed"
+                scalar(root, "PRAGMA user_version;") == "8",
+                "schema eight committed"
             );
             require(
                 scalar(
@@ -216,6 +216,8 @@ namespace {
                 count(index, "a", "sqlite_tag") == 1,
                 "metadata rebuild preserves tags"
             );
+#ifndef _WIN32
+            // Windows locks directories containing open SQLite databases.
             fs::rename(root, temp / "offline-durable");
             index.refresh(cfg);
             require(
@@ -223,6 +225,7 @@ namespace {
                 "unavailable root retains committed tags for browsing"
             );
             fs::rename(temp / "offline-durable", root);
+#endif
             index.refresh(cfg);
             require(
                 scalar(root, "SELECT COUNT(*) FROM image_tag_analysis;") == "1",

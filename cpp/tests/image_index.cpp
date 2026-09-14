@@ -53,7 +53,7 @@ namespace {
         return result == SQLITE_OK;
     }
 
-    bool has_version_seven_tag_table(
+    bool has_version_eight_tag_table(
         const sung::Path& database_path, const size_t expected_count
     ) {
         sqlite3* database = nullptr;
@@ -116,7 +116,7 @@ namespace {
         }
         sqlite3_finalize(statement);
         sqlite3_close(database);
-        return schema_version == 7 && tag_table_exists && tag_count == 1 &&
+        return schema_version == 8 && tag_table_exists && tag_count == 1 &&
                timestamp_count == expected_count;
     }
 
@@ -201,7 +201,9 @@ namespace {
         }
 
         const auto logical_path = sung::tostr(
-            sung::fromstr(sung::detail::logical_image_key(image_path))
+            sung::fs::weakly_canonical(
+                sung::fromstr(sung::detail::logical_image_key(image_path))
+            )
                 .lexically_relative(
                     sung::fs::weakly_canonical(
                         database_path.parent_path().parent_path()
@@ -447,12 +449,12 @@ int main() {
         sung::ImageIndex index;
         const auto reopened = index.initialize(configs);
         if (!check(
-                reopened.metadata_reused_ == 2,
-                "preserves metadata during schema migration"
+                reopened.metadata_reused_ == 0,
+                "invalidates platform-specific metadata during schema migration"
             ) ||
             !check(
-                reopened.metadata_indexed_ == 0,
-                "avoids reindexing during schema migration"
+                reopened.metadata_indexed_ == 2,
+                "rebuilds portable metadata during schema migration"
             ) ||
             !check(
                 image_count(index, "blue_hair") == 1,
@@ -463,8 +465,8 @@ int main() {
                 "retains tag details"
             ) ||
             !check(
-                has_version_seven_tag_table(database_path, 2),
-                "migrates the cache to schema seven"
+                has_version_eight_tag_table(database_path, 2),
+                "migrates the cache to schema eight"
             )) {
             sung::fs::remove_all(temp);
             return 1;
@@ -477,7 +479,10 @@ int main() {
         sung::fs::last_write_time(changed_path, changed_time, timestamp_error);
         const auto changed = index.refresh(configs);
         if (!check(!timestamp_error, "changes an image fingerprint") ||
-            !check(changed.metadata_indexed_ == 1, "reindexes changed files") ||
+            !check(
+                changed.metadata_indexed_ == 0 && changed.metadata_reused_ == 2,
+                "reuses unchanged content after timestamp changes"
+            ) ||
             !check(image_count(index) == 2, "publishes changed files")) {
             sung::fs::remove_all(temp);
             return 1;
@@ -635,6 +640,8 @@ int main() {
             return 1;
         }
 
+#ifndef _WIN32
+        // Windows locks directories containing open SQLite databases.
         const auto offline_root = temp / "images-offline";
         sung::fs::rename(image_root, offline_root);
         index.refresh(configs);
@@ -648,6 +655,7 @@ int main() {
         }
         sung::fs::rename(offline_root, image_root);
 
+#endif
         auto empty_configs = make_configs(temp / "empty");
         sung::fs::create_directories(temp / "empty");
         index.refresh(empty_configs);

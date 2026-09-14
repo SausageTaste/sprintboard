@@ -232,12 +232,14 @@ pending, and a stale proxy never hides a changed source image.
 
 Tag analysis and proxy state are stored exclusively in SQLite at
 `<local_dir>/.sprintboard/image-index.sqlite3`. Tags are durable data, not a
-disposable cache. Schema version 7 migrates version 6 transactionally, preserving
-successful analyses, retry state, proxy records, and image metadata. Rebuilding
-image metadata does not erase tags. Unsupported schemas and corrupt databases
-are left untouched; automatic tagging for that root stays disabled until the
-database is repaired and Sprintboard is restarted, or it is opened with a
-compatible version of Sprintboard.
+disposable cache. Schema version 8 migrates versions 6 and 7 transactionally,
+preserving successful analyses, retry state, and proxy records. Image metadata
+from those versions is rebuilt once because its timestamps used platform-specific
+clock formats. The upgrade logs this rebuild; let the initial scan finish so its
+results are saved. Rebuilding image metadata does not erase tags. Unsupported
+schemas and corrupt databases are left untouched; automatic tagging for that
+root stays disabled until the database is repaired and Sprintboard is restarted,
+or it is opened with a compatible version of Sprintboard.
 
 Existing `*.sprintboard.tags.json` sidecars are ignored and never imported,
 updated, repaired, or deleted, including when gallery images are deleted. Tags
@@ -255,6 +257,24 @@ with its collection to preserve tags; copying an individual image alone does
 not carry its database records. Include `.sprintboard` in collection backups.
 Stop Sprintboard before copying database files so SQLite can checkpoint and
 close its WAL. Writes use `synchronous=FULL`.
+
+Image metadata stores file size, modification time as Unix nanoseconds, and
+SHA-256. Unchanged size and time reuse metadata without reading image contents.
+When only the timestamp changes (including sync-related precision changes), a
+matching content hash reuses metadata and saves the new timestamp. New or changed
+files are inspected and hashed. Relative paths and these portable fingerprints
+allow Windows and macOS to reuse the same collection database.
+
+For a Dropbox-synced collection, update Sprintboard on both computers before
+opening a schema-eight database. Keep images and the hidden `.sprintboard` folder
+available locally. Close Sprintboard on the current computer, let Dropbox finish
+uploading, then wait for syncing to finish on the other computer before starting
+Sprintboard there. Only run one copy against the collection at a time. Dropbox
+does not merge SQLite transactions; concurrent or unsynced edits can create
+[conflicted copies](https://help.dropbox.com/organize/conflicted-copy).
+SQLite's [WAL files](https://www.sqlite.org/walformat.html) are part of an open
+database, so syncing the main database alone while Sprintboard is running is not
+a supported handoff. Do not delete WAL files manually.
 
 When a root cannot host a writable database, Sprintboard uses
 `<cache_dir>/<SHA-256 of canonical root path>/image-index.sqlite3`. A restart

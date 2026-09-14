@@ -14,6 +14,8 @@ namespace sung {
 
     struct FileFingerprint {
         int64_t size_ = 0;
+        // Nanoseconds since the Unix epoch, independent of the platform's
+        // file_clock.
         int64_t modified_time_ = 0;
         std::string sha256_;
 

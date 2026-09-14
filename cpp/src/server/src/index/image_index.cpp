@@ -78,7 +78,7 @@ namespace sung::detail {
 
 namespace {
 
-    constexpr int DATABASE_SCHEMA_VERSION = 7;
+    constexpr int DATABASE_SCHEMA_VERSION = 8;
     constexpr int64_t NANOSECONDS_PER_SECOND = 1'000'000'000;
 
 
@@ -193,6 +193,7 @@ namespace {
         std::string physical_path_;
         int64_t file_size_ = 0;
         int64_t modified_time_ = 0;
+        std::string sha256_;
         int64_t sort_time_ns_ = 0;
         bool eligible_ = false;
         int width_ = 0;
@@ -254,22 +255,6 @@ namespace {
         if (parent.empty())
             return false;
         return candidate_parent.starts_with(parent + "/");
-    }
-
-    int64_t get_modified_time(const sung::Path& path, std::error_code& ec) {
-        const auto value = sung::fs::last_write_time(path, ec);
-        if (ec)
-            return 0;
-        return static_cast<int64_t>(value.time_since_epoch().count());
-    }
-
-    int64_t get_file_size(const sung::Path& path, std::error_code& ec) {
-        const auto value = sung::fs::file_size(path, ec);
-        if (ec)
-            return 0;
-        return static_cast<int64_t>(std::min<uintmax_t>(
-            value, static_cast<uintmax_t>(std::numeric_limits<int64_t>::max())
-        ));
     }
 
     std::optional<sung::FileFingerprint> validate_fingerprint(
@@ -361,18 +346,39 @@ namespace {
             return probe;
         }
 
-        std::error_code stat_error;
-        const auto size = get_file_size(physical_path, stat_error);
-        const auto modified = get_modified_time(physical_path, stat_error);
-        if (stat_error) {
+        const auto fingerprint = sung::fingerprint_file(physical_path);
+        if (!fingerprint) {
             probe.stat_failed_ = true;
             return probe;
         }
+        const auto size = fingerprint->size_;
+        const auto modified = fingerprint->modified_time_;
 
-        if (existing && existing->file_size_ == size &&
-            existing->modified_time_ == modified) {
+        // Sync clients can change timestamp precision without changing bytes.
+        // Only hash when the portable size/time fast path cannot establish
+        // reuse.
+        std::optional<sung::FileFingerprint> hashed;
+        bool reusable = existing && existing->file_size_ == size &&
+                        existing->modified_time_ == modified;
+        if (!reusable && existing && existing->file_size_ == size &&
+            !existing->sha256_.empty()) {
+            const auto result = sung::fingerprint_file_with_sha256(
+                physical_path
+            );
+            if (result && result->size_ == size &&
+                result->modified_time_ == modified) {
+                hashed = *result;
+                reusable = hashed->sha256_ == existing->sha256_;
+            }
+        }
+
+        if (reusable) {
             probe.reused_ = true;
             probe.metadata_ = *existing;
+            if (probe.metadata_.modified_time_ != modified) {
+                probe.metadata_.modified_time_ = modified;
+                probe.needs_persist_ = true;
+            }
             if (sort_time_source) {
                 const auto& source_path = *sort_time_source;
                 const auto sort_time_ns = get_image_sort_time(source_path);
@@ -409,6 +415,24 @@ namespace {
             probe.metadata_ = inspect_file(
                 physical_path, size, modified, sort_time_ns
             );
+            if (!hashed) {
+                const auto result = sung::fingerprint_file_with_sha256(
+                    physical_path
+                );
+                if (result)
+                    hashed = *result;
+            }
+            // Never associate decoded metadata with a fingerprint from a file
+            // that changed during inspection; a later refresh can retry it.
+            const auto after = sung::fingerprint_file(physical_path);
+            if (!after || *after != *fingerprint ||
+                (hashed && (hashed->size_ != size ||
+                            hashed->modified_time_ != modified))) {
+                probe.stat_failed_ = true;
+                return probe;
+            }
+            if (hashed)
+                probe.metadata_.sha256_ = hashed->sha256_;
             probe.needs_persist_ = true;
         }
 
@@ -608,7 +632,8 @@ public:
                         sqlite3_column_int(check, 0) == 0;
             sqlite3_finalize(check);
         } else if (valid)
-            valid = *version == 6 || *version == DATABASE_SCHEMA_VERSION;
+            valid = *version == 6 || *version == 7 ||
+                    *version == DATABASE_SCHEMA_VERSION;
         if (valid && *version != 0 && load)
             load_tag_analyses(store, db, path != store.fallback_, false);
         sqlite3_close(db);
@@ -851,6 +876,19 @@ public:
                 ) &&
                 execute_sql(database_, "DROP TABLE image_tag_analysis_v6;");
         }
+        if (success && (schema_version == 6 || schema_version == 7)) {
+            // Legacy metadata used platform-specific file_clock ticks. There is
+            // no recorded source platform, so rebuild only this disposable
+            // table.
+            success = execute_sql(
+                database_, "DROP TABLE IF EXISTS image_metadata;"
+            );
+            if (success)
+                std::println(
+                    "ImageIndex: Upgrading to portable metadata fingerprints; "
+                    "rebuilding image metadata once (saved tags are preserved)."
+                );
+        }
         if (success)
             success =
                 execute_sql(
@@ -859,10 +897,11 @@ public:
                     "TEXT PRIMARY KEY,file_size INTEGER NOT NULL,modified_time "
                     "INTEGER NOT NULL,sort_time_ns INTEGER NOT NULL,eligible "
                     "INTEGER NOT NULL,width INTEGER NOT NULL,height INTEGER "
-                    "NOT NULL,model TEXT NOT NULL,prompts_json TEXT NOT NULL);"
+                    "NOT NULL,model TEXT NOT NULL,prompts_json TEXT NOT NULL,"
+                    "sha256 TEXT NOT NULL DEFAULT '');"
                 ) &&
                 execute_sql(database_, create_tag_table) &&
-                execute_sql(database_, "PRAGMA user_version=7;") &&
+                execute_sql(database_, "PRAGMA user_version=8;") &&
                 execute_sql(database_, "COMMIT;");
         if (!success) {
             execute_sql(database_, "ROLLBACK;");
@@ -880,7 +919,7 @@ public:
         if (sqlite3_prepare_v2(
                 database_,
                 "SELECT physical_path, file_size, modified_time, sort_time_ns, "
-                "eligible, width, height, model, prompts_json FROM "
+                "eligible, width, height, model, prompts_json, sha256 FROM "
                 "image_metadata;",
                 -1,
                 &statement,
@@ -905,6 +944,9 @@ public:
             metadata.height_ = sqlite3_column_int(statement, 6);
             metadata.model_ = reinterpret_cast<const char*>(
                 sqlite3_column_text(statement, 7)
+            );
+            metadata.sha256_ = reinterpret_cast<const char*>(
+                sqlite3_column_text(statement, 9)
             );
 
             try {
@@ -1156,15 +1198,16 @@ public:
         const auto upsert_sql =
             "INSERT INTO image_metadata "
             "(physical_path, file_size, modified_time, sort_time_ns, eligible, "
-            "width, height, model, prompts_json) VALUES (?, ?, ?, ?, ?, ?, ?, "
-            "?, ?) "
+            "width, height, model, prompts_json, sha256) VALUES (?, ?, ?, ?, "
+            "?, ?, ?, "
+            "?, ?, ?) "
             "ON CONFLICT(physical_path) DO UPDATE SET "
             "file_size=excluded.file_size, "
             "modified_time=excluded.modified_time, "
             "sort_time_ns=excluded.sort_time_ns, "
             "eligible=excluded.eligible, width=excluded.width, "
             "height=excluded.height, model=excluded.model, "
-            "prompts_json=excluded.prompts_json;";
+            "prompts_json=excluded.prompts_json, sha256=excluded.sha256;";
 
         bool success = sqlite3_prepare_v2(
                            database_, upsert_sql, -1, &upsert, nullptr
@@ -1197,6 +1240,9 @@ public:
                 upsert, 8, item.model_.c_str(), -1, SQLITE_TRANSIENT
             );
             sqlite3_bind_text(upsert, 9, prompts.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(
+                upsert, 10, item.sha256_.c_str(), -1, SQLITE_TRANSIENT
+            );
             success = sqlite3_step(upsert) == SQLITE_DONE;
             sqlite3_reset(upsert);
             sqlite3_clear_bindings(upsert);

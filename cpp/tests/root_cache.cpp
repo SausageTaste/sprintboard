@@ -6,8 +6,11 @@
 #include <string>
 #include <vector>
 
-#ifndef _WIN32
+#ifdef _WIN32
+    #include <sys/utime.h>
+#else
     #include <unistd.h>
+    #include <utime.h>
 #endif
 
 #include <sqlite3.h>
@@ -103,7 +106,146 @@ namespace {
         return result;
     }
 
+    void set_modified_seconds(const Path& path, int64_t seconds) {
+#ifdef _WIN32
+        __utimbuf64 times{ seconds, seconds };
+        require(
+            ::_wutime64(path.c_str(), &times) == 0, "set Windows file time"
+        );
+#else
+        const utimbuf times{ seconds, seconds };
+        require(::utime(path.c_str(), &times) == 0, "set Unix file time");
+#endif
+    }
+
+    void test_synced_metadata(const Path& temp, const Path& fixture) {
+        const auto source = temp / "sync-source";
+        const auto relative = sung::fromstr("nested/유우카.png");
+        const auto original = source / relative;
+        const auto fallback = temp / "sync-fallback";
+        constexpr int64_t seconds = 1'700'000'000;
+        copy_image(fixture, original);
+        set_modified_seconds(original, seconds);
+        {
+            sung::ImageIndex index;
+            require(
+                index.initialize(configs_for(source, fallback))
+                        .metadata_indexed_ == 1,
+                "initial scan indexes synced image"
+            );
+        }
+        require(
+            scalar(source, "SELECT modified_time FROM image_metadata;") ==
+                "1700000000000000000",
+            "metadata uses the same Unix nanoseconds on Windows and macOS"
+        );
+        require(
+            scalar(source, "SELECT length(sha256) FROM image_metadata;") ==
+                "64",
+            "initial scan persists content fingerprint"
+        );
+        require(
+            tag_test::seed(database_path(source), tag_test::analysis(original)),
+            "seed tags before syncing collection"
+        );
+
+        const auto destination = temp / "sync-destination";
+        fs::copy(source, destination, fs::copy_options::recursive);
+        const auto image = destination / relative;
+        auto configs = configs_for(destination, fallback);
+        set_modified_seconds(image, seconds);
+        {
+            sung::ImageIndex index;
+            const auto stats = index.initialize(configs);
+            require(
+                stats.metadata_reused_ == 1 && stats.metadata_indexed_ == 0,
+                "copied collection reuses metadata under a different root"
+            );
+        }
+        set_modified_seconds(image, seconds + 123);
+        {
+            sung::ImageIndex index;
+            const auto stats = index.initialize(configs);
+            require(
+                stats.metadata_reused_ == 1 && stats.metadata_indexed_ == 0,
+                "timestamp-only sync changes reuse metadata by content hash"
+            );
+            require(
+                index.current_tag_analysis(image).has_value(),
+                "synced tags remain valid after timestamp changes"
+            );
+        }
+        require(
+            scalar(destination, "SELECT modified_time FROM image_metadata;") ==
+                "1700000123000000000",
+            "hash reuse persists the new timestamp for the next fast path"
+        );
+        {
+            sung::ImageIndex index;
+            const auto stats = index.initialize(configs);
+            require(
+                stats.metadata_reused_ == 1 && stats.metadata_indexed_ == 0,
+                "hash-validated metadata survives another restart"
+            );
+        }
+        // Simulate a version-seven cache from either platform. Its raw clock
+        // value cannot be trusted even when it happens to equal Unix
+        // nanoseconds.
+        {
+            Database db(database_path(destination));
+            db.exec(
+                "ALTER TABLE image_metadata DROP COLUMN sha256; "
+                "PRAGMA user_version=7;"
+            );
+        }
+        {
+            sung::ImageIndex index;
+            const auto stats = index.initialize(configs);
+            require(
+                stats.persistent_ && stats.metadata_indexed_ == 1 &&
+                    stats.metadata_reused_ == 0,
+                "version-seven metadata is rebuilt once"
+            );
+            require(
+                index.current_tag_analysis(image).has_value(),
+                "version-seven migration preserves valid saved tags"
+            );
+        }
+        require(
+            scalar(destination, "PRAGMA user_version;") == "8",
+            "portable metadata schema committed"
+        );
+        {
+            sung::ImageIndex index;
+            require(
+                index.initialize(configs).metadata_reused_ == 1,
+                "migrated metadata is reused on subsequent startups"
+            );
+        }
+        const auto previous_size = fs::file_size(image);
+        {
+            std::fstream file(
+                image, std::ios::in | std::ios::out | std::ios::binary
+            );
+            file.put('\0');
+        }
+        set_modified_seconds(image, seconds + 456);
+        require(
+            fs::file_size(image) == previous_size, "same-size content edit"
+        );
+        {
+            sung::ImageIndex index;
+            const auto stats = index.initialize(configs);
+            require(
+                stats.metadata_indexed_ == 1 && stats.metadata_reused_ == 0 &&
+                    count(index, "a") == 0,
+                "changed bytes invalidate cached metadata even at the same size"
+            );
+        }
+    }
+
     void run(const Path& temp, const Path& fixture) {
+        test_synced_metadata(temp, fixture);
         const auto a = temp / "a";
         const auto b = temp / "b";
         const auto fallback = temp / "external";
@@ -214,6 +356,10 @@ namespace {
                 "removed root database is preserved"
             );
 
+#ifndef _WIN32
+            // Windows cannot rename a directory containing an open SQLite
+            // database. Closed-collection relocation is tested on all
+            // platforms.
             fs::rename(a, temp / "offline");
             index.refresh(configs);
             require(
@@ -225,6 +371,7 @@ namespace {
                 index.refresh(configs).persistent_,
                 "root recovers after reconnection"
             );
+#endif
         }
         {
             sung::ImageIndex index;
@@ -435,8 +582,8 @@ namespace {
                 "all stored filesystem fields are relative"
             );
             require(
-                db.scalar("PRAGMA user_version;") == "7",
-                "durable database uses schema seven"
+                db.scalar("PRAGMA user_version;") == "8",
+                "durable database uses schema eight"
             );
         }
         const auto moved = temp / "moved";
@@ -454,7 +601,8 @@ namespace {
             require(
                 analysis.has_value() &&
                     analysis->input_path_ == sung::tostr(moved_image) &&
-                    analysis->logical_path_ == sung::tostr(moved_image) &&
+                    analysis->logical_path_ ==
+                        sung::detail::logical_image_key(moved_image) &&
                     analysis->attempt_input_path_ == sung::tostr(moved_image) &&
                     analysis->failure_count_ == 3,
                 "logical, input and retry paths survive relocation"
@@ -579,6 +727,7 @@ int main() {
         std::ifstream input(legacy);
         std::string text;
         std::getline(input, text);
+        input.close();
         require(
             text == "legacy cache must remain untouched",
             "legacy shared database is not imported or modified"
