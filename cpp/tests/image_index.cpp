@@ -22,7 +22,7 @@ namespace {
         auto configs = std::make_shared<sung::ServerConfigs>();
         configs->fill_default();
         configs->dir_bindings_.clear();
-        configs->dir_bindings_["test"].local_dirs_.push_back(root);
+        configs->dir_bindings_["test"].local_dir_ = root;
         return configs;
     }
 

@@ -84,9 +84,7 @@ Open it with any text editor.
   "tagger_poll_interval_seconds": 30.0,
   "dir_bindings": {
     "example": {
-      "local_dirs": [
-        "./test_cpp/images"
-      ]
+      "local_dir": "./fixtures/images"
     }
   },
   "server_host": "127.0.0.1",
@@ -96,6 +94,11 @@ Open it with any text editor.
 }
 ```
 
+Each binding requires a nonempty `local_dir` string. To migrate an older config,
+replace `"local_dirs": ["path"]` with `"local_dir": "path"`; split bindings with
+multiple directories into separate named bindings. The old `local_dirs` key is
+no longer supported.
+
 For now, you don’t need to change anything except `dir_bindings`.
 Copy the `example` entry and modify it to create your own, as shown below.
 
@@ -104,14 +107,10 @@ Copy the `example` entry and modify it to create your own, as shown below.
   ...
   "dir_bindings": {
     "example": {
-      "local_dirs": [
-        "./test_cpp/images"
-      ]
+      "local_dir": "./fixtures/images"
     },
     "your images": {
-      "local_dirs": [
-        "C:\\your\\image\\folder\\path"
-      ]
+      "local_dir": "C:\\your\\image\\folder\\path"
     }
   },
   ...
@@ -154,7 +153,7 @@ If you modify these values, the changes will take effect as soon as possible, wi
 |`tagger_port` |Port used by the tagging service. The default is `8790`.
 |`tagger_batch_size` |Maximum number of image paths submitted in one analysis request. This must not exceed the service's `--batch-size`.
 |`tagger_poll_interval_seconds` |Minimum delay between checks for missing or stale analyses.
-|`dir_bindings` |Add folder entries here. Each key will appear as a folder in the root directory, and all contents in `local_dirs` will be placed inside it. You can use both absolute and relative paths for `local_dirs`. Although you can set multiple directories for a single binding, I strongly recommend using only one.
+|`dir_bindings` |Add folder entries here. Each key will appear as a folder in the root directory, and all contents in `local_dir` will be placed inside it. You can use both absolute and relative paths for `local_dir`. Each binding maps to exactly one local directory.
 
 The `.sprintboard.avif` suffix is reserved for generated proxies. Legacy
 same-stem files such as `img.png` and `img.avif` are treated as independent

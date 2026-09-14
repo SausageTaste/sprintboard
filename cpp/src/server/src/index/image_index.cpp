@@ -1023,412 +1023,388 @@ public:
         for (const auto& [namespace_name, binding] : configs->dir_bindings_) {
             next->namespaces_.insert(namespace_name);
 
-            for (const auto& configured_root : binding.local_dirs_) {
-                std::error_code ec;
-                auto root = fs::absolute(configured_root, ec);
-                if (ec)
-                    root = configured_root.lexically_normal();
-                else
-                    root = root.lexically_normal();
-                const auto root_key = make_root_key(namespace_name, root);
+            const auto& configured_root = binding.local_dir_;
+            std::error_code ec;
+            auto root = fs::absolute(configured_root, ec);
+            if (ec)
+                root = configured_root.lexically_normal();
+            else
+                root = root.lexically_normal();
+            const auto root_key = make_root_key(namespace_name, root);
 
-                if (!fs::is_directory(root, ec) || ec) {
-                    all_roots_accessible = false;
-                    const auto previous_time =
-                        old_snapshot->namespace_sort_times_.find(
-                            namespace_name
-                        );
-                    if (previous_time !=
-                        old_snapshot->namespace_sort_times_.end()) {
-                        auto& sort_time =
-                            next->namespace_sort_times_[namespace_name];
-                        sort_time = std::max(sort_time, previous_time->second);
-                    }
-                    std::println(
-                        "ImageIndex: Root unavailable, preserving previous "
-                        "snapshot: {}",
-                        sung::tostr(root)
-                    );
-                    preserve_root(root_key);
-                    continue;
+            if (!fs::is_directory(root, ec) || ec) {
+                all_roots_accessible = false;
+                const auto previous_time =
+                    old_snapshot->namespace_sort_times_.find(namespace_name);
+                if (previous_time !=
+                    old_snapshot->namespace_sort_times_.end()) {
+                    auto& sort_time =
+                        next->namespace_sort_times_[namespace_name];
+                    sort_time = std::max(sort_time, previous_time->second);
                 }
-
-                auto& namespace_sort_time =
-                    next->namespace_sort_times_[namespace_name];
-                namespace_sort_time = std::max(
-                    namespace_sort_time, get_image_sort_time(root)
+                std::println(
+                    "ImageIndex: Root unavailable, preserving previous "
+                    "snapshot: {}",
+                    sung::tostr(root)
                 );
+                preserve_root(root_key);
+                continue;
+            }
 
-                std::vector<Path> physical_files;
-                std::vector<Path> sidecar_files;
-                std::vector<IndexedFolder> root_folders;
-                fs::recursive_directory_iterator iterator{
-                    root, fs::directory_options::skip_permission_denied, ec
-                };
-                bool scan_failed = static_cast<bool>(ec);
-                const fs::recursive_directory_iterator end;
-                while (!scan_failed && iterator != end) {
-                    const auto entry = *iterator;
-                    if (entry.is_directory(ec) && !ec) {
-                        const auto relative = entry.path().lexically_relative(
-                            root
-                        );
-                        const auto namespace_path = sung::fromstr(
-                            namespace_name
-                        );
-                        const auto browser_path = sung::tostr(
-                            namespace_path / relative
-                        );
-                        root_folders.push_back(
-                            {
-                                root_key,
-                                sung::tostr(entry.path().filename()),
-                                browser_path,
-                                sung::tostr(
-                                    (namespace_path / relative).parent_path()
-                                ),
-                                get_image_sort_time(entry.path()),
-                            }
-                        );
-                    } else if (!ec && entry.is_regular_file(ec) && !ec) {
-                        auto path =
-                            fs::absolute(entry.path(), ec).lexically_normal();
-                        if (!ec && !sung::is_sprintboard_temporary_path(path)) {
-                            if (sung::is_sprintboard_tag_sidecar_path(path))
-                                sidecar_files.push_back(std::move(path));
-                            else
-                                physical_files.push_back(std::move(path));
-                        }
-                    }
+            auto& namespace_sort_time =
+                next->namespace_sort_times_[namespace_name];
+            namespace_sort_time = std::max(
+                namespace_sort_time, get_image_sort_time(root)
+            );
 
-                    if (ec) {
-                        scan_failed = true;
-                        break;
-                    }
-                    iterator.increment(ec);
-                    scan_failed = static_cast<bool>(ec);
-                }
-
-                if (scan_failed) {
-                    all_roots_accessible = false;
-                    std::println(
-                        "ImageIndex: Scan failed, preserving previous snapshot "
-                        "for: {}",
-                        sung::tostr(root)
-                    );
-                    preserve_root(root_key);
-                    continue;
-                }
-
-                for (auto& folder : root_folders) add_folder(std::move(folder));
-
-                for (const auto& sidecar_path : sidecar_files) {
-                    const auto parsed = sung::read_tag_sidecar(sidecar_path);
-                    if (!parsed) {
-                        std::println(
-                            "ImageIndex: Ignoring invalid tag sidecar {}: {}",
-                            sung::tostr(sidecar_path),
-                            parsed.error()
-                        );
-                        continue;
-                    }
-                    seen_sidecars.insert_or_assign(
-                        parsed->logical_path_, sidecar_path
-                    );
-
-                    const auto existing = tag_analyses_.find(
-                        parsed->logical_path_
-                    );
-                    if (existing != tag_analyses_.end()) {
-                        if (existing->second.analyzed_at_ >
-                            parsed->analyzed_at_) {
-                            continue;
-                        }
-                        if (existing->second.analyzed_at_ ==
-                                parsed->analyzed_at_ &&
-                            existing->second.analysis_id_ !=
-                                parsed->analysis_id_) {
-                            continue;
-                        }
-                        if (existing->second.analysis_id_ ==
-                                parsed->analysis_id_ &&
-                            existing->second.input_sha256_ ==
-                                parsed->input_sha256_ &&
-                            existing->second.sidecar_path_ ==
-                                sung::tostr(sidecar_path) &&
-                            existing->second.proxy_path_ ==
-                                parsed->proxy_path_ &&
-                            existing->second.proxy_sha256_ ==
-                                parsed->proxy_sha256_ &&
-                            existing->second.proxy_materialization_id_ ==
-                                parsed->proxy_materialization_id_) {
-                            const auto input = sung::fingerprint_file(
-                                sung::fromstr(existing->second.input_path_)
-                            );
-                            const bool input_current =
-                                input &&
-                                input->size_ == existing->second.input_size_ &&
-                                input->modified_time_ ==
-                                    existing->second.input_modified_time_;
-                            bool proxy_current = false;
-                            if (!existing->second.proxy_path_.empty()) {
-                                const auto proxy = sung::fingerprint_file(
-                                    sung::fromstr(existing->second.proxy_path_)
-                                );
-                                proxy_current =
-                                    proxy &&
-                                    proxy->size_ ==
-                                        existing->second.proxy_size_ &&
-                                    proxy->modified_time_ ==
-                                        existing->second.proxy_modified_time_;
-                            }
-                            if (input_current || proxy_current)
-                                continue;
-                        }
-                    }
-
-                    auto imported = *parsed;
-                    if (const auto fingerprint = ::validate_fingerprint(
-                            sung::fromstr(imported.input_path_),
-                            imported.input_size_,
-                            imported.input_modified_time_,
-                            imported.input_sha256_
-                        )) {
-                        imported.input_size_ = fingerprint->size_;
-                        imported.input_modified_time_ =
-                            fingerprint->modified_time_;
-                    }
-                    if (!imported.proxy_path_.empty()) {
-                        if (const auto fingerprint = ::validate_fingerprint(
-                                sung::fromstr(imported.proxy_path_),
-                                imported.proxy_size_,
-                                imported.proxy_modified_time_,
-                                imported.proxy_sha256_
-                            )) {
-                            imported.proxy_size_ = fingerprint->size_;
-                            imported.proxy_modified_time_ =
-                                fingerprint->modified_time_;
-                        }
-                    }
-                    if (existing != tag_analyses_.end()) {
-                        imported.attempt_input_path_ =
-                            existing->second.attempt_input_path_;
-                        imported.attempt_input_size_ =
-                            existing->second.attempt_input_size_;
-                        imported.attempt_input_modified_time_ =
-                            existing->second.attempt_input_modified_time_;
-                        imported.attempt_analyzer_fingerprint_ =
-                            existing->second.attempt_analyzer_fingerprint_;
-                        imported.last_attempt_at_ =
-                            existing->second.last_attempt_at_;
-                        imported.failure_count_ =
-                            existing->second.failure_count_;
-                        imported.last_error_ = existing->second.last_error_;
-                    }
-                    tag_analyses_.insert_or_assign(
-                        imported.logical_path_, imported
-                    );
-                    if (!persist_tag_analysis(imported)) {
-                        std::println(
-                            "ImageIndex: Failed to cache tag sidecar {}",
-                            sung::tostr(sidecar_path)
-                        );
-                    }
-                }
-
-                for (const auto& path : physical_files) {
-                    const auto path_str = sung::tostr(path);
-                    seen_physical.insert(path_str);
-                }
-
-                // A Sprintboard AVIF proxy is the browser-facing derivative
-                // of its source. Keep the relationship explicit so date
-                // sorting uses the source timestamp even when the encoder
-                // could not copy all filesystem timestamps to the proxy.
-                std::unordered_map<std::string, Path> sources_by_path;
-                for (const auto& path : physical_files) {
-                    if (sung::is_sprintboard_proxy_path(path))
-                        continue;
-                    sources_by_path.insert_or_assign(make_path_key(path), path);
-                }
-
-                std::unordered_map<std::string, Path> proxy_sources;
-                std::unordered_set<std::string> paired_sources;
-                std::unordered_set<std::string> stale_proxies;
-                for (const auto& path : physical_files) {
-                    const auto source_path =
-                        sung::sprintboard_proxy_source_path(path);
-                    if (!source_path)
-                        continue;
-                    const auto source = sources_by_path.find(
-                        make_path_key(*source_path)
-                    );
-                    if (source == sources_by_path.end())
-                        continue;
-
-                    std::error_code source_time_error;
-                    std::error_code proxy_time_error;
-                    const auto source_time = fs::last_write_time(
-                        source->second, source_time_error
-                    );
-                    const auto proxy_time = fs::last_write_time(
-                        path, proxy_time_error
-                    );
-                    if (source_time_error || proxy_time_error ||
-                        source_time != proxy_time) {
-                        stale_proxies.insert(make_path_key(path));
-                        continue;
-                    }
-                    proxy_sources.insert_or_assign(
-                        make_path_key(path), source->second
-                    );
-                    paired_sources.insert(make_path_key(source->second));
-                }
-
-                // The probe phase only reads `metadata_` (never writes it),
-                // so concurrent lookups across files are safe; each file's
-                // filesystem work (stat, and full decode for new/changed
-                // files) can therefore overlap instead of running one at a
-                // time, which matters a lot when the scan root is behind
-                // something with high per-call latency (e.g. an encrypted
-                // vault driver).
-                std::vector<FileProbe> probes(physical_files.size());
-                scan_arena_.execute([&] {
-                    tbb::parallel_for(
-                        tbb::blocked_range<size_t>(0, physical_files.size()),
-                        [&](const tbb::blocked_range<size_t>& range) {
-                            for (auto i = range.begin(); i != range.end();
-                                 ++i) {
-                                const auto path_str = sung::tostr(
-                                    physical_files[i]
-                                );
-                                const auto it = metadata_.find(path_str);
-                                const CachedMetadata* existing =
-                                    it != metadata_.end() ? &it->second
-                                                          : nullptr;
-                                const auto path_key = make_path_key(
-                                    physical_files[i]
-                                );
-                                const Path* sort_time_source = nullptr;
-                                if (sung::is_sprintboard_proxy_path(
-                                        physical_files[i]
-                                    )) {
-                                    const auto source = proxy_sources.find(
-                                        path_key
-                                    );
-                                    if (source != proxy_sources.end())
-                                        sort_time_source = &source->second;
-                                }
-                                probes[i] = probe_file(
-                                    physical_files[i],
-                                    paired_sources.contains(path_key) ||
-                                        stale_proxies.contains(path_key),
-                                    sort_time_source,
-                                    existing
-                                );
-                            }
-                        }
-                    );
-                });
-
-                for (size_t i = 0; i < physical_files.size(); ++i) {
-                    const auto& physical_path = physical_files[i];
-                    auto& probe = probes[i];
-                    ++stats.files_scanned_;
-
-                    if (probe.shadowed_ || probe.stat_failed_)
-                        continue;
-
-                    const auto path_str = sung::tostr(physical_path);
-                    if (probe.reused_) {
-                        ++stats.metadata_reused_;
-                        if (probe.needs_persist_) {
-                            metadata_[path_str] = probe.metadata_;
-                            changed.push_back(probe.metadata_);
-                        }
-                    } else {
-                        metadata_[path_str] = probe.metadata_;
-                        changed.push_back(probe.metadata_);
-                        ++stats.metadata_indexed_;
-                    }
-
-                    const auto& metadata = probe.metadata_;
-                    if (initial_refresh && stats.files_scanned_ % 1000 == 0) {
-                        std::println(
-                            "ImageIndex: Validated {} files ({} reused, {} "
-                            "indexed)...",
-                            stats.files_scanned_,
-                            stats.metadata_reused_,
-                            stats.metadata_indexed_
-                        );
-                    }
-                    if (!metadata.eligible_)
-                        continue;
-
-                    const auto relative = physical_path.lexically_relative(
-                        root
-                    );
-                    if (relative.empty() ||
-                        sung::tostr(relative).starts_with(".."))
-                        continue;
-
+            std::vector<Path> physical_files;
+            std::vector<Path> sidecar_files;
+            std::vector<IndexedFolder> root_folders;
+            fs::recursive_directory_iterator iterator{
+                root, fs::directory_options::skip_permission_denied, ec
+            };
+            bool scan_failed = static_cast<bool>(ec);
+            const fs::recursive_directory_iterator end;
+            while (!scan_failed && iterator != end) {
+                const auto entry = *iterator;
+                if (entry.is_directory(ec) && !ec) {
+                    const auto relative = entry.path().lexically_relative(root);
                     const auto namespace_path = sung::fromstr(namespace_name);
                     const auto browser_path = sung::tostr(
                         namespace_path / relative
                     );
-                    const auto api_path = sung::tostr(
-                        Path{ "/img" } / namespace_path / relative
+                    root_folders.push_back(
+                        {
+                            root_key,
+                            sung::tostr(entry.path().filename()),
+                            browser_path,
+                            sung::tostr(
+                                (namespace_path / relative).parent_path()
+                            ),
+                            get_image_sort_time(entry.path()),
+                        }
                     );
-                    if (!seen_api_paths.insert(api_path).second)
-                        continue;
-
-                    IndexedFile entry;
-                    entry.root_key_ = root_key;
-                    entry.physical_path_ = path_str;
-                    entry.browser_path_ = browser_path;
-                    entry.parent_browser_path_ = sung::tostr(
-                        (namespace_path / relative).parent_path()
-                    );
-                    const auto proxy_source = proxy_sources.find(
-                        make_path_key(physical_path)
-                    );
-                    const auto display_name =
-                        proxy_source != proxy_sources.end()
-                            ? sung::tostr(proxy_source->second.filename())
-                            : sung::tostr(physical_path.filename());
-                    entry.info_.name_ = display_name;
-                    entry.info_.path_ = sung::fromstr(api_path);
-                    entry.info_.width_ = metadata.width_;
-                    entry.info_.height_ = metadata.height_;
-                    entry.info_.sort_time_ns_ = metadata.sort_time_ns_;
-                    entry.model_ = metadata.model_;
-                    entry.prompts_ = metadata.prompts_;
-                    entry.logical_path_ = sung::detail::logical_image_key(
-                        physical_path
-                    );
-                    const auto tag_input = proxy_source != proxy_sources.end()
-                                               ? proxy_source->second
-                                               : physical_path;
-                    entry.tag_input_path_ = sung::tostr(tag_input);
-                    const auto tag_fingerprint = sung::fingerprint_file(
-                        tag_input
-                    );
-                    if (tag_fingerprint) {
-                        entry.tag_input_size_ = tag_fingerprint->size_;
-                        entry.tag_input_modified_time_ =
-                            tag_fingerprint->modified_time_;
-                    } else {
-                        entry.tag_input_size_ = 0;
-                        entry.tag_input_modified_time_ = 0;
+                } else if (!ec && entry.is_regular_file(ec) && !ec) {
+                    auto path =
+                        fs::absolute(entry.path(), ec).lexically_normal();
+                    if (!ec && !sung::is_sprintboard_temporary_path(path)) {
+                        if (sung::is_sprintboard_tag_sidecar_path(path))
+                            sidecar_files.push_back(std::move(path));
+                        else
+                            physical_files.push_back(std::move(path));
                     }
-                    if (const auto tag_it =
-                            tag_analyses_.find(entry.logical_path_);
-                        tag_it != tag_analyses_.end() &&
-                        !tag_it->second.analysis_.is_null()) {
-                        entry.tags_ = tag_it->second.searchable_tags_;
-                    }
-                    next->files_.push_back(std::move(entry));
                 }
+
+                if (ec) {
+                    scan_failed = true;
+                    break;
+                }
+                iterator.increment(ec);
+                scan_failed = static_cast<bool>(ec);
+            }
+
+            if (scan_failed) {
+                all_roots_accessible = false;
+                std::println(
+                    "ImageIndex: Scan failed, preserving previous snapshot "
+                    "for: {}",
+                    sung::tostr(root)
+                );
+                preserve_root(root_key);
+                continue;
+            }
+
+            for (auto& folder : root_folders) add_folder(std::move(folder));
+
+            for (const auto& sidecar_path : sidecar_files) {
+                const auto parsed = sung::read_tag_sidecar(sidecar_path);
+                if (!parsed) {
+                    std::println(
+                        "ImageIndex: Ignoring invalid tag sidecar {}: {}",
+                        sung::tostr(sidecar_path),
+                        parsed.error()
+                    );
+                    continue;
+                }
+                seen_sidecars.insert_or_assign(
+                    parsed->logical_path_, sidecar_path
+                );
+
+                const auto existing = tag_analyses_.find(parsed->logical_path_);
+                if (existing != tag_analyses_.end()) {
+                    if (existing->second.analyzed_at_ > parsed->analyzed_at_) {
+                        continue;
+                    }
+                    if (existing->second.analyzed_at_ == parsed->analyzed_at_ &&
+                        existing->second.analysis_id_ != parsed->analysis_id_) {
+                        continue;
+                    }
+                    if (existing->second.analysis_id_ == parsed->analysis_id_ &&
+                        existing->second.input_sha256_ ==
+                            parsed->input_sha256_ &&
+                        existing->second.sidecar_path_ ==
+                            sung::tostr(sidecar_path) &&
+                        existing->second.proxy_path_ == parsed->proxy_path_ &&
+                        existing->second.proxy_sha256_ ==
+                            parsed->proxy_sha256_ &&
+                        existing->second.proxy_materialization_id_ ==
+                            parsed->proxy_materialization_id_) {
+                        const auto input = sung::fingerprint_file(
+                            sung::fromstr(existing->second.input_path_)
+                        );
+                        const bool input_current =
+                            input &&
+                            input->size_ == existing->second.input_size_ &&
+                            input->modified_time_ ==
+                                existing->second.input_modified_time_;
+                        bool proxy_current = false;
+                        if (!existing->second.proxy_path_.empty()) {
+                            const auto proxy = sung::fingerprint_file(
+                                sung::fromstr(existing->second.proxy_path_)
+                            );
+                            proxy_current =
+                                proxy &&
+                                proxy->size_ == existing->second.proxy_size_ &&
+                                proxy->modified_time_ ==
+                                    existing->second.proxy_modified_time_;
+                        }
+                        if (input_current || proxy_current)
+                            continue;
+                    }
+                }
+
+                auto imported = *parsed;
+                if (const auto fingerprint = ::validate_fingerprint(
+                        sung::fromstr(imported.input_path_),
+                        imported.input_size_,
+                        imported.input_modified_time_,
+                        imported.input_sha256_
+                    )) {
+                    imported.input_size_ = fingerprint->size_;
+                    imported.input_modified_time_ = fingerprint->modified_time_;
+                }
+                if (!imported.proxy_path_.empty()) {
+                    if (const auto fingerprint = ::validate_fingerprint(
+                            sung::fromstr(imported.proxy_path_),
+                            imported.proxy_size_,
+                            imported.proxy_modified_time_,
+                            imported.proxy_sha256_
+                        )) {
+                        imported.proxy_size_ = fingerprint->size_;
+                        imported.proxy_modified_time_ =
+                            fingerprint->modified_time_;
+                    }
+                }
+                if (existing != tag_analyses_.end()) {
+                    imported.attempt_input_path_ =
+                        existing->second.attempt_input_path_;
+                    imported.attempt_input_size_ =
+                        existing->second.attempt_input_size_;
+                    imported.attempt_input_modified_time_ =
+                        existing->second.attempt_input_modified_time_;
+                    imported.attempt_analyzer_fingerprint_ =
+                        existing->second.attempt_analyzer_fingerprint_;
+                    imported.last_attempt_at_ =
+                        existing->second.last_attempt_at_;
+                    imported.failure_count_ = existing->second.failure_count_;
+                    imported.last_error_ = existing->second.last_error_;
+                }
+                tag_analyses_.insert_or_assign(
+                    imported.logical_path_, imported
+                );
+                if (!persist_tag_analysis(imported)) {
+                    std::println(
+                        "ImageIndex: Failed to cache tag sidecar {}",
+                        sung::tostr(sidecar_path)
+                    );
+                }
+            }
+
+            for (const auto& path : physical_files) {
+                const auto path_str = sung::tostr(path);
+                seen_physical.insert(path_str);
+            }
+
+            // A Sprintboard AVIF proxy is the browser-facing derivative
+            // of its source. Keep the relationship explicit so date
+            // sorting uses the source timestamp even when the encoder
+            // could not copy all filesystem timestamps to the proxy.
+            std::unordered_map<std::string, Path> sources_by_path;
+            for (const auto& path : physical_files) {
+                if (sung::is_sprintboard_proxy_path(path))
+                    continue;
+                sources_by_path.insert_or_assign(make_path_key(path), path);
+            }
+
+            std::unordered_map<std::string, Path> proxy_sources;
+            std::unordered_set<std::string> paired_sources;
+            std::unordered_set<std::string> stale_proxies;
+            for (const auto& path : physical_files) {
+                const auto source_path = sung::sprintboard_proxy_source_path(
+                    path
+                );
+                if (!source_path)
+                    continue;
+                const auto source = sources_by_path.find(
+                    make_path_key(*source_path)
+                );
+                if (source == sources_by_path.end())
+                    continue;
+
+                std::error_code source_time_error;
+                std::error_code proxy_time_error;
+                const auto source_time = fs::last_write_time(
+                    source->second, source_time_error
+                );
+                const auto proxy_time = fs::last_write_time(
+                    path, proxy_time_error
+                );
+                if (source_time_error || proxy_time_error ||
+                    source_time != proxy_time) {
+                    stale_proxies.insert(make_path_key(path));
+                    continue;
+                }
+                proxy_sources.insert_or_assign(
+                    make_path_key(path), source->second
+                );
+                paired_sources.insert(make_path_key(source->second));
+            }
+
+            // The probe phase only reads `metadata_` (never writes it),
+            // so concurrent lookups across files are safe; each file's
+            // filesystem work (stat, and full decode for new/changed
+            // files) can therefore overlap instead of running one at a
+            // time, which matters a lot when the scan root is behind
+            // something with high per-call latency (e.g. an encrypted
+            // vault driver).
+            std::vector<FileProbe> probes(physical_files.size());
+            scan_arena_.execute([&] {
+                tbb::parallel_for(
+                    tbb::blocked_range<size_t>(0, physical_files.size()),
+                    [&](const tbb::blocked_range<size_t>& range) {
+                        for (auto i = range.begin(); i != range.end(); ++i) {
+                            const auto path_str = sung::tostr(
+                                physical_files[i]
+                            );
+                            const auto it = metadata_.find(path_str);
+                            const CachedMetadata* existing =
+                                it != metadata_.end() ? &it->second : nullptr;
+                            const auto path_key = make_path_key(
+                                physical_files[i]
+                            );
+                            const Path* sort_time_source = nullptr;
+                            if (sung::is_sprintboard_proxy_path(
+                                    physical_files[i]
+                                )) {
+                                const auto source = proxy_sources.find(
+                                    path_key
+                                );
+                                if (source != proxy_sources.end())
+                                    sort_time_source = &source->second;
+                            }
+                            probes[i] = probe_file(
+                                physical_files[i],
+                                paired_sources.contains(path_key) ||
+                                    stale_proxies.contains(path_key),
+                                sort_time_source,
+                                existing
+                            );
+                        }
+                    }
+                );
+            });
+
+            for (size_t i = 0; i < physical_files.size(); ++i) {
+                const auto& physical_path = physical_files[i];
+                auto& probe = probes[i];
+                ++stats.files_scanned_;
+
+                if (probe.shadowed_ || probe.stat_failed_)
+                    continue;
+
+                const auto path_str = sung::tostr(physical_path);
+                if (probe.reused_) {
+                    ++stats.metadata_reused_;
+                    if (probe.needs_persist_) {
+                        metadata_[path_str] = probe.metadata_;
+                        changed.push_back(probe.metadata_);
+                    }
+                } else {
+                    metadata_[path_str] = probe.metadata_;
+                    changed.push_back(probe.metadata_);
+                    ++stats.metadata_indexed_;
+                }
+
+                const auto& metadata = probe.metadata_;
+                if (initial_refresh && stats.files_scanned_ % 1000 == 0) {
+                    std::println(
+                        "ImageIndex: Validated {} files ({} reused, {} "
+                        "indexed)...",
+                        stats.files_scanned_,
+                        stats.metadata_reused_,
+                        stats.metadata_indexed_
+                    );
+                }
+                if (!metadata.eligible_)
+                    continue;
+
+                const auto relative = physical_path.lexically_relative(root);
+                if (relative.empty() || sung::tostr(relative).starts_with(".."))
+                    continue;
+
+                const auto namespace_path = sung::fromstr(namespace_name);
+                const auto browser_path = sung::tostr(
+                    namespace_path / relative
+                );
+                const auto api_path = sung::tostr(
+                    Path{ "/img" } / namespace_path / relative
+                );
+                if (!seen_api_paths.insert(api_path).second)
+                    continue;
+
+                IndexedFile entry;
+                entry.root_key_ = root_key;
+                entry.physical_path_ = path_str;
+                entry.browser_path_ = browser_path;
+                entry.parent_browser_path_ = sung::tostr(
+                    (namespace_path / relative).parent_path()
+                );
+                const auto proxy_source = proxy_sources.find(
+                    make_path_key(physical_path)
+                );
+                const auto display_name =
+                    proxy_source != proxy_sources.end()
+                        ? sung::tostr(proxy_source->second.filename())
+                        : sung::tostr(physical_path.filename());
+                entry.info_.name_ = display_name;
+                entry.info_.path_ = sung::fromstr(api_path);
+                entry.info_.width_ = metadata.width_;
+                entry.info_.height_ = metadata.height_;
+                entry.info_.sort_time_ns_ = metadata.sort_time_ns_;
+                entry.model_ = metadata.model_;
+                entry.prompts_ = metadata.prompts_;
+                entry.logical_path_ = sung::detail::logical_image_key(
+                    physical_path
+                );
+                const auto tag_input = proxy_source != proxy_sources.end()
+                                           ? proxy_source->second
+                                           : physical_path;
+                entry.tag_input_path_ = sung::tostr(tag_input);
+                const auto tag_fingerprint = sung::fingerprint_file(tag_input);
+                if (tag_fingerprint) {
+                    entry.tag_input_size_ = tag_fingerprint->size_;
+                    entry.tag_input_modified_time_ =
+                        tag_fingerprint->modified_time_;
+                } else {
+                    entry.tag_input_size_ = 0;
+                    entry.tag_input_modified_time_ = 0;
+                }
+                if (const auto tag_it = tag_analyses_.find(entry.logical_path_);
+                    tag_it != tag_analyses_.end() &&
+                    !tag_it->second.analysis_.is_null()) {
+                    entry.tags_ = tag_it->second.searchable_tags_;
+                }
+                next->files_.push_back(std::move(entry));
             }
         }
 

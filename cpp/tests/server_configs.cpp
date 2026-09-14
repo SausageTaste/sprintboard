@@ -21,10 +21,10 @@ int main() {
     const auto source = nlohmann::json::parse(R"({
         "dir_bindings": {
             "inheriting": {
-                "local_dirs": ["./a"]
+                "local_dir": "./a"
             },
             "overriding": {
-                "local_dirs": ["./b"],
+                "local_dir": "./b",
                 "avif_pix_format": "yuv420",
                 "avif_quality": 90.0,
                 "avif_gen": true
@@ -57,6 +57,14 @@ int main() {
         !check(
             configs.tagger_poll_interval_seconds_ == 12.5,
             "parses tagger poll interval"
+        )) {
+        return 1;
+    }
+
+    if (!check(
+            inheriting->local_dir_ == sung::fromstr("./a") &&
+                overriding->local_dir_ == sung::fromstr("./b"),
+            "parses a single local directory per binding"
         )) {
         return 1;
     }
@@ -123,12 +131,25 @@ int main() {
         return 1;
     }
 
+    if (!check(
+            exported_inheriting.at("local_dir") == "./a" &&
+                exported_overriding.at("local_dir") == "./b" &&
+                !exported_inheriting.contains("local_dirs"),
+            "exports local_dir as a string"
+        )) {
+        return 1;
+    }
+
     sung::ServerConfigs reimported;
     reimported.import_json(exported);
     const auto* round_tripped = reimported.find_binding(
         std::string{ "overriding" }
     );
     if (!check(nullptr != round_tripped, "round-trips the binding") ||
+        !check(
+            round_tripped->local_dir_ == sung::fromstr("./b"),
+            "round-trips the local directory"
+        ) ||
         !check(
             round_tripped->avif_.quality_.has_value() &&
                 *round_tripped->avif_.quality_ == 90.0,
@@ -141,7 +162,7 @@ int main() {
         const auto false_override = nlohmann::json::parse(R"({
             "dir_bindings": {
                 "quiet": {
-                    "local_dirs": ["./a"],
+                    "local_dir": "./a",
                     "avif_gen": false
                 }
             },
@@ -174,7 +195,7 @@ int main() {
         const auto bad_enum = nlohmann::json::parse(R"({
             "dir_bindings": {
                 "typo": {
-                    "local_dirs": ["./a"],
+                    "local_dir": "./a",
                     "avif_pix_format": "yuv999"
                 }
             }
@@ -194,7 +215,7 @@ int main() {
         const auto bad_type = nlohmann::json::parse(R"({
             "dir_bindings": {
                 "broken": {
-                    "local_dirs": ["./a"],
+                    "local_dir": "./a",
                     "avif_quality": "loud"
                 }
             }
@@ -219,6 +240,31 @@ int main() {
             )) {
             return 1;
         }
+    }
+
+    for (const auto& invalid_binding : {
+             nlohmann::json::object(),
+             nlohmann::json{ { "local_dir", "" } },
+             nlohmann::json{ { "local_dir", { "./a", "./b" } } },
+             nlohmann::json{ { "local_dir", nullptr } },
+             nlohmann::json{ { "local_dirs", { "./a" } } },
+         }) {
+        sung::ServerConfigs invalid_configs;
+        bool threw = false;
+        try {
+            invalid_configs.import_json(
+                {
+                    { "dir_bindings", { { "invalid", invalid_binding } } },
+                }
+            );
+        } catch (const std::exception&) {
+            threw = true;
+        }
+        if (!check(
+                threw,
+                "rejects missing, empty, array, null, or legacy local_dir"
+            ))
+            return 1;
     }
 
     return 0;

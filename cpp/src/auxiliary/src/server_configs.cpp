@@ -126,8 +126,7 @@ namespace sung {
     void ServerConfigs::fill_default() {
         {
             auto& binding = dir_bindings_["example"];
-            binding.local_dirs_.push_back(sung::fromstr("./docs/images"));
-            binding.local_dirs_.push_back(sung::fromstr("./fixtures/images"));
+            binding.local_dir_ = sung::fromstr("./fixtures/images");
         }
 
         server_host_ = DEFAULT_HOST;
@@ -196,20 +195,17 @@ namespace sung {
         if (it == dir_bindings_.end())
             return std::unexpected("Namespace not found: " + sung::tostr(ns));
 
-        for (const auto& local_dir : it->second.local_dirs_) {
-            const auto full_path = concat_path_safely(local_dir, rest);
-            if (!full_path) {
-                return std::unexpected(
-                    "Invalid path in local_dirs: " + sung::tostr(local_dir)
-                );
-            }
-
-            if (sung::fs::exists(*full_path)) {
-                return *full_path;
-            }
+        const auto& local_dir = it->second.local_dir_;
+        const auto full_path = concat_path_safely(local_dir, rest);
+        if (!full_path) {
+            return std::unexpected(
+                "Invalid path in local_dir: " + sung::tostr(local_dir)
+            );
         }
+        if (sung::fs::exists(*full_path))
+            return *full_path;
 
-        return std::unexpected("No valid path found in local_dirs");
+        return std::unexpected("Path not found in local_dir");
     }
 
     void ServerConfigs::import_json(const nlohmann::json& json_data) {
@@ -219,13 +215,11 @@ namespace sung {
                 const auto& json_binding = it.value();
                 auto& binding_info = dir_bindings_[it.key()];
 
-                if (json_binding.contains("local_dirs")) {
-                    for (auto& x : json_binding.at("local_dirs")) {
-                        auto path_str = x.get<std::string>();
-                        const auto path = fs::u8path(path_str);
-                        binding_info.local_dirs_.push_back(path);
-                    }
-                }
+                const auto path_str =
+                    json_binding.at("local_dir").get<std::string>();
+                if (path_str.empty())
+                    throw std::runtime_error("local_dir must not be empty");
+                binding_info.local_dir_ = fs::u8path(path_str);
 
                 if (json_binding.contains("avif_pix_format")) {
                     try {
@@ -299,10 +293,7 @@ namespace sung {
 
             for (const auto& [name, info] : dir_bindings_) {
                 auto json_binding = nlohmann::json::object();
-                json_binding["local_dirs"] = nlohmann::json::array();
-                for (const auto& path : info.local_dirs_) {
-                    json_binding["local_dirs"].push_back(sung::tostr(path));
-                }
+                json_binding["local_dir"] = sung::tostr(info.local_dir_);
 
                 // Only explicitly set overrides may be written back:
                 // materializing inherited values here would detach the

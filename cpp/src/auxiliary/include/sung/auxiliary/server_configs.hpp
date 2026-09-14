@@ -5,7 +5,6 @@
 #include <mutex>
 #include <optional>
 #include <string>
-#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -46,7 +45,7 @@ namespace sung {
         };
 
         struct BindingInfo {
-            std::vector<Path> local_dirs_;
+            Path local_dir_;
             AvifOverrides avif_;
         };
 

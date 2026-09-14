@@ -88,7 +88,7 @@ int main() {
     configs->fill_default();
     configs->dir_bindings_.clear();
     auto& binding = configs->dir_bindings_["test"];
-    binding.local_dirs_.push_back(root);
+    binding.local_dir_ = root;
     binding.avif_.gen_ = true;
     configs->tagger_enabled_ = true;
 
@@ -153,7 +153,7 @@ int main() {
     plain_configs->fill_default();
     plain_configs->dir_bindings_.clear();
     auto& plain_binding = plain_configs->dir_bindings_["test"];
-    plain_binding.local_dirs_.push_back(root);
+    plain_binding.local_dir_ = root;
     plain_binding.avif_.gen_ = true;
     plain_configs->tagger_enabled_ = false;
     const auto plain_config_path = temp / "plain-server-configs.json";

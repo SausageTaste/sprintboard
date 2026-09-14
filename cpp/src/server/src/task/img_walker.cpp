@@ -157,159 +157,153 @@ namespace {
             if (!cfg.effective_avif_options(binding_info).gen_)
                 continue;
 
-            for (const auto& local_dir : binding_info.local_dirs_) {
-                if (!sung::fs::is_directory(local_dir))
-                    continue;
+            const auto& local_dir = binding_info.local_dir_;
+            if (!sung::fs::is_directory(local_dir))
+                continue;
 
-                // Walks with the error-code API instead of the throwing
-                // recursive iterator: a volume that fails mid-scan (e.g. EIO
-                // from a flaky external drive) must only cost the unreadable
-                // subtree, not the process. The next scan retries whatever
-                // was skipped.
-                std::vector<sung::Path> pending{ local_dir };
-                while (!pending.empty()) {
-                    const auto dir = std::move(pending.back());
-                    pending.pop_back();
+            // Walks with the error-code API instead of the throwing
+            // recursive iterator: a volume that fails mid-scan (e.g. EIO
+            // from a flaky external drive) must only cost the unreadable
+            // subtree, not the process. The next scan retries whatever
+            // was skipped.
+            std::vector<sung::Path> pending{ local_dir };
+            while (!pending.empty()) {
+                const auto dir = std::move(pending.back());
+                pending.pop_back();
 
-                    std::error_code iter_error;
-                    auto entry_it = sung::fs::directory_iterator(
-                        dir, iter_error
+                std::error_code iter_error;
+                auto entry_it = sung::fs::directory_iterator(dir, iter_error);
+                if (iter_error) {
+                    std::println(
+                        "ImgWalker: Skipping unreadable directory {}: {}",
+                        sung::tostr(dir),
+                        iter_error.message()
                     );
-                    if (iter_error) {
-                        std::println(
-                            "ImgWalker: Skipping unreadable directory {}: {}",
-                            sung::tostr(dir),
-                            iter_error.message()
-                        );
-                        continue;
+                    continue;
+                }
+
+                const sung::fs::directory_iterator dir_end;
+                while (entry_it != dir_end) {
+                    const auto& entry = *entry_it;
+
+                    // Queue subdirectories without following symlinks,
+                    // matching recursive_directory_iterator's default.
+                    std::error_code type_error;
+                    if (entry.is_directory(type_error) && !type_error) {
+                        if (!entry.is_symlink(type_error) && !type_error)
+                            pending.push_back(entry.path());
                     }
 
-                    const sung::fs::directory_iterator dir_end;
-                    while (entry_it != dir_end) {
-                        const auto& entry = *entry_it;
+                    auto ext_str = sung::tostr(entry.path().extension());
+                    ext_str = absl::AsciiStrToLower(ext_str);
+                    if (ext_str == ".png") {
+                        std::error_code absolute_error;
+                        auto source_path = sung::fs::absolute(
+                            entry.path(), absolute_error
+                        );
+                        if (absolute_error)
+                            source_path = entry.path().lexically_normal();
+                        else
+                            source_path = source_path.lexically_normal();
 
-                        // Queue subdirectories without following symlinks,
-                        // matching recursive_directory_iterator's default.
-                        std::error_code type_error;
-                        if (entry.is_directory(type_error) && !type_error) {
-                            if (!entry.is_symlink(type_error) && !type_error)
-                                pending.push_back(entry.path());
+                        const auto source_fingerprint = sung::fingerprint_file(
+                            source_path
+                        );
+                        auto analysis = source_fingerprint
+                                            ? image_index.current_tag_analysis(
+                                                  source_path,
+                                                  cfg.tagger_enabled_
+                                              )
+                                            : std::nullopt;
+                        if (!source_fingerprint ||
+                            (cfg.tagger_enabled_ && !analysis)) {
+                            entry_it.increment(iter_error);
+                            if (iter_error) {
+                                std::println(
+                                    "ImgWalker: Stopping scan of "
+                                    "directory {}: {}",
+                                    sung::tostr(dir),
+                                    iter_error.message()
+                                );
+                                break;
+                            }
+                            continue;
                         }
 
-                        auto ext_str = sung::tostr(entry.path().extension());
-                        ext_str = absl::AsciiStrToLower(ext_str);
-                        if (ext_str == ".png") {
-                            std::error_code absolute_error;
-                            auto source_path = sung::fs::absolute(
-                                entry.path(), absolute_error
-                            );
-                            if (absolute_error)
-                                source_path = entry.path().lexically_normal();
-                            else
-                                source_path = source_path.lexically_normal();
-
-                            const auto source_fingerprint =
-                                sung::fingerprint_file(source_path);
-                            auto analysis =
-                                source_fingerprint
-                                    ? image_index.current_tag_analysis(
-                                          source_path, cfg.tagger_enabled_
-                                      )
-                                    : std::nullopt;
-                            if (!source_fingerprint ||
-                                (cfg.tagger_enabled_ && !analysis)) {
-                                entry_it.increment(iter_error);
-                                if (iter_error) {
-                                    std::println(
-                                        "ImgWalker: Stopping scan of "
-                                        "directory {}: {}",
-                                        sung::tostr(dir),
-                                        iter_error.message()
-                                    );
-                                    break;
-                                }
-                                continue;
-                            }
-
-                            const auto avif_opts = cfg.effective_avif_options(
-                                binding_info
-                            );
-                            std::string materialization_id;
-                            if (analysis) {
-                                materialization_id =
-                                    sung::make_proxy_materialization_id(
-                                        *analysis,
-                                        ::pix_format_name(
-                                            avif_opts.pix_format_
-                                        ),
-                                        avif_opts.quality_,
-                                        avif_opts.speed_
-                                    );
-                            }
-                            const auto avif = sung::make_sprintboard_proxy_path(
-                                source_path
-                            );
-
-                            // A generated AVIF carries the source's mtime
-                            // from encode time, so anything other than an
-                            // exact match means the source has changed since.
-                            // This costs the same one stat per file as the
-                            // previous exists() check; the source mtime comes
-                            // from attributes the directory iteration already
-                            // fetched.
-                            std::error_code avif_error;
-                            const auto avif_time = sung::fs::last_write_time(
-                                avif, avif_error
-                            );
-                            bool up_to_date = false;
-                            if (!avif_error) {
-                                std::error_code png_error;
-                                const auto png_time = entry.last_write_time(
-                                    png_error
+                        const auto avif_opts = cfg.effective_avif_options(
+                            binding_info
+                        );
+                        std::string materialization_id;
+                        if (analysis) {
+                            materialization_id =
+                                sung::make_proxy_materialization_id(
+                                    *analysis,
+                                    ::pix_format_name(avif_opts.pix_format_),
+                                    avif_opts.quality_,
+                                    avif_opts.speed_
                                 );
-                                up_to_date = !png_error &&
-                                             png_time == avif_time;
-                                if (up_to_date && analysis) {
-                                    up_to_date =
-                                        image_index
-                                            .proxy_materialization_current(
-                                                avif, materialization_id
-                                            );
-                                }
-                            }
+                        }
+                        const auto avif = sung::make_sprintboard_proxy_path(
+                            source_path
+                        );
 
-                            if (!up_to_date) {
+                        // A generated AVIF carries the source's mtime
+                        // from encode time, so anything other than an
+                        // exact match means the source has changed since.
+                        // This costs the same one stat per file as the
+                        // previous exists() check; the source mtime comes
+                        // from attributes the directory iteration already
+                        // fetched.
+                        std::error_code avif_error;
+                        const auto avif_time = sung::fs::last_write_time(
+                            avif, avif_error
+                        );
+                        bool up_to_date = false;
+                        if (!avif_error) {
+                            std::error_code png_error;
+                            const auto png_time = entry.last_write_time(
+                                png_error
+                            );
+                            up_to_date = !png_error && png_time == avif_time;
+                            if (up_to_date && analysis) {
+                                up_to_date =
+                                    image_index.proxy_materialization_current(
+                                        avif, materialization_id
+                                    );
+                            }
+                        }
+
+                        if (!up_to_date) {
 #if HAS_GENERATOR
-                                co_yield PngWorkItem{
+                            co_yield PngWorkItem{
+                                source_path,
+                                &binding_info,
+                                *source_fingerprint,
+                                std::move(analysis),
+                                std::move(materialization_id),
+                            };
+#else
+                            result.push_back(
+                                {
                                     source_path,
                                     &binding_info,
                                     *source_fingerprint,
                                     std::move(analysis),
                                     std::move(materialization_id),
-                                };
-#else
-                                result.push_back(
-                                    {
-                                        source_path,
-                                        &binding_info,
-                                        *source_fingerprint,
-                                        std::move(analysis),
-                                        std::move(materialization_id),
-                                    }
-                                );
-#endif
-                            }
-                        }
-
-                        entry_it.increment(iter_error);
-                        if (iter_error) {
-                            std::println(
-                                "ImgWalker: Stopping scan of directory {}: {}",
-                                sung::tostr(dir),
-                                iter_error.message()
+                                }
                             );
-                            break;
+#endif
                         }
+                    }
+
+                    entry_it.increment(iter_error);
+                    if (iter_error) {
+                        std::println(
+                            "ImgWalker: Stopping scan of directory {}: {}",
+                            sung::tostr(dir),
+                            iter_error.message()
+                        );
+                        break;
                     }
                 }
             }

@@ -309,17 +309,16 @@ int main() {
                 return;
             }
 
-            for (auto& local_dir : binding->local_dirs_) {
-                const auto full_path = sung::concat_path_safely(
-                    local_dir, rest_path
+            const auto& local_dir = binding->local_dir_;
+            const auto full_path = sung::concat_path_safely(
+                local_dir, rest_path
+            );
+            if (!full_path) {
+                res.status = 400;
+                res.set_content(
+                    "Invalid path in 'dir' parameter", "text/plain"
                 );
-                if (!full_path) {
-                    res.status = 400;
-                    res.set_content(
-                        "Invalid path in 'dir' parameter", "text/plain"
-                    );
-                    return;
-                }
+                return;
             }
         }
 
@@ -427,20 +426,15 @@ int main() {
             return;
         }
 
-        std::optional<sung::Path> source_path;
-        for (const auto& local_dir : binding->local_dirs_) {
-            const auto full_path = sung::concat_path_safely(
-                local_dir, rest_path
-            );
-            if (!full_path) {
-                res.status = 400;
-                res.set_content("Invalid 'path' parameter", "text/plain");
-                return;
-            }
-            source_path = sung::select_source_image_path(*full_path);
-            if (source_path)
-                break;
+        const auto& local_dir = binding->local_dir_;
+        const auto full_path = sung::concat_path_safely(local_dir, rest_path);
+        if (!full_path) {
+            res.status = 400;
+            res.set_content("Invalid 'path' parameter", "text/plain");
+            return;
         }
+        const auto source_path = sung::select_source_image_path(*full_path);
+
         if (!source_path) {
             res.status = 404;
             res.set_content("Source image not found", "text/plain");
