@@ -33,7 +33,7 @@ namespace {
         return response.make_json(0, 100)["totalImageCount"].get<size_t>();
     }
 
-    bool mark_database_as_version_four(const sung::Path& database_path) {
+    bool mark_database_as_version_six(const sung::Path& database_path) {
         sqlite3* database = nullptr;
         const auto path = sung::tostr(database_path);
         if (sqlite3_open(path.c_str(), &database) != SQLITE_OK) {
@@ -42,13 +42,18 @@ namespace {
         }
 
         const auto result = sqlite3_exec(
-            database, "PRAGMA user_version=4;", nullptr, nullptr, nullptr
+            database,
+            "ALTER TABLE image_tag_analysis ADD COLUMN sidecar_path TEXT NOT "
+            "NULL DEFAULT ''; PRAGMA user_version=6;",
+            nullptr,
+            nullptr,
+            nullptr
         );
         sqlite3_close(database);
         return result == SQLITE_OK;
     }
 
-    bool has_version_six_tag_table(
+    bool has_version_seven_tag_table(
         const sung::Path& database_path, const size_t expected_count
     ) {
         sqlite3* database = nullptr;
@@ -111,7 +116,7 @@ namespace {
         }
         sqlite3_finalize(statement);
         sqlite3_close(database);
-        return schema_version == 6 && tag_table_exists && tag_count == 0 &&
+        return schema_version == 7 && tag_table_exists && tag_count == 1 &&
                timestamp_count == expected_count;
     }
 
@@ -374,7 +379,7 @@ int main() {
                 "rejects non-matching indexed model metadata"
             ) ||
             !check(
-                !index.tag_analysis(image_root / "one.avif"),
+                !index.tag_analysis(image_root / "one.avif").has_value(),
                 "returns no tag details from an empty published snapshot"
             )) {
             sung::fs::remove_all(temp);
@@ -431,8 +436,8 @@ int main() {
     }
 
     if (!check(
-            mark_database_as_version_four(database_path),
-            "creates a version-four migration fixture"
+            mark_database_as_version_six(database_path),
+            "creates a version-six migration fixture"
         )) {
         sung::fs::remove_all(temp);
         return 1;
@@ -442,24 +447,24 @@ int main() {
         sung::ImageIndex index;
         const auto reopened = index.initialize(configs);
         if (!check(
-                reopened.metadata_reused_ == 0,
-                "does not reuse absolute-path schema metadata"
+                reopened.metadata_reused_ == 2,
+                "preserves metadata during schema migration"
             ) ||
             !check(
-                reopened.metadata_indexed_ == 2,
-                "rebuilds an older root cache schema"
+                reopened.metadata_indexed_ == 0,
+                "avoids reindexing during schema migration"
             ) ||
             !check(
-                image_count(index, "blue_hair") == 0,
-                "invalidates legacy analyzed tags"
+                image_count(index, "blue_hair") == 1,
+                "preserves analyzed tags during migration"
             ) ||
             !check(
-                !index.tag_analysis(image_root / "one.avif"),
-                "removes legacy tag details"
+                index.tag_analysis(image_root / "one.avif").has_value(),
+                "retains tag details"
             ) ||
             !check(
-                has_version_six_tag_table(database_path, 2),
-                "rebuilds the cache as relative-path schema six"
+                has_version_seven_tag_table(database_path, 2),
+                "migrates the cache to schema seven"
             )) {
             sung::fs::remove_all(temp);
             return 1;
@@ -667,7 +672,8 @@ int main() {
         sung::ImageIndex index;
         const auto rebuilt = index.initialize(configs);
         if (!check(
-                rebuilt.metadata_indexed_ >= 4, "rebuilds unknown schemas"
+                rebuilt.metadata_indexed_ >= 4 && !rebuilt.persistent_,
+                "browses unknown schemas without replacing the database"
             )) {
             sung::fs::remove_all(temp);
             return 1;
@@ -777,373 +783,6 @@ int main() {
                     orphan[0]["name"] == "paired.png.sprintboard.avif" &&
                     orphan[0]["src"] == "/img/test/paired.png.sprintboard.avif",
                 "lists an orphan proxy using its physical filename"
-            )) {
-            sung::fs::remove_all(temp);
-            return 1;
-        }
-    }
-
-    const auto sidecar_root = temp / "sidecar-images";
-    const auto sidecar_source = sidecar_root / "tagged.png";
-    const auto sidecar_proxy = sung::make_sprintboard_proxy_path(
-        sidecar_source
-    );
-    const auto sidecar_path = sung::make_sprintboard_tag_sidecar_path(
-        sidecar_source
-    );
-    sung::fs::create_directories(sidecar_root);
-    sung::fs::copy_file(source_png, sidecar_source);
-    sung::fs::copy_file(source_avif, sidecar_proxy);
-    if (!check(
-            !sung::copy_file_timestamps(sidecar_source, sidecar_proxy),
-            "aligns the sidecar fixture proxy timestamp"
-        )) {
-        sung::fs::remove_all(temp);
-        return 1;
-    }
-
-    sung::TagAnalysisRecord sidecar_record;
-    sidecar_record.logical_path_ = sung::detail::logical_image_key(
-        sidecar_source
-    );
-    sidecar_record.input_kind_ = "source";
-    sidecar_record.input_path_ = sung::tostr(sidecar_source);
-    const auto sidecar_input_fingerprint = sung::fingerprint_file_with_sha256(
-        sidecar_source
-    );
-    if (!check(
-            sidecar_input_fingerprint.has_value(),
-            "fingerprints a sidecar source"
-        )) {
-        sung::fs::remove_all(temp);
-        return 1;
-    }
-    sidecar_record.input_size_ = sidecar_input_fingerprint->size_;
-    sidecar_record.input_modified_time_ =
-        sidecar_input_fingerprint->modified_time_;
-    sidecar_record.input_sha256_ = sidecar_input_fingerprint->sha256_;
-    sidecar_record.analyzer_fingerprint_ = "sidecar-analyzer";
-    sidecar_record.model_id_ = "sidecar-model";
-    sidecar_record.general_threshold_ = 0.35;
-    sidecar_record.character_threshold_ = 0.75;
-    sidecar_record.analyzed_at_ = 456;
-    sidecar_record.analysis_ = {
-        { "ratings",
-          nlohmann::json::array(
-              { { { "name", "safe" }, { "confidence", 0.99 } } }
-          ) },
-        { "generalTags",
-          nlohmann::json::array(
-              { { { "name", "sidecar_tag" }, { "confidence", 0.88 } } }
-          ) },
-        { "characterTags", nlohmann::json::array() },
-    };
-    sidecar_record.searchable_tags_ = { "sidecar_tag" };
-    sidecar_record.analysis_id_ = sung::make_analysis_id(sidecar_record);
-    sidecar_record.sidecar_path_ = sung::tostr(sidecar_path);
-    const auto sidecar_proxy_fingerprint = sung::fingerprint_file_with_sha256(
-        sidecar_proxy
-    );
-    if (!check(
-            sidecar_proxy_fingerprint.has_value(),
-            "fingerprints a sidecar proxy"
-        )) {
-        sung::fs::remove_all(temp);
-        return 1;
-    }
-    sidecar_record.proxy_path_ = sung::tostr(sidecar_proxy);
-    sidecar_record.proxy_size_ = sidecar_proxy_fingerprint->size_;
-    sidecar_record.proxy_modified_time_ =
-        sidecar_proxy_fingerprint->modified_time_;
-    sidecar_record.proxy_sha256_ = sidecar_proxy_fingerprint->sha256_;
-    sidecar_record.proxy_materialization_id_ = "portable-proxy";
-
-    const auto serialized_sidecar = sung::make_tag_sidecar_json(sidecar_record);
-    const auto serialized_text = serialized_sidecar.dump();
-    auto relocated_identity = sidecar_record;
-    relocated_identity.logical_path_ = "D:/different/root/tagged.png";
-    relocated_identity.input_path_ = "D:/different/root/tagged.png";
-    auto legacy_sidecar = serialized_sidecar;
-    legacy_sidecar["schemaVersion"] = 1;
-    auto malformed_sidecar = serialized_sidecar;
-    malformed_sidecar["generalTags"][0]["confidence"] = 2.0;
-    if (!check(
-            serialized_sidecar["schemaVersion"] == 2 &&
-                !serialized_sidecar.contains("logicalPath") &&
-                !serialized_sidecar["input"].contains("path") &&
-                !serialized_sidecar["proxy"].contains("path") &&
-                !serialized_text.contains(sung::tostr(sidecar_root)),
-            "serializes a path-independent version-two sidecar"
-        ) ||
-        !check(
-            sung::make_analysis_id(relocated_identity) ==
-                sidecar_record.analysis_id_,
-            "keeps the analysis ID stable across absolute paths"
-        ) ||
-        !check(
-            !sung::parse_tag_sidecar_json(legacy_sidecar, sidecar_path),
-            "rejects a legacy version-one sidecar"
-        ) ||
-        !check(
-            !sung::parse_tag_sidecar_json(malformed_sidecar, sidecar_path),
-            "rejects an out-of-range sidecar confidence"
-        )) {
-        sung::fs::remove_all(temp);
-        return 1;
-    }
-    auto invalid_digest = serialized_sidecar;
-    invalid_digest["input"]["sha256"] = "not-a-digest";
-    auto invalid_kind = serialized_sidecar;
-    invalid_kind["input"]["kind"] = "remote";
-    auto invalid_timestamp = serialized_sidecar;
-    invalid_timestamp["input"]["modifiedTimeUnixNs"] = 0;
-    auto proxy_input_record = sidecar_record;
-    proxy_input_record.input_kind_ = "proxy";
-    proxy_input_record.input_path_ = sung::tostr(sidecar_proxy);
-    proxy_input_record.input_size_ = sidecar_proxy_fingerprint->size_;
-    proxy_input_record.input_modified_time_ =
-        sidecar_proxy_fingerprint->modified_time_;
-    proxy_input_record.input_sha256_ = sidecar_proxy_fingerprint->sha256_;
-    proxy_input_record.analysis_id_ = sung::make_analysis_id(
-        proxy_input_record
-    );
-    const auto parsed_proxy_input = sung::parse_tag_sidecar_json(
-        sung::make_tag_sidecar_json(proxy_input_record), sidecar_path
-    );
-    if (!check(
-            !sung::parse_tag_sidecar_json(invalid_digest, sidecar_path),
-            "rejects an invalid sidecar digest"
-        ) ||
-        !check(
-            !sung::parse_tag_sidecar_json(invalid_kind, sidecar_path),
-            "rejects an invalid sidecar input kind"
-        ) ||
-        !check(
-            !sung::parse_tag_sidecar_json(invalid_timestamp, sidecar_path),
-            "rejects an invalid sidecar timestamp"
-        ) ||
-        !check(
-            parsed_proxy_input &&
-                parsed_proxy_input->input_path_ == sung::tostr(sidecar_proxy),
-            "derives a proxy input path from the sidecar filename"
-        )) {
-        sung::fs::remove_all(temp);
-        return 1;
-    }
-    const auto sidecar_write = sung::write_tag_sidecar(
-        sidecar_path, sidecar_record
-    );
-    if (!check(sidecar_write.has_value(), "writes a valid tag sidecar")) {
-        sung::fs::remove_all(temp);
-        return 1;
-    }
-
-    const auto sidecar_configs = make_configs(sidecar_root);
-    {
-        sung::ImageIndex index;
-        index.initialize(sidecar_configs);
-        const auto details = index.tag_analysis(sidecar_proxy);
-        if (!check(
-                image_count(index, "sidecar_tag") == 1,
-                "rebuilds searchable analysis from a sidecar"
-            ) ||
-            !check(
-                index.current_tag_analysis(sidecar_source).has_value(),
-                "accepts current sidecar analysis for proxy generation"
-            ) ||
-            !check(
-                index.proxy_materialization_current(
-                    sidecar_proxy, "portable-proxy"
-                ),
-                "accepts a current sidecar proxy fingerprint"
-            ) ||
-            !check(
-                details &&
-                    details->at("analysisId") == sidecar_record.analysis_id_ &&
-                    !details->at("sourceMissing").get<bool>(),
-                "returns imported sidecar details from the published snapshot"
-            )) {
-            sung::fs::remove_all(temp);
-            return 1;
-        }
-    }
-
-    const auto relocated_root = temp / "relocated-sidecar-images";
-    const auto relocated_source = relocated_root / sidecar_source.filename();
-    const auto relocated_proxy = sung::make_sprintboard_proxy_path(
-        relocated_source
-    );
-    const auto relocated_sidecar = sung::make_sprintboard_tag_sidecar_path(
-        relocated_source
-    );
-    sung::fs::create_directories(relocated_root);
-    sung::fs::copy_file(sidecar_source, relocated_source);
-    sung::fs::copy_file(sidecar_proxy, relocated_proxy);
-    sung::fs::copy_file(sidecar_path, relocated_sidecar);
-    std::error_code relocated_time_error;
-    sung::fs::last_write_time(
-        relocated_source,
-        sung::fs::last_write_time(relocated_source) + std::chrono::seconds{ 2 },
-        relocated_time_error
-    );
-    const auto relocated_configs = make_configs(relocated_root);
-    {
-        sung::ImageIndex index;
-        index.initialize(relocated_configs);
-        if (!check(
-                !relocated_time_error,
-                "changes relocated source metadata without changing content"
-            ) ||
-            !check(
-                index.current_tag_analysis(relocated_source).has_value(),
-                "reuses analysis after relocation and timestamp change"
-            ) ||
-            !check(
-                index.proxy_materialization_current(
-                    relocated_proxy, "portable-proxy"
-                ),
-                "reuses proxy materialization after relocation"
-            )) {
-            sung::fs::remove_all(temp);
-            return 1;
-        }
-    }
-
-    {
-        sung::ImageIndex index;
-        index.initialize(relocated_configs);
-        if (!check(
-                index.current_tag_analysis(relocated_source).has_value(),
-                "reuses cached local validation after restart"
-            )) {
-            sung::fs::remove_all(temp);
-            return 1;
-        }
-        auto changed_bytes = sung::read_file(relocated_source);
-        changed_bytes.back() ^= 0xff;
-        if (!check(
-                sung::write_file(relocated_source, changed_bytes),
-                "changes relocated source content without changing its size"
-            )) {
-            sung::fs::remove_all(temp);
-            return 1;
-        }
-        sung::fs::last_write_time(
-            relocated_source,
-            sung::fs::last_write_time(relocated_source) +
-                std::chrono::seconds{ 2 },
-            relocated_time_error
-        );
-        if (!check(
-                !index.current_tag_analysis(relocated_source),
-                "rejects same-sized content with a different digest"
-            )) {
-            sung::fs::remove_all(temp);
-            return 1;
-        }
-    }
-
-    sung::fs::remove(sidecar_path);
-    {
-        sung::ImageIndex index;
-        index.initialize(sidecar_configs);
-        const auto cached_details = index.tag_analysis(sidecar_proxy);
-        if (!check(
-                image_count(index, "sidecar_tag") == 1,
-                "uses SQLite when the sidecar is unavailable"
-            ) ||
-            !check(
-                cached_details && cached_details->at("analysisId") ==
-                                      sidecar_record.analysis_id_,
-                "publishes SQLite tag details when the sidecar is unavailable"
-            )) {
-            sung::fs::remove_all(temp);
-            return 1;
-        }
-        if (!check(
-                !sung::fs::exists(sidecar_path),
-                "does not restore sidecars while tagging is disabled"
-            )) {
-            sung::fs::remove_all(temp);
-            return 1;
-        }
-        auto recovery_configs = std::make_shared<sung::ServerConfigs>(
-            *sidecar_configs
-        );
-        recovery_configs->tagger_enabled_ = true;
-        sung::fs::create_directory(sidecar_path);
-        index.refresh(recovery_configs);
-        if (!check(
-                sung::fs::is_directory(sidecar_path) &&
-                    index.tag_analysis(sidecar_source).has_value(),
-                "retains cached tags when a sidecar write remains blocked"
-            )) {
-            sung::fs::remove_all(temp);
-            return 1;
-        }
-        sung::fs::remove(sidecar_path);
-        index.refresh(recovery_configs);
-        const auto restored = sung::read_tag_sidecar(sidecar_path);
-        if (!check(
-                restored &&
-                    restored->analysis_id_ == sidecar_record.analysis_id_ &&
-                    restored->analyzed_at_ == sidecar_record.analyzed_at_,
-                "restores a missing sidecar from cached tags without reanalysis"
-            )) {
-            sung::fs::remove_all(temp);
-            return 1;
-        }
-        sung::fs::remove(sidecar_path);
-        {
-            sung::ImageIndex restarted;
-            restarted.initialize(recovery_configs);
-            const auto recovered = sung::read_tag_sidecar(sidecar_path);
-            if (!check(
-                    recovered &&
-                        recovered->analysis_id_ == sidecar_record.analysis_id_,
-                    "restores missing sidecars from SQLite after restart"
-                )) {
-                return 1;
-            }
-        }
-        sung::fs::remove(sidecar_source);
-        index.refresh(sidecar_configs);
-        const auto orphan_details = index.tag_analysis(sidecar_proxy);
-        if (!check(
-                image_count(index, "sidecar_tag") == 1,
-                "keeps sidecar tags for an orphan proxy"
-            ) ||
-            !check(
-                orphan_details &&
-                    orphan_details->at("sourceMissing").get<bool>(),
-                "marks an orphan proxy analysis as source missing"
-            )) {
-            sung::fs::remove_all(temp);
-            return 1;
-        }
-
-        sung::fs::remove(sidecar_proxy);
-        if (!check(
-                sung::write_file(sidecar_source, std::string{ "not an image" }),
-                "creates an unreadable source fixture"
-            )) {
-            sung::fs::remove_all(temp);
-            return 1;
-        }
-        index.refresh(sidecar_configs);
-        if (!check(
-                sung::fs::exists(sidecar_path) &&
-                    index.tag_analysis(sidecar_source).has_value(),
-                "retains analysis while an unreadable source still exists"
-            )) {
-            sung::fs::remove_all(temp);
-            return 1;
-        }
-        sung::fs::remove(sidecar_source);
-        index.refresh(sidecar_configs);
-        if (!check(
-                !sung::fs::exists(sidecar_path),
-                "removes a sidecar after confirmed source and proxy deletion"
             )) {
             sung::fs::remove_all(temp);
             return 1;

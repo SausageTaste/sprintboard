@@ -24,7 +24,7 @@
 #include "sung/image/img_info.hpp"
 
 #include "image_query.hpp"
-#include "tag_sidecar.hpp"
+#include "tag_analysis.hpp"
 #include "tagger_client.hpp"
 
 #if defined(SUNG_OS_WINDOWS)
@@ -78,7 +78,7 @@ namespace sung::detail {
 
 namespace {
 
-    constexpr int DATABASE_SCHEMA_VERSION = 6;
+    constexpr int DATABASE_SCHEMA_VERSION = 7;
     constexpr int64_t NANOSECONDS_PER_SECOND = 1'000'000'000;
 
 
@@ -442,7 +442,12 @@ public:
         Path fallback_;
         sqlite3* database_ = nullptr;
         bool dirty_ = false;
-        bool tags_dirty_ = false;
+        bool active_ = true;
+        bool blocked_ = false;
+        bool paused_ = false;
+        std::unordered_map<std::string, CachedTagAnalysis> pending_tags_;
+        std::unordered_map<std::string, std::string> persisted_tags_;
+        std::unordered_map<std::string, std::string> deleted_tags_;
         bool healthy_ = false;
         bool loaded_ = false;
         int last_error_ = SQLITE_OK;
@@ -508,7 +513,8 @@ public:
         Store* result = nullptr;
         size_t depth = 0;
         for (const auto& [key, store] : stores_) {
-            if (key.size() > depth && relative_path(*store, path)) {
+            if (store->active_ && key.size() > depth &&
+                relative_path(*store, path)) {
                 result = store.get();
                 depth = key.size();
             }
@@ -529,6 +535,96 @@ public:
         return result;
     }
 
+    static std::string stored_logical_path(
+        const Store& store, const CachedTagAnalysis& item
+    ) {
+        const auto& input = item.input_path_.empty() ? item.attempt_input_path_
+                                                     : item.input_path_;
+        const auto physical = sung::fromstr(
+            input.empty() ? item.logical_path_ : input
+        );
+        return relative_path(
+                   store,
+                   sung::tostr(
+                       sung::sprintboard_proxy_source_path(physical).value_or(
+                           physical
+                       )
+                   )
+        )
+            .value_or("");
+    }
+
+    static std::optional<int> database_version(sqlite3* db) {
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(
+                db, "PRAGMA user_version;", -1, &stmt, nullptr
+            ) != SQLITE_OK)
+            return std::nullopt;
+        const auto result = sqlite3_step(stmt);
+        const auto version =
+            result == SQLITE_ROW
+                ? std::optional<int>{ sqlite3_column_int(stmt, 0) }
+                : std::nullopt;
+        sqlite3_finalize(stmt);
+        return version;
+    }
+
+    bool inspect_database(Store& store, const Path& path, bool load) {
+        std::error_code ec;
+        if (!fs::is_regular_file(path, ec))
+            return true;
+        sqlite3* db = nullptr;
+        if (sqlite3_open_v2(
+                sung::tostr(path).c_str(), &db, SQLITE_OPEN_READONLY, nullptr
+            ) != SQLITE_OK) {
+            if (db)
+                sqlite3_close(db);
+            return true;  // Permission/unavailability can use the fallback.
+        }
+        const auto version = database_version(db);
+        sqlite3_stmt* check = nullptr;
+        bool valid = version.has_value() &&
+                     sqlite3_prepare_v2(
+                         db, "PRAGMA quick_check;", -1, &check, nullptr
+                     ) == SQLITE_OK;
+        if (valid)
+            valid =
+                sqlite3_step(check) == SQLITE_ROW &&
+                std::string(
+                    reinterpret_cast<const char*>(sqlite3_column_text(check, 0))
+                ) == "ok";
+        sqlite3_finalize(check);
+        if (valid && *version == 0) {
+            valid = sqlite3_prepare_v2(
+                        db,
+                        "SELECT COUNT(*) FROM sqlite_master WHERE name NOT "
+                        "LIKE 'sqlite_%';",
+                        -1,
+                        &check,
+                        nullptr
+                    ) == SQLITE_OK;
+            if (valid)
+                valid = sqlite3_step(check) == SQLITE_ROW &&
+                        sqlite3_column_int(check, 0) == 0;
+            sqlite3_finalize(check);
+        } else if (valid)
+            valid = *version == 6 || *version == DATABASE_SCHEMA_VERSION;
+        if (valid && *version != 0 && load)
+            load_tag_analyses(store, db, path != store.fallback_, false);
+        sqlite3_close(db);
+        if (!valid) {
+            store.blocked_ = true;
+            std::println(
+                "ImageIndex: Preserving incompatible or corrupt database {}; "
+                "tagging is disabled for {} until it is repaired or opened by "
+                "a compatible application.",
+                sung::tostr(path),
+                sung::tostr(store.root_)
+            );
+        }
+        return valid && !store.blocked_;
+    }
+
     void reconcile_stores(const ServerConfigs& configs) {
         std::set<std::string> roots;
         std::map<std::string, Path> root_paths;
@@ -540,9 +636,7 @@ public:
             binding_roots_.emplace(name, key);
             root_paths.try_emplace(key, root);
         }
-        std::erase_if(stores_, [&](const auto& entry) {
-            return !roots.contains(entry.first);
-        });
+        for (auto& [key, store] : stores_) store->active_ = roots.contains(key);
         for (const auto& key : roots) {
             if (stores_.contains(key))
                 continue;
@@ -556,39 +650,73 @@ public:
                                root_hash(key) / "image-index.sqlite3";
             stores_.emplace(key, std::move(store));
         }
-        // Establish all owners before loading overlapping roots.
         for (auto& [key, store] : stores_) {
-            if (store->database_)
+            if (!store->active_ || store->blocked_ || store->database_)
                 continue;
             std::error_code ec;
             if (!fs::is_directory(store->root_, ec) || ec)
                 continue;
+            if (!store->loaded_) {
+                const auto primary = store->root_ / ".sprintboard" /
+                                     "image-index.sqlite3";
+                if (!inspect_database(*store, primary, true) ||
+                    !inspect_database(*store, store->fallback_, true))
+                    continue;
+            }
             open_database(*store);
-            if (!store->database_ && store->path_ != store->fallback_) {
+            if (!store->database_ && !store->blocked_ &&
+                store->path_ != store->fallback_) {
                 store->path_ = store->fallback_;
                 open_database(*store);
             }
             store->healthy_ = store->database_ != nullptr;
             std::println(
-                "ImageIndex: Root {} cache: {}",
+                "ImageIndex: Root {} database: {}",
                 key,
-                store->database_ ? sung::tostr(store->path_) : "memory only"
+                store->database_ ? sung::tostr(store->path_)
+                                 : "unavailable (browsing only)"
             );
             if (store->database_) {
-                if (!store->loaded_) {
+                if (!store->loaded_)
                     load_metadata(*store);
-                    load_tag_analyses(*store);
-                    store->loaded_ = true;
-                }
+                load_tag_analyses(
+                    *store,
+                    store->database_,
+                    store->path_ != store->fallback_,
+                    true
+                );
+                store->loaded_ = true;
                 store->dirty_ = true;
-                store->tags_dirty_ = true;
+                // Reconcile readable local/fallback records into the selected
+                // store.
+                for (const auto& [path, item] : tag_analyses_)
+                    if (owner(path) == store.get())
+                        store->pending_tags_.try_emplace(path, item);
             }
         }
-        // Ownership can change when nested bindings are added or removed.
         if (root_keys_ != roots) {
             for (auto& [key, store] : stores_) {
+                if (!store->active_)
+                    continue;
                 store->dirty_ = true;
-                store->tags_dirty_ = true;
+                for (const auto& [path, item] : tag_analyses_)
+                    if (owner(path) == store.get())
+                        store->pending_tags_.try_emplace(path, item);
+            }
+            // Move uncommitted results too; never publish them before
+            // destination commit.
+            for (auto& [key, store] : stores_) {
+                for (auto it = store->pending_tags_.begin();
+                     it != store->pending_tags_.end();) {
+                    auto* destination = owner(it->first);
+                    if (destination && destination != store.get()) {
+                        destination->pending_tags_.insert_or_assign(
+                            it->first, it->second
+                        );
+                        it = store->pending_tags_.erase(it);
+                    } else
+                        ++it;
+                }
             }
             std::erase_if(tag_analyses_, [&](const auto& entry) {
                 return owner(entry.first) == nullptr;
@@ -607,11 +735,12 @@ public:
             sqlite3_close(store.database_);
             store.database_ = nullptr;
             store.dirty_ = true;
-            store.tags_dirty_ = true;
         }
     }
 
     void open_database(Store& store) {
+        if (!inspect_database(store, store.path_, false))
+            return;
         auto*& database_ = store.database_;
         const auto& database_path_ = store.path_;
         std::error_code ec;
@@ -646,7 +775,7 @@ public:
         }
 
         if (!execute_sql(database_, "PRAGMA journal_mode=WAL;") ||
-            !execute_sql(database_, "PRAGMA synchronous=NORMAL;")) {
+            !execute_sql(database_, "PRAGMA synchronous=FULL;")) {
             sqlite3_close(database_);
             database_ = nullptr;
             return;
@@ -684,7 +813,6 @@ public:
             "failure_count INTEGER NOT NULL DEFAULT 0,"
             "last_error TEXT NOT NULL DEFAULT '',"
             "analysis_id TEXT NOT NULL DEFAULT '',"
-            "sidecar_path TEXT NOT NULL DEFAULT '',"
             "proxy_path TEXT NOT NULL DEFAULT '',"
             "proxy_size INTEGER NOT NULL DEFAULT 0,"
             "proxy_modified_time INTEGER NOT NULL DEFAULT 0,"
@@ -692,56 +820,52 @@ public:
             "proxy_materialization_id TEXT NOT NULL DEFAULT ''"
             ");";
 
-        if (schema_version != DATABASE_SCHEMA_VERSION) {
-            if (!execute_sql(
+        bool success = execute_sql(database_, "BEGIN IMMEDIATE;");
+        if (success && schema_version == 6) {
+            success =
+                execute_sql(
                     database_,
-                    "BEGIN;"
-                    "DROP TABLE IF EXISTS image_metadata;"
-                    "DROP TABLE IF EXISTS image_tag_analysis;"
-                    "CREATE TABLE image_metadata ("
-                    "physical_path TEXT PRIMARY KEY,"
-                    "file_size INTEGER NOT NULL,"
-                    "modified_time INTEGER NOT NULL,"
-                    "sort_time_ns INTEGER NOT NULL,"
-                    "eligible INTEGER NOT NULL,"
-                    "width INTEGER NOT NULL,"
-                    "height INTEGER NOT NULL,"
-                    "model TEXT NOT NULL,"
-                    "prompts_json TEXT NOT NULL"
-                    ");"
-                ) ||
-                !execute_sql(database_, create_tag_table) ||
-                !execute_sql(database_, "PRAGMA user_version=6;") ||
-                !execute_sql(database_, "COMMIT;")) {
-                execute_sql(database_, "ROLLBACK;");
-                sqlite3_close(database_);
-                database_ = nullptr;
-                return;
-            }
-        } else if (
-            !execute_sql(
-                database_,
-                "CREATE TABLE IF NOT EXISTS image_metadata ("
-                "physical_path TEXT PRIMARY KEY,"
-                "file_size INTEGER NOT NULL,"
-                "modified_time INTEGER NOT NULL,"
-                "sort_time_ns INTEGER NOT NULL,"
-                "eligible INTEGER NOT NULL,"
-                "width INTEGER NOT NULL,"
-                "height INTEGER NOT NULL,"
-                "model TEXT NOT NULL,"
-                "prompts_json TEXT NOT NULL"
-                ");"
-            ) ||
-            !execute_sql(database_, create_tag_table)
-        ) {
-            sqlite3_close(database_);
-            database_ = nullptr;
-            return;
+                    "ALTER TABLE image_tag_analysis RENAME TO "
+                    "image_tag_analysis_v6;"
+                ) &&
+                execute_sql(database_, create_tag_table) &&
+                execute_sql(
+                    database_,
+                    "INSERT INTO image_tag_analysis "
+                    "(logical_path,input_kind,input_path,input_size,input_"
+                    "modified_time,input_sha256,analyzer_fingerprint,model_id,"
+                    "general_threshold,character_threshold,analysis_json,"
+                    "analyzed_at,attempt_input_path,attempt_input_size,attempt_"
+                    "input_modified_time,attempt_analyzer_fingerprint,last_"
+                    "attempt_at,failure_count,last_error,analysis_id,proxy_"
+                    "path,proxy_size,proxy_modified_time,proxy_sha256,proxy_"
+                    "materialization_id) SELECT "
+                    "logical_path,input_kind,input_path,input_size,input_"
+                    "modified_time,input_sha256,analyzer_fingerprint,model_id,"
+                    "general_threshold,character_threshold,analysis_json,"
+                    "analyzed_at,attempt_input_path,attempt_input_size,attempt_"
+                    "input_modified_time,attempt_analyzer_fingerprint,last_"
+                    "attempt_at,failure_count,last_error,analysis_id,proxy_"
+                    "path,proxy_size,proxy_modified_time,proxy_sha256,proxy_"
+                    "materialization_id FROM image_tag_analysis_v6;"
+                ) &&
+                execute_sql(database_, "DROP TABLE image_tag_analysis_v6;");
         }
-
-        if (!execute_sql(database_, "BEGIN IMMEDIATE;") ||
-            !execute_sql(database_, "COMMIT;")) {
+        if (success)
+            success =
+                execute_sql(
+                    database_,
+                    "CREATE TABLE IF NOT EXISTS image_metadata (physical_path "
+                    "TEXT PRIMARY KEY,file_size INTEGER NOT NULL,modified_time "
+                    "INTEGER NOT NULL,sort_time_ns INTEGER NOT NULL,eligible "
+                    "INTEGER NOT NULL,width INTEGER NOT NULL,height INTEGER "
+                    "NOT NULL,model TEXT NOT NULL,prompts_json TEXT NOT NULL);"
+                ) &&
+                execute_sql(database_, create_tag_table) &&
+                execute_sql(database_, "PRAGMA user_version=7;") &&
+                execute_sql(database_, "COMMIT;");
+        if (!success) {
+            execute_sql(database_, "ROLLBACK;");
             sqlite3_close(database_);
             database_ = nullptr;
         }
@@ -802,8 +926,78 @@ public:
         sqlite3_finalize(statement);
     }
 
-    void load_tag_analyses(Store& store) {
-        auto* database_ = store.database_;
+    void merge_analysis(CachedTagAnalysis incoming, bool local) {
+        const auto key = incoming.logical_path_;
+        const auto existing = tag_analyses_.find(key);
+        if (existing != tag_analyses_.end()) {
+            const auto& previous = existing->second;
+            const bool incoming_wins =
+                !incoming.analysis_.is_null() &&
+                (previous.analysis_.is_null() ||
+                 incoming.analyzed_at_ > previous.analyzed_at_ ||
+                 (incoming.analyzed_at_ == previous.analyzed_at_ && local &&
+                  !analysis_local_[key]));
+            auto chosen = incoming_wins ? incoming : previous;
+            const auto& retry = incoming.last_attempt_at_ >
+                                        previous.last_attempt_at_
+                                    ? incoming
+                                    : previous;
+            chosen.attempt_input_path_ = retry.attempt_input_path_;
+            chosen.attempt_input_size_ = retry.attempt_input_size_;
+            chosen.attempt_input_modified_time_ =
+                retry.attempt_input_modified_time_;
+            chosen.attempt_analyzer_fingerprint_ =
+                retry.attempt_analyzer_fingerprint_;
+            chosen.last_attempt_at_ = retry.last_attempt_at_;
+            chosen.failure_count_ = retry.failure_count_;
+            chosen.last_error_ = retry.last_error_;
+            const auto& other = incoming_wins ? previous : incoming;
+            if (!chosen.analysis_id_.empty() &&
+                chosen.analysis_id_ == other.analysis_id_ &&
+                !other.proxy_path_.empty() &&
+                (chosen.proxy_path_.empty() ||
+                 !validate_fingerprint(
+                     sung::fromstr(chosen.proxy_path_),
+                     chosen.proxy_size_,
+                     chosen.proxy_modified_time_,
+                     chosen.proxy_sha256_
+                 )) &&
+                validate_fingerprint(
+                    sung::fromstr(other.proxy_path_),
+                    other.proxy_size_,
+                    other.proxy_modified_time_,
+                    other.proxy_sha256_
+                )) {
+                chosen.proxy_path_ = other.proxy_path_;
+                chosen.proxy_size_ = other.proxy_size_;
+                chosen.proxy_modified_time_ = other.proxy_modified_time_;
+                chosen.proxy_sha256_ = other.proxy_sha256_;
+                chosen.proxy_materialization_id_ =
+                    other.proxy_materialization_id_;
+            }
+            if (incoming_wins)
+                analysis_local_[key] = local;
+            incoming = std::move(chosen);
+        } else
+            analysis_local_[key] = local;
+        if (!incoming.proxy_path_.empty() &&
+            !validate_fingerprint(
+                sung::fromstr(incoming.proxy_path_),
+                incoming.proxy_size_,
+                incoming.proxy_modified_time_,
+                incoming.proxy_sha256_
+            )) {
+            incoming.proxy_path_.clear();
+            incoming.proxy_size_ = incoming.proxy_modified_time_ = 0;
+            incoming.proxy_sha256_.clear();
+            incoming.proxy_materialization_id_.clear();
+        }
+        tag_analyses_.insert_or_assign(key, std::move(incoming));
+    }
+
+    void load_tag_analyses(
+        Store& store, sqlite3* database_, bool local, bool track
+    ) {
         if (!database_)
             return;
 
@@ -816,7 +1010,7 @@ public:
             "analyzed_at, attempt_input_path, attempt_input_size, "
             "attempt_input_modified_time, attempt_analyzer_fingerprint, "
             "last_attempt_at, failure_count, last_error, analysis_id, "
-            "sidecar_path, proxy_path, proxy_size, proxy_modified_time, "
+            "proxy_path, proxy_size, proxy_modified_time, "
             "proxy_sha256, proxy_materialization_id "
             "FROM image_tag_analysis;";
         if (sqlite3_prepare_v2(database_, query, -1, &statement, nullptr) !=
@@ -825,6 +1019,7 @@ public:
                 "ImageIndex: Cannot load tag cache: {}",
                 sqlite3_errmsg(database_)
             );
+            store.blocked_ = true;
             return;
         }
 
@@ -861,7 +1056,12 @@ public:
                     analysis.searchable_tags_ =
                         sung::searchable_tags_from_analysis(analysis.analysis_);
                 } catch (const std::exception&) {
-                    analysis.analysis_ = nlohmann::json{};
+                    std::println(
+                        "ImageIndex: Preserving an unreadable tag record in "
+                        "{}.",
+                        sung::tostr(store.path_)
+                    );
+                    continue;
                 }
             }
             analysis.analyzed_at_ = sqlite3_column_int64(statement, 11);
@@ -884,39 +1084,44 @@ public:
             analysis.analysis_id_ = reinterpret_cast<const char*>(
                 sqlite3_column_text(statement, 19)
             );
-            analysis.sidecar_path_ = reinterpret_cast<const char*>(
+            analysis.proxy_path_ = reinterpret_cast<const char*>(
                 sqlite3_column_text(statement, 20)
             );
-            analysis.proxy_path_ = reinterpret_cast<const char*>(
-                sqlite3_column_text(statement, 21)
-            );
-            analysis.proxy_size_ = sqlite3_column_int64(statement, 22);
-            analysis.proxy_modified_time_ = sqlite3_column_int64(statement, 23);
+            analysis.proxy_size_ = sqlite3_column_int64(statement, 21);
+            analysis.proxy_modified_time_ = sqlite3_column_int64(statement, 22);
             analysis.proxy_sha256_ = reinterpret_cast<const char*>(
-                sqlite3_column_text(statement, 24)
+                sqlite3_column_text(statement, 23)
             );
             analysis.proxy_materialization_id_ = reinterpret_cast<const char*>(
-                sqlite3_column_text(statement, 25)
+                sqlite3_column_text(statement, 24)
             );
+            const auto stored_key = analysis.logical_path_;
             if (analysis.logical_path_.empty())
                 continue;
             bool valid = true;
             for (auto* path : { &analysis.logical_path_,
                                 &analysis.input_path_,
                                 &analysis.attempt_input_path_,
-                                &analysis.sidecar_path_,
                                 &analysis.proxy_path_ })
                 valid = restore_path(store, *path) && valid;
             if (valid)
                 analysis.logical_path_ = sung::detail::logical_image_key(
                     sung::fromstr(analysis.logical_path_)
                 );
-            if (valid && owner(analysis.logical_path_) == &store) {
+            if (valid && !sung::is_sprintboard_temporary_path(
+                             sung::fromstr(analysis.logical_path_)
+                         )) {
                 if (analysis.analysis_.is_object() &&
                     analysis.analysis_.contains("path"))
                     analysis.analysis_["path"] = analysis.input_path_;
-                tag_analyses_.try_emplace(
-                    analysis.logical_path_, std::move(analysis)
+                if (track)
+                    store.persisted_tags_[analysis.logical_path_] = stored_key;
+                merge_analysis(analysis, local);
+            } else {
+                std::println(
+                    "ImageIndex: Ignoring invalid relative tag paths in {}; "
+                    "preserving the stored row.",
+                    sung::tostr(store.path_)
                 );
             }
         }
@@ -1047,7 +1252,6 @@ public:
         for (auto* path : { &item.logical_path_,
                             &item.input_path_,
                             &item.attempt_input_path_,
-                            &item.sidecar_path_,
                             &item.proxy_path_ }) {
             const auto relative = relative_path(store, *path);
             if (!relative)
@@ -1066,10 +1270,10 @@ public:
             "attempt_input_path, attempt_input_size, "
             "attempt_input_modified_time, attempt_analyzer_fingerprint, "
             "last_attempt_at, failure_count, last_error, analysis_id, "
-            "sidecar_path, proxy_path, proxy_size, proxy_modified_time, "
+            "proxy_path, proxy_size, proxy_modified_time, "
             "proxy_sha256, proxy_materialization_id"
             ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-            "?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(logical_path) DO UPDATE SET "
             "input_kind=excluded.input_kind, input_path=excluded.input_path, "
             "input_size=excluded.input_size, "
@@ -1091,7 +1295,6 @@ public:
             "failure_count=excluded.failure_count, "
             "last_error=excluded.last_error, "
             "analysis_id=excluded.analysis_id, "
-            "sidecar_path=excluded.sidecar_path, "
             "proxy_path=excluded.proxy_path, proxy_size=excluded.proxy_size, "
             "proxy_modified_time=excluded.proxy_modified_time, "
             "proxy_sha256=excluded.proxy_sha256, "
@@ -1132,12 +1335,11 @@ public:
         sqlite3_bind_int(statement, 18, item.failure_count_);
         bind_text(19, item.last_error_);
         bind_text(20, item.analysis_id_);
-        bind_text(21, item.sidecar_path_);
-        bind_text(22, item.proxy_path_);
-        sqlite3_bind_int64(statement, 23, item.proxy_size_);
-        sqlite3_bind_int64(statement, 24, item.proxy_modified_time_);
-        bind_text(25, item.proxy_sha256_);
-        bind_text(26, item.proxy_materialization_id_);
+        bind_text(21, item.proxy_path_);
+        sqlite3_bind_int64(statement, 22, item.proxy_size_);
+        sqlite3_bind_int64(statement, 23, item.proxy_modified_time_);
+        bind_text(24, item.proxy_sha256_);
+        bind_text(25, item.proxy_materialization_id_);
 
         const auto success = sqlite3_step(statement) == SQLITE_DONE;
         if (!success)
@@ -1146,22 +1348,96 @@ public:
         return success;
     }
 
+    bool tag_ready(const std::string& path) const {
+        const auto* store = owner(path);
+        return store && !store->blocked_ && store->database_ &&
+               store->healthy_ && store->pending_tags_.empty() &&
+               store->deleted_tags_.empty();
+    }
+
+    bool flush_tag_store(Store& store) {
+        if (store.blocked_ || !store.database_)
+            return false;
+        if (store.pending_tags_.empty() && store.deleted_tags_.empty())
+            return true;
+        auto* db = store.database_;
+        bool success = execute_sql(db, "BEGIN IMMEDIATE;");
+        const bool began = success;
+        if (success) {
+            for (const auto& [path, item] : store.pending_tags_) {
+                if (!write_tag_analysis(store, item)) {
+                    success = false;
+                    break;
+                }
+            }
+        }
+        sqlite3_stmt* erase = nullptr;
+        if (success && !store.deleted_tags_.empty()) {
+            success =
+                sqlite3_prepare_v2(
+                    db,
+                    "DELETE FROM image_tag_analysis WHERE logical_path=?;",
+                    -1,
+                    &erase,
+                    nullptr
+                ) == SQLITE_OK;
+            if (success)
+                for (const auto& [path, relative] : store.deleted_tags_) {
+                    sqlite3_bind_text(
+                        erase, 1, relative.c_str(), -1, SQLITE_TRANSIENT
+                    );
+                    if (sqlite3_step(erase) != SQLITE_DONE) {
+                        success = false;
+                        break;
+                    }
+                    sqlite3_reset(erase);
+                    sqlite3_clear_bindings(erase);
+                }
+        }
+        if (!success)
+            store.last_error_ = sqlite3_errcode(db);
+        sqlite3_finalize(erase);
+        if (success) {
+            success = execute_sql(db, "COMMIT;");
+            if (!success)
+                store.last_error_ = sqlite3_errcode(db);
+        }
+        if (!success) {
+            if (began)
+                execute_sql(db, "ROLLBACK;");
+            record_failure(store);
+            return false;
+        }
+        for (const auto& [path, item] : store.pending_tags_) {
+            store.persisted_tags_[path] = stored_logical_path(store, item);
+            if (owner(path) == &store) {
+                tag_analyses_.insert_or_assign(path, item);
+                analysis_local_[path] = store.path_ != store.fallback_;
+            }
+        }
+        for (const auto& [path, relative] : store.deleted_tags_)
+            store.persisted_tags_.erase(path);
+        store.pending_tags_.clear();
+        store.deleted_tags_.clear();
+        return true;
+    }
+
     bool persist_tag_analysis(const CachedTagAnalysis& item) {
         auto* store = owner(item.logical_path_);
-        if (!store)
-            return true;
-        if (write_tag_analysis(*store, item))
-            return true;
-        store->tags_dirty_ = true;
-        record_failure(*store);
-        return false;
+        if (!store || store->blocked_)
+            return false;
+        store->deleted_tags_.erase(item.logical_path_);
+        store->pending_tags_.insert_or_assign(item.logical_path_, item);
+        return flush_tag_store(*store);
     }
 
     bool erase_tag_analysis(const std::string& logical_path) {
-        // Reconcile the table from memory at the end of refresh, including
-        // deletions whose earlier transaction failed.
-        if (auto* store = owner(logical_path))
-            store->tags_dirty_ = true;
+        for (auto& [key, store] : stores_) {
+            store->pending_tags_.erase(logical_path);
+            if (const auto it = store->persisted_tags_.find(logical_path);
+                it != store->persisted_tags_.end())
+                store->deleted_tags_[logical_path] = it->second;
+        }
         return true;
     }
 
@@ -1170,9 +1446,14 @@ public:
         const std::vector<std::string>& removed
     ) {
         for (auto& [key, store] : stores_) {
+            if (store->blocked_)
+                continue;
+            if (!store->active_) {
+                flush_tag_store(*store);
+                continue;
+            }
             if (!store->database_) {
                 store->dirty_ = true;
-                store->tags_dirty_ = true;
                 continue;
             }
             std::vector<CachedMetadata> items;
@@ -1193,43 +1474,47 @@ public:
                 *store, items, erased, store->dirty_
             );
             store->dirty_ = !metadata_ok;
-            bool tags_ok = true;
-            if (store->tags_dirty_) {
-                auto* db = store->database_;
-                tags_ok = execute_sql(db, "BEGIN IMMEDIATE;");
-                if (!tags_ok)
-                    store->last_error_ = sqlite3_errcode(db);
-                if (tags_ok) {
-                    tags_ok = execute_sql(
-                        db, "DELETE FROM image_tag_analysis;"
-                    );
-                    for (const auto& [path, item] : tag_analyses_) {
-                        if (!tags_ok)
-                            break;
-                        if (owner(path) == store.get())
-                            tags_ok = write_tag_analysis(*store, item);
-                    }
-                    if (tags_ok)
-                        tags_ok = execute_sql(db, "COMMIT;");
-                    if (!tags_ok) {
-                        const auto error = sqlite3_errcode(db);
-                        if (error != SQLITE_OK)
-                            store->last_error_ = error;
-                        execute_sql(db, "ROLLBACK;");
-                    }
-                }
-                store->tags_dirty_ = !tags_ok;
-            }
+            const bool tags_ok = flush_tag_store(*store);
             store->healthy_ = metadata_ok && tags_ok;
-            if (!store->healthy_) {
-                std::println(
-                    "ImageIndex: Cache write failed for {}; retaining memory "
-                    "state and retrying.",
-                    key
-                );
+            if (!store->healthy_)
                 record_failure(*store);
+        }
+        // A previous owner is pruned only after the new owner has committed.
+        for (auto& [key, store] : stores_) {
+            for (const auto& [path, relative] : store->persisted_tags_) {
+                auto* destination = owner(path);
+                if (destination && destination != store.get() &&
+                    destination->persisted_tags_.contains(path) &&
+                    !destination->pending_tags_.contains(path))
+                    store->deleted_tags_[path] = relative;
+            }
+            if (!store->deleted_tags_.empty())
+                flush_tag_store(*store);
+            if (store->active_) {
+                const bool paused = !store->database_ || store->blocked_ ||
+                                    !store->healthy_ ||
+                                    !store->pending_tags_.empty() ||
+                                    !store->deleted_tags_.empty();
+                if (paused != store->paused_) {
+                    std::println(
+                        "ImageTagger: {} tagging for root {}.",
+                        paused ? "Pausing" : "Resuming",
+                        key
+                    );
+                    store->paused_ = paused;
+                }
             }
         }
+        std::erase_if(stores_, [&](const auto& entry) {
+            const auto& store = *entry.second;
+            if (store.active_ || !store.pending_tags_.empty() ||
+                !store.deleted_tags_.empty())
+                return false;
+            for (const auto& [path, relative] : store.persisted_tags_)
+                if (owner(path))
+                    return false;
+            return true;
+        });
     }
 
     ImageIndexRefreshStats refresh(
@@ -1254,7 +1539,6 @@ public:
         std::unordered_set<std::string> seen_physical;
         std::unordered_set<std::string> seen_api_paths;
         std::unordered_map<std::string, size_t> seen_folder_paths;
-        std::unordered_map<std::string, Path> seen_sidecars;
         std::vector<CachedMetadata> changed;
         bool all_roots_accessible = true;
 
@@ -1330,7 +1614,6 @@ public:
             );
 
             std::vector<Path> physical_files;
-            std::vector<Path> sidecar_files;
             std::vector<IndexedFolder> root_folders;
             fs::recursive_directory_iterator iterator{
                 root, fs::directory_options::skip_permission_denied, ec
@@ -1368,9 +1651,7 @@ public:
                     auto path =
                         fs::absolute(entry.path(), ec).lexically_normal();
                     if (!ec && !sung::is_sprintboard_temporary_path(path)) {
-                        if (sung::is_sprintboard_tag_sidecar_path(path))
-                            sidecar_files.push_back(std::move(path));
-                        else
+                        if (!sung::is_sprintboard_tag_sidecar_path(path))
                             physical_files.push_back(std::move(path));
                     }
                 }
@@ -1395,110 +1676,6 @@ public:
             }
 
             for (auto& folder : root_folders) add_folder(std::move(folder));
-
-            for (const auto& sidecar_path : sidecar_files) {
-                const auto parsed = sung::read_tag_sidecar(sidecar_path);
-                if (!parsed) {
-                    std::println(
-                        "ImageIndex: Ignoring invalid tag sidecar {}: {}",
-                        sung::tostr(sidecar_path),
-                        parsed.error()
-                    );
-                    continue;
-                }
-                seen_sidecars.insert_or_assign(
-                    parsed->logical_path_, sidecar_path
-                );
-
-                const auto existing = tag_analyses_.find(parsed->logical_path_);
-                if (existing != tag_analyses_.end()) {
-                    if (existing->second.analyzed_at_ > parsed->analyzed_at_) {
-                        continue;
-                    }
-                    if (existing->second.analyzed_at_ == parsed->analyzed_at_ &&
-                        existing->second.analysis_id_ != parsed->analysis_id_) {
-                        continue;
-                    }
-                    if (existing->second.analysis_id_ == parsed->analysis_id_ &&
-                        existing->second.input_sha256_ ==
-                            parsed->input_sha256_ &&
-                        existing->second.sidecar_path_ ==
-                            sung::tostr(sidecar_path) &&
-                        existing->second.proxy_path_ == parsed->proxy_path_ &&
-                        existing->second.proxy_sha256_ ==
-                            parsed->proxy_sha256_ &&
-                        existing->second.proxy_materialization_id_ ==
-                            parsed->proxy_materialization_id_) {
-                        const auto input = sung::fingerprint_file(
-                            sung::fromstr(existing->second.input_path_)
-                        );
-                        const bool input_current =
-                            input &&
-                            input->size_ == existing->second.input_size_ &&
-                            input->modified_time_ ==
-                                existing->second.input_modified_time_;
-                        bool proxy_current = false;
-                        if (!existing->second.proxy_path_.empty()) {
-                            const auto proxy = sung::fingerprint_file(
-                                sung::fromstr(existing->second.proxy_path_)
-                            );
-                            proxy_current =
-                                proxy &&
-                                proxy->size_ == existing->second.proxy_size_ &&
-                                proxy->modified_time_ ==
-                                    existing->second.proxy_modified_time_;
-                        }
-                        if (input_current || proxy_current)
-                            continue;
-                    }
-                }
-
-                auto imported = *parsed;
-                if (const auto fingerprint = ::validate_fingerprint(
-                        sung::fromstr(imported.input_path_),
-                        imported.input_size_,
-                        imported.input_modified_time_,
-                        imported.input_sha256_
-                    )) {
-                    imported.input_size_ = fingerprint->size_;
-                    imported.input_modified_time_ = fingerprint->modified_time_;
-                }
-                if (!imported.proxy_path_.empty()) {
-                    if (const auto fingerprint = ::validate_fingerprint(
-                            sung::fromstr(imported.proxy_path_),
-                            imported.proxy_size_,
-                            imported.proxy_modified_time_,
-                            imported.proxy_sha256_
-                        )) {
-                        imported.proxy_size_ = fingerprint->size_;
-                        imported.proxy_modified_time_ =
-                            fingerprint->modified_time_;
-                    }
-                }
-                if (existing != tag_analyses_.end()) {
-                    imported.attempt_input_path_ =
-                        existing->second.attempt_input_path_;
-                    imported.attempt_input_size_ =
-                        existing->second.attempt_input_size_;
-                    imported.attempt_input_modified_time_ =
-                        existing->second.attempt_input_modified_time_;
-                    imported.attempt_analyzer_fingerprint_ =
-                        existing->second.attempt_analyzer_fingerprint_;
-                    imported.last_attempt_at_ =
-                        existing->second.last_attempt_at_;
-                    imported.failure_count_ = existing->second.failure_count_;
-                    imported.last_error_ = existing->second.last_error_;
-                }
-                tag_analyses_.insert_or_assign(
-                    imported.logical_path_, imported
-                );
-                if (!persist_tag_analysis(imported)) {
-                    std::println(
-                        "ImageIndex: Failed to cache tag sidecar {}",
-                        sung::tostr(sidecar_path)
-                    );
-                }
-            }
 
             for (const auto& path : physical_files) {
                 const auto path_str = sung::tostr(path);
@@ -1710,7 +1887,7 @@ public:
                     continue;
                 }
                 const auto source_path = sung::fromstr(it->first);
-                if (!sung::is_sprintboard_temporary_path(source_path)) {
+                {
                     const auto proxy_path = sung::make_sprintboard_proxy_path(
                         source_path
                     );
@@ -1737,70 +1914,7 @@ public:
                     ++it;
                     continue;
                 }
-                if (const auto sidecar = seen_sidecars.find(it->first);
-                    sidecar != seen_sidecars.end()) {
-                    std::error_code sidecar_error;
-                    fs::remove(sidecar->second, sidecar_error);
-                    if (sidecar_error) {
-                        std::println(
-                            "ImageIndex: Failed to remove orphan tag sidecar "
-                            "{}: {}",
-                            sung::tostr(sidecar->second),
-                            sidecar_error.message()
-                        );
-                    }
-                }
                 it = tag_analyses_.erase(it);
-            }
-        }
-
-        // A successful analysis remains cached even when publishing its
-        // sidecar fails. Repair missing sidecars on subsequent scans (also
-        // after restart), without sending those images back to the tagger.
-        if (configs->tagger_enabled_ && all_roots_accessible) {
-            size_t attempts = 0;
-            std::unordered_set<std::string> checked;
-            // Rotate the bounded batch so persistent failures cannot starve
-            // sidecars later in the scan.
-            const auto count = next->files_.size();
-            const auto start = count == 0 ? 0 : sidecar_repair_cursor_ % count;
-            for (size_t offset = 0; offset < count; ++offset) {
-                const auto position = (start + offset) % count;
-                const auto& file = next->files_[position];
-                if (seen_sidecars.contains(file.logical_path_) ||
-                    !checked.insert(file.logical_path_).second) {
-                    continue;
-                }
-                const auto found = tag_analyses_.find(file.logical_path_);
-                if (found == tag_analyses_.end())
-                    continue;
-                const auto& analysis = found->second;
-                if (analysis.sidecar_path_.empty() ||
-                    analysis.analysis_.is_null() ||
-                    !::validate_fingerprint(
-                        sung::fromstr(analysis.input_path_),
-                        analysis.input_size_,
-                        analysis.input_modified_time_,
-                        analysis.input_sha256_
-                    )) {
-                    continue;
-                }
-                const auto result = sung::write_tag_sidecar(
-                    sung::fromstr(analysis.sidecar_path_), analysis
-                );
-                sidecar_repair_cursor_ = position + 1;
-                if (!result) {
-                    std::println(
-                        "ImageIndex: Failed to restore tag sidecar {}: {}",
-                        analysis.sidecar_path_,
-                        result.error()
-                    );
-                }
-                if (++attempts >= static_cast<size_t>(
-                                      std::max(configs->tagger_batch_size_, 1)
-                                  )) {
-                    break;
-                }
             }
         }
 
@@ -1808,6 +1922,12 @@ public:
         stats.persistent_ = persistent();
 
         next->tag_analyses_ = tag_analyses_;
+        for (auto& file : next->files_) {
+            const auto found = tag_analyses_.find(file.logical_path_);
+            file.tags_ = found == tag_analyses_.end()
+                             ? std::vector<std::string>{}
+                             : found->second.searchable_tags_;
+        }
         std::sort(next->files_.begin(), next->files_.end(), file_before);
         std::sort(
             next->folders_.begin(),
@@ -1876,6 +1996,8 @@ public:
             const auto current = load_snapshot();
             std::unordered_set<std::string> queued;
             for (const auto& file : current->files_) {
+                if (!tag_ready(file.logical_path_))
+                    continue;
                 if (file.tag_input_size_ <= 0 ||
                     !queued.insert(file.logical_path_).second) {
                     continue;
@@ -1919,10 +2041,11 @@ public:
                     if (validated &&
                         validated->modified_time_ !=
                             existing->second.input_modified_time_) {
-                        existing->second.input_size_ = validated->size_;
-                        existing->second.input_modified_time_ =
+                        auto updated = existing->second;
+                        updated.input_size_ = validated->size_;
+                        updated.input_modified_time_ =
                             validated->modified_time_;
-                        persist_tag_analysis(existing->second);
+                        persist_tag_analysis(updated);
                     }
                 }
                 if (current_analysis)
@@ -1966,11 +2089,20 @@ public:
         );
         for (size_t offset = 0; offset < candidates.size();
              offset += batch_size) {
-            const auto count = std::min(batch_size, candidates.size() - offset);
+            const auto end = std::min(offset + batch_size, candidates.size());
+            std::vector<Candidate> batch;
             std::vector<Path> paths;
-            paths.reserve(count);
-            for (size_t i = 0; i < count; ++i)
-                paths.push_back(candidates[offset + i].input_path_);
+            {
+                std::lock_guard refresh_lock{ refresh_mutex_ };
+                for (size_t i = offset; i < end; ++i)
+                    if (tag_ready(candidates[i].logical_path_)) {
+                        batch.push_back(candidates[i]);
+                        paths.push_back(candidates[i].input_path_);
+                    }
+            }
+            const auto count = batch.size();
+            if (count == 0)
+                continue;
 
             const auto results = client.analyze(paths, info->fingerprint_);
             if (!results) {
@@ -1984,7 +2116,7 @@ public:
             const auto latest_snapshot = load_snapshot();
             bool snapshot_changed = false;
             for (size_t i = 0; i < count; ++i) {
-                const auto& candidate = candidates[offset + i];
+                const auto& candidate = batch[i];
                 const auto& result = results->at(i);
 
                 const auto current_file = std::find_if(
@@ -2028,7 +2160,12 @@ public:
                     content_fingerprint = *hashed;
                 }
 
-                auto analysis = tag_analyses_[candidate.logical_path_];
+                const auto previous = tag_analyses_.find(
+                    candidate.logical_path_
+                );
+                auto analysis = previous == tag_analyses_.end()
+                                    ? CachedTagAnalysis{}
+                                    : previous->second;
                 analysis.logical_path_ = candidate.logical_path_;
                 const bool repeated_failure =
                     analysis.attempt_input_path_ ==
@@ -2076,11 +2213,6 @@ public:
                     analysis.searchable_tags_ = result.searchable_tags_;
                     analysis.analyzed_at_ = now;
                     analysis.analysis_id_ = sung::make_analysis_id(analysis);
-                    analysis.sidecar_path_ = sung::tostr(
-                        sung::make_sprintboard_tag_sidecar_path(
-                            candidate.input_path_
-                        )
-                    );
                     analysis.proxy_path_.clear();
                     analysis.proxy_size_ = 0;
                     analysis.proxy_modified_time_ = 0;
@@ -2088,35 +2220,20 @@ public:
                     analysis.proxy_materialization_id_.clear();
                     analysis.failure_count_ = 0;
                     analysis.last_error_.clear();
-                    snapshot_changed = true;
                 }
 
-                tag_analyses_.insert_or_assign(
-                    candidate.logical_path_, analysis
-                );
                 if (!persist_tag_analysis(analysis)) {
                     std::println(
                         "ImageTagger: Failed to persist analysis state for {}",
                         candidate.logical_path_
                     );
                 } else if (result.error_.empty()) {
+                    snapshot_changed = true;
                     std::println(
                         "ImageTagger: Cached {} tags for {}",
                         analysis.searchable_tags_.size(),
                         candidate.logical_path_
                     );
-                }
-                if (result.error_.empty()) {
-                    const auto sidecar_result = sung::write_tag_sidecar(
-                        sung::fromstr(analysis.sidecar_path_), analysis
-                    );
-                    if (!sidecar_result) {
-                        std::println(
-                            "ImageTagger: Failed to write sidecar {}: {}",
-                            analysis.sidecar_path_,
-                            sidecar_result.error()
-                        );
-                    }
                 }
             }
 
@@ -2173,6 +2290,8 @@ public:
     ) const {
         std::lock_guard refresh_lock{ refresh_mutex_ };
         const auto logical_path = sung::detail::logical_image_key(source_path);
+        if (require_current_analyzer && !tag_ready(logical_path))
+            return std::nullopt;
         const auto found = tag_analyses_.find(logical_path);
         if (found == tag_analyses_.end() || found->second.analysis_.is_null())
             return std::nullopt;
@@ -2242,31 +2361,27 @@ public:
         if (!fingerprint)
             return;
 
-        auto& analysis = found->second;
+        auto analysis = found->second;
+        if (const auto* store = owner(logical_path)) {
+            const auto pending = store->pending_tags_.find(logical_path);
+            if (pending != store->pending_tags_.end()) {
+                // An encoder may finish after a newer inference result fails
+                // to commit. Never replace that pending analysis with the
+                // older analysis used to encode this proxy.
+                if (pending->second.analysis_id_ != analysis.analysis_id_)
+                    return;
+                analysis = pending->second;
+            }
+        }
         analysis.proxy_path_ = sung::tostr(canonical_path(proxy_path));
         analysis.proxy_size_ = fingerprint->size_;
         analysis.proxy_modified_time_ = fingerprint->modified_time_;
         analysis.proxy_sha256_ = fingerprint->sha256_;
         analysis.proxy_materialization_id_ = std::move(materialization_id);
-        if (analysis.sidecar_path_.empty()) {
-            analysis.sidecar_path_ = sung::tostr(
-                sung::make_sprintboard_tag_sidecar_path(source_path)
-            );
-        }
         if (!persist_tag_analysis(analysis)) {
             std::println(
                 "ImgWalker: Failed to cache proxy materialization for {}",
                 logical_path
-            );
-        }
-        const auto sidecar_result = sung::write_tag_sidecar(
-            sung::fromstr(analysis.sidecar_path_), analysis
-        );
-        if (!sidecar_result) {
-            std::println(
-                "ImgWalker: Failed to update tag sidecar for {}: {}",
-                logical_path,
-                sidecar_result.error()
             );
         }
     }
@@ -2376,10 +2491,13 @@ public:
     }
 
     bool persistent() const {
-        return !stores_.empty() &&
+        return !root_keys_.empty() &&
                std::all_of(
                    stores_.begin(), stores_.end(), [](const auto& entry) {
-                       return entry.second->database_ && entry.second->healthy_;
+                       return !entry.second->active_ ||
+                              (entry.second->database_ &&
+                               entry.second->healthy_ &&
+                               !entry.second->blocked_);
                    }
                );
     }
@@ -2400,7 +2518,7 @@ private:
     std::map<std::string, std::string> binding_roots_;
     std::unordered_map<std::string, CachedMetadata> metadata_;
     std::unordered_map<std::string, CachedTagAnalysis> tag_analyses_;
-    size_t sidecar_repair_cursor_ = 0;
+    std::unordered_map<std::string, bool> analysis_local_;
     std::string current_analyzer_fingerprint_;
     std::shared_ptr<const IndexSnapshot> snapshot_;
     mutable std::mutex refresh_mutex_;

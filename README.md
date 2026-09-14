@@ -230,74 +230,54 @@ inference. When tagging is enabled, a new proxy waits for successful current
 analysis. Existing proxies remain usable while replacement analysis is
 pending, and a stale proxy never hides a changed source image.
 
-Successful analysis is written beside the image as a JSON sidecar:
+Tag analysis and proxy state are stored exclusively in SQLite at
+`<local_dir>/.sprintboard/image-index.sqlite3`. Tags are durable data, not a
+disposable cache. Schema version 7 migrates version 6 transactionally, preserving
+successful analyses, retry state, proxy records, and image metadata. Rebuilding
+image metadata does not erase tags. Unsupported schemas and corrupt databases
+are left untouched; automatic tagging for that root stays disabled until the
+database is repaired and Sprintboard is restarted, or it is opened with a
+compatible version of Sprintboard.
 
-```text
-image.png
-image.png.sprintboard.tags.json
-image.png.sprintboard.avif
-```
+Existing `*.sprintboard.tags.json` sidecars are ignored and never imported,
+updated, repaired, or deleted, including when gallery images are deleted. Tags
+present only in those files require reanalysis. No new sidecars are created.
 
-The versioned sidecar records a location-independent analyzed-input
-fingerprint, deterministic analysis ID, analyzer metadata, scored
-ratings/general/character groups, and the optional materialized-proxy
-fingerprint. Source and proxy paths are derived from the adjacent sidecar
-filename, so a shared image directory can be mounted at different absolute
-paths on macOS and Windows. Sidecars are written atomically. SQLite schema v6
-caches the same successful result with root-relative paths for fast search,
-along with retry and proxy state. A valid sidecar can rebuild the cache; when a
-directory is read-only, a database-only result can still authorize generation.
+Each distinct physical `local_dir` owns a database. Bindings resolving to the
+same directory share it; with nested roots, the most specific configured root
+owns each image's records. Ownership transfers commit the destination record
+before removing the previous copy. Browsing and search combine the roots in
+memory. Reserved `.sprintboard` directories and legacy sidecars are excluded
+from browsing and image processing.
 
-Each distinct `local_dir` stores its cache at
-`<local_dir>/.sprintboard/image-index.sqlite3`. The reserved `.sprintboard`
-directories are excluded from browsing and image processing. Bindings that
-resolve to the same physical directory share a database; with nested roots,
-the most specific configured root owns each image's cached records. Browsing
-and search still combine the bindings in memory.
+Filesystem paths are stored relative to the image root. Move the database
+with its collection to preserve tags; copying an individual image alone does
+not carry its database records. Include `.sprintboard` in collection backups.
+Stop Sprintboard before copying database files so SQLite can checkpoint and
+close its WAL. Writes use `synchronous=FULL`.
 
-All filesystem paths in the database are relative to its image root, so moving
-the collection together with its `.sprintboard` directory preserves cache reuse,
-subject to the existing image fingerprint checks. When copying a live collection,
-stop Sprintboard first so SQLite can close and checkpoint its database.
+When a root cannot host a writable database, Sprintboard uses
+`<cache_dir>/<SHA-256 of canonical root path>/image-index.sqlite3`. A restart
+tries the local directory again. Readable local and fallback tags are reconciled
+by the latest analysis time, preferring local results on ties; retry state comes
+from the latest attempt, and proxy records must validate against the file.
+Back up an external database too when that is the active storage location.
 
-If the root cannot host a writable cache, Sprintboard uses
-`<cache_dir>/<SHA-256 of canonical root path>/image-index.sqlite3`. If that also
-fails, it continues in memory and retries persistence on later refreshes. The
-selected fallback location stays fixed for that root during the running session;
-a restart tries the local directory again. Logs report cache locations and write
-failures. The index's `persistent` status is true only when all configured roots
-have working persistent stores, and false when no roots are configured.
+If neither location can save tags, browsing and existing committed tags remain
+available. New tagging and tag-dependent proxy generation pause for that root;
+other healthy roots keep processing. Results whose writes fail after inference
+remain pending in memory and are retried on refresh, without repeating inference.
+New results become searchable and authorize proxies only after their database
+commit succeeds. Pending results can be lost if the process exits before storage
+recovers. Logs report pause, failure, and recovery; `persistent` is true only when
+all configured roots have working persistent stores, and false with no roots.
+Tagging-disabled proxy generation retains its existing behavior.
 
-The former working-directory `.sprintboard/image-index.sqlite3` is left untouched
-and is not imported. The first scan rebuilds metadata and imports valid adjacent
-tag sidecars. Analysis present only in the old database may need retagging.
-
-```json
-{
-  "schemaVersion": 2,
-  "input": {
-    "kind": "source",
-    "size": 1234,
-    "modifiedTimeUnixNs": 5678,
-    "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-  },
-  "analysisId": "deterministic-id",
-  "analyzerFingerprint": "model-and-threshold-fingerprint",
-  "modelId": "SmilingWolf/wd-eva02-large-tagger-v3",
-  "generalThreshold": 0.35,
-  "characterThreshold": 0.85,
-  "analyzedAt": 1785729600,
-  "ratings": [{ "name": "safe", "confidence": 0.99 }],
-  "generalTags": [{ "name": "outdoors", "confidence": 0.91 }],
-  "characterTags": []
-}
-```
-
-Size and the portable Unix timestamp provide the normal validation fast path.
-If an unchanged file receives a different timestamp while being copied or
-synchronized, Sprintboard verifies its SHA-256 digest before reusing the
-analysis. Schema-v1 sidecars and tag-cache records are intentionally retagged
-because their absolute paths and filesystem-clock values are machine-specific.
+The former working-directory `.sprintboard/image-index.sqlite3` remains untouched
+and is not imported. Records present only in that old database require reanalysis.
+Size and the portable Unix timestamp provide the normal fingerprint validation
+fast path. If a copied file's timestamp changes, Sprintboard checks its SHA-256
+digest before reusing analysis.
 
 The AVIF encoder embeds the scored analysis as a Sprintboard-specific
 `tagAnalysis` JSON value in XMP while encoding directly from the source PNG.
@@ -306,12 +286,12 @@ absolute path in the AVIF. No ExifTool process or post-encode metadata rewrite
 is required.
 
 If the source is deleted but its managed proxy remains, Sprintboard keeps the
-sidecar and searchable analysis and reports the source as missing in Image
-Details. If the source later returns, its fingerprint is checked before the
-analysis is reused. Analysis and sidecars are removed only after an accessible
-root confirms that neither source nor proxy exists; temporarily unavailable
-roots retain their last known state. The gallery delete action removes the
-source, managed proxy, and sidecar together.
+searchable SQLite analysis and reports the source as missing in Image Details. If the source later returns, its fingerprint is checked before the
+analysis is reused. Tag records are removed only after a successful scan confirms
+that neither source nor proxy exists, or following gallery deletion. Temporarily
+unavailable roots retain their last known state. The gallery delete action removes
+the source, managed proxy, and their database tag records; legacy sidecars remain
+untouched.
 
 If the tagging service is unavailable, indexing and HTTP requests continue.
 With tagging enabled, only missing or stale proxy generation waits for the

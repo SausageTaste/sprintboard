@@ -13,6 +13,7 @@
 #include <sqlite3.h>
 
 #include "index/image_index.hpp"
+#include "tag_test_utils.hpp"
 
 namespace {
     namespace fs = sung::fs;
@@ -348,7 +349,7 @@ namespace {
             );
         }
 
-        // Seed successful analysis through its portable sidecar, then relocate
+        // Seed successful analysis in SQLite, then relocate
         // only the collection and cache, requiring DB-only path rehydration.
         const auto portable = temp / "portable";
         const auto image = portable / sung::fromstr("유우카.png");
@@ -379,13 +380,13 @@ namespace {
             { "characterTags", nlohmann::json::array() }
         };
         record.analysis_id_ = sung::make_analysis_id(record);
-        record.sidecar_path_ = sung::tostr(
-            sung::make_sprintboard_tag_sidecar_path(image)
-        );
+        {
+            sung::ImageIndex index;
+            index.initialize(configs_for(portable, fallback));
+        }
         require(
-            sung::write_tag_sidecar(sung::fromstr(record.sidecar_path_), record)
-                .has_value(),
-            "write portable sidecar"
+            tag_test::seed(database_path(portable), record),
+            "seed durable analysis"
         );
         const auto proxy = sung::make_sprintboard_proxy_path(image);
         copy_image(fixture, proxy);
@@ -394,13 +395,12 @@ namespace {
             index.initialize(configs_for(portable, fallback));
             require(
                 count(index, "a", "portable_tag") == 1,
-                "sidecar rebuilds successful analysis"
+                "SQLite restores successful analysis"
             );
             index.mark_proxy_materialized(image, proxy, "initial");
             Database locked(database_path(portable));
             locked.exec("BEGIN IMMEDIATE;");
             index.mark_proxy_materialized(image, proxy, "materialized");
-            fs::remove(sung::fromstr(record.sidecar_path_));
             require(
                 !index.refresh(configs_for(portable, fallback)).persistent_,
                 "tag and proxy state survives a failed write"
@@ -429,18 +429,16 @@ namespace {
                 db.scalar(
                     "SELECT logical_path=input_path AND "
                     "input_path=attempt_input_path AND "
-                    "sidecar_path=logical_path||'.sprintboard.tags.json' AND "
                     "proxy_path=logical_path||'.sprintboard.avif' FROM "
                     "image_tag_analysis;"
                 ) == "1",
                 "all stored filesystem fields are relative"
             );
             require(
-                db.scalar("PRAGMA user_version;") == "6",
-                "relative cache uses schema six"
+                db.scalar("PRAGMA user_version;") == "7",
+                "durable database uses schema seven"
             );
         }
-        fs::remove(sung::fromstr(record.sidecar_path_));
         const auto moved = temp / "moved";
         fs::rename(portable, moved);
         const auto moved_image = moved / image.filename();
@@ -466,12 +464,8 @@ namespace {
                 "analysis JSON path rehydrates"
             );
             require(
-                analysis->sidecar_path_ ==
-                        sung::tostr(
-                            sung::make_sprintboard_tag_sidecar_path(moved_image)
-                        ) &&
-                    analysis->proxy_path_ == sung::tostr(moved_proxy),
-                "sidecar and proxy paths survive relocation"
+                analysis->proxy_path_ == sung::tostr(moved_proxy),
+                "proxy paths survive relocation"
             );
             require(
                 index.proxy_materialization_current(
@@ -485,7 +479,6 @@ namespace {
         for (const std::string field : { "logical_path",
                                          "input_path",
                                          "attempt_input_path",
-                                         "sidecar_path",
                                          "proxy_path" }) {
             fs::copy_file(
                 backup,
@@ -507,8 +500,8 @@ namespace {
             );
             require(
                 scalar(moved, "SELECT COUNT(*) FROM image_tag_analysis;") ==
-                    "0",
-                "invalid analysis is removed from cache"
+                    "1",
+                "invalid analysis is preserved for repair"
             );
         }
         fs::copy_file(
@@ -546,10 +539,10 @@ namespace {
             moved_configs->tagger_enabled_ = true;
             index.initialize(moved_configs);
             require(
-                fs::exists(
+                !fs::exists(
                     sung::make_sprintboard_tag_sidecar_path(moved_image)
                 ),
-                "repairs sidecar using relocated database analysis"
+                "does not create sidecars from SQLite analysis"
             );
             fs::remove(moved_image);
             fs::remove(moved_proxy);

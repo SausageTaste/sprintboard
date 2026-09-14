@@ -44,7 +44,6 @@ namespace sung {
         int failure_count_ = 0;
         std::string last_error_;
 
-        std::string sidecar_path_;
         std::string proxy_path_;
         int64_t proxy_size_ = 0;
         int64_t proxy_modified_time_ = 0;
@@ -74,19 +73,5 @@ namespace sung {
     );
 
     nlohmann::json make_embedded_tag_analysis(const TagAnalysisRecord& record);
-
-    nlohmann::json make_tag_sidecar_json(const TagAnalysisRecord& record);
-
-    std::expected<TagAnalysisRecord, std::string> parse_tag_sidecar_json(
-        const nlohmann::json& value, const Path& sidecar_path
-    );
-
-    std::expected<TagAnalysisRecord, std::string> read_tag_sidecar(
-        const Path& sidecar_path
-    );
-
-    std::expected<void, std::string> write_tag_sidecar(
-        const Path& sidecar_path, const TagAnalysisRecord& record
-    );
 
 }  // namespace sung

@@ -7,7 +7,8 @@
 #include "index/image_index.hpp"
 #include "sung/auxiliary/filesys.hpp"
 #include "sung/image/avif.hpp"
-#include "tag_sidecar.hpp"
+#include "tag_analysis.hpp"
+#include "tag_test_utils.hpp"
 #include "task/img_walker.hpp"
 #include "util/wake.hpp"
 
@@ -48,9 +49,6 @@ namespace {
         };
         output.searchable_tags_ = { "walker_tag" };
         output.analysis_id_ = sung::make_analysis_id(output);
-        output.sidecar_path_ = sung::tostr(
-            sung::make_sprintboard_tag_sidecar_path(source)
-        );
         return output;
     }
 
@@ -91,8 +89,8 @@ int main() {
     binding.avif_.gen_ = true;
     configs->tagger_enabled_ = true;
 
-    sung::ImageIndex index;
-    index.initialize(configs);
+    sung::ImageIndex empty_index;
+    empty_index.initialize(configs);
     sung::GatedPowerRequest power_request;
 
     // The production task receives a reloadable manager. Constructing one in
@@ -104,7 +102,9 @@ int main() {
         return 1;
     }
     sung::ServerConfigManager manager{ config_path };
-    auto task = sung::create_img_walker_task(manager, power_request, index);
+    auto task = sung::create_img_walker_task(
+        manager, power_request, empty_index
+    );
 
     task->run();
     if (!check(!sung::fs::exists(proxy), "blocks a proxy without analysis")) {
@@ -113,10 +113,14 @@ int main() {
     }
 
     const auto analysis = make_analysis(source);
-    const auto written = sung::write_tag_sidecar(sidecar, analysis);
-    index.refresh(configs);
+    const auto written = tag_test::seed(
+        tag_test::database_path(root), analysis
+    );
+    sung::ImageIndex index;
+    index.initialize(configs);
+    task = sung::create_img_walker_task(manager, power_request, index);
     task->run();
-    if (!check(written.has_value(), "writes the walker sidecar") ||
+    if (!check(written, "stores walker analysis in SQLite") ||
         !check(sung::fs::is_regular_file(proxy), "creates a tagged proxy")) {
         sung::fs::remove_all(temp, error);
         return 1;
@@ -128,7 +132,7 @@ int main() {
     );
     const std::string xmp{ metadata.xmp_data_.begin(),
                            metadata.xmp_data_.end() };
-    const auto updated_sidecar = sung::read_tag_sidecar(sidecar);
+    const auto updated_analysis = index.current_tag_analysis(source);
     auto success = check(
                        xmp.contains("sprintboard:tagAnalysis") &&
                            xmp.contains("walker_tag"),
@@ -139,12 +143,16 @@ int main() {
                        "does not embed the absolute source path"
                    ) &&
                    check(
-                       updated_sidecar &&
-                           !updated_sidecar->proxy_path_.empty() &&
-                           !updated_sidecar->proxy_materialization_id_.empty(),
-                       "records proxy materialization in the sidecar"
+                       updated_analysis &&
+                           !updated_analysis->proxy_path_.empty() &&
+                           !updated_analysis->proxy_materialization_id_.empty(),
+                       "records proxy materialization in SQLite"
                    );
 
+    success = check(
+                  !sung::fs::exists(sidecar), "never creates a tag sidecar"
+              ) &&
+              success;
     const auto plain_source = root / "plain.png";
     const auto plain_proxy = sung::make_sprintboard_proxy_path(plain_source);
     const auto plain_written = sung::write_file(plain_source, fixture);

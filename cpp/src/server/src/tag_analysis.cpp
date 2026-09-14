@@ -1,4 +1,4 @@
-#include "tag_sidecar.hpp"
+#include "tag_analysis.hpp"
 
 #include <algorithm>
 #include <array>
@@ -11,8 +11,6 @@
 
 #include <openssl/evp.h>
 
-#include "index/image_index.hpp"
-#include "sung/auxiliary/filesys.hpp"
 
 #ifdef _WIN32
     #ifndef NOMINMAX
@@ -57,14 +55,6 @@ namespace {
                 searchable->push_back(tag.at("name").get<std::string>());
         }
         return true;
-    }
-
-    bool is_sha256(const std::string_view value) {
-        if (value.size() != 64)
-            return false;
-        return std::ranges::all_of(value, [](const char ch) {
-            return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f');
-        });
     }
 
     std::expected<int64_t, std::string> modified_time_unix_ns(
@@ -250,147 +240,6 @@ namespace sung {
 
     nlohmann::json make_embedded_tag_analysis(const TagAnalysisRecord& record) {
         return ::analysis_payload(record);
-    }
-
-    nlohmann::json make_tag_sidecar_json(const TagAnalysisRecord& record) {
-        auto output = ::analysis_payload(record);
-        output["schemaVersion"] = 2;
-        output["input"] = {
-            { "kind", record.input_kind_ },
-            { "size", record.input_size_ },
-            { "modifiedTimeUnixNs", record.input_modified_time_ },
-            { "sha256", record.input_sha256_ },
-        };
-        if (!record.proxy_path_.empty()) {
-            output["proxy"] = {
-                { "size", record.proxy_size_ },
-                { "modifiedTimeUnixNs", record.proxy_modified_time_ },
-                { "sha256", record.proxy_sha256_ },
-                { "materializationId", record.proxy_materialization_id_ },
-            };
-        }
-        return output;
-    }
-
-    std::expected<TagAnalysisRecord, std::string> parse_tag_sidecar_json(
-        const nlohmann::json& value, const Path& sidecar_path
-    ) {
-        try {
-            if (!value.is_object() || value.at("schemaVersion").get<int>() != 2)
-                return std::unexpected("unsupported sidecar schema version");
-
-            const auto source = sprintboard_tag_sidecar_source_path(
-                sidecar_path
-            );
-            if (!source)
-                return std::unexpected("invalid sidecar filename");
-
-            TagAnalysisRecord output;
-            output.logical_path_ = detail::logical_image_key(*source);
-
-            const auto& input = value.at("input");
-            output.input_kind_ = input.at("kind").get<std::string>();
-            if (output.input_kind_ == "source")
-                output.input_path_ = tostr(*source);
-            else if (output.input_kind_ == "proxy")
-                output.input_path_ = tostr(
-                    make_sprintboard_proxy_path(*source)
-                );
-            else
-                return std::unexpected("invalid sidecar input kind");
-            output.input_size_ = input.at("size").get<int64_t>();
-            output.input_modified_time_ =
-                input.at("modifiedTimeUnixNs").get<int64_t>();
-            output.input_sha256_ = input.at("sha256").get<std::string>();
-            output.analysis_id_ = value.at("analysisId").get<std::string>();
-            output.analyzer_fingerprint_ =
-                value.at("analyzerFingerprint").get<std::string>();
-            output.model_id_ = value.at("modelId").get<std::string>();
-            output.general_threshold_ =
-                value.at("generalThreshold").get<double>();
-            output.character_threshold_ =
-                value.at("characterThreshold").get<double>();
-            output.analyzed_at_ = value.at("analyzedAt").get<int64_t>();
-            output.analysis_ = {
-                { "ratings", value.at("ratings") },
-                { "generalTags", value.at("generalTags") },
-                { "characterTags", value.at("characterTags") },
-            };
-            if (output.logical_path_.empty() || output.input_size_ <= 0 ||
-                output.input_modified_time_ <= 0 ||
-                !::is_sha256(output.input_sha256_) ||
-                output.analysis_id_.empty() ||
-                output.analyzer_fingerprint_.empty() ||
-                !std::isfinite(output.general_threshold_) ||
-                !std::isfinite(output.character_threshold_) ||
-                output.general_threshold_ < 0 ||
-                output.general_threshold_ > 1 ||
-                output.character_threshold_ < 0 ||
-                output.character_threshold_ > 1 || output.analyzed_at_ <= 0 ||
-                !::parse_group(output.analysis_, "ratings", nullptr) ||
-                !::parse_group(
-                    output.analysis_, "generalTags", &output.searchable_tags_
-                ) ||
-                !::parse_group(
-                    output.analysis_, "characterTags", &output.searchable_tags_
-                )) {
-                return std::unexpected("invalid sidecar analysis fields");
-            }
-            if (make_analysis_id(output) != output.analysis_id_)
-                return std::unexpected("sidecar analysis ID mismatch");
-
-            if (value.contains("proxy")) {
-                const auto& proxy = value.at("proxy");
-                output.proxy_path_ = tostr(
-                    make_sprintboard_proxy_path(*source)
-                );
-                output.proxy_size_ = proxy.at("size").get<int64_t>();
-                output.proxy_modified_time_ =
-                    proxy.at("modifiedTimeUnixNs").get<int64_t>();
-                output.proxy_sha256_ = proxy.at("sha256").get<std::string>();
-                output.proxy_materialization_id_ =
-                    proxy.at("materializationId").get<std::string>();
-                if (output.proxy_size_ <= 0 ||
-                    output.proxy_modified_time_ <= 0 ||
-                    !::is_sha256(output.proxy_sha256_) ||
-                    output.proxy_materialization_id_.empty()) {
-                    return std::unexpected("invalid sidecar proxy fields");
-                }
-            }
-            output.sidecar_path_ = tostr(sidecar_path);
-            return output;
-        } catch (const std::exception& error) {
-            return std::unexpected(
-                std::string{ "invalid sidecar: " } + error.what()
-            );
-        }
-    }
-
-    std::expected<TagAnalysisRecord, std::string> read_tag_sidecar(
-        const Path& sidecar_path
-    ) {
-        std::string content;
-        if (!read_file(sidecar_path, content))
-            return std::unexpected("cannot read sidecar");
-        try {
-            return parse_tag_sidecar_json(
-                nlohmann::json::parse(content), sidecar_path
-            );
-        } catch (const std::exception& error) {
-            return std::unexpected(
-                std::string{ "invalid sidecar JSON: " } + error.what()
-            );
-        }
-    }
-
-    std::expected<void, std::string> write_tag_sidecar(
-        const Path& sidecar_path, const TagAnalysisRecord& record
-    ) {
-        const auto content = make_tag_sidecar_json(record).dump(2) + '\n';
-        std::error_code error;
-        if (!write_file_atomically(sidecar_path, content, error))
-            return std::unexpected(error.message());
-        return {};
     }
 
 }  // namespace sung

@@ -76,7 +76,7 @@ add_executable(
     image_index.cpp
     ../src/server/src/index/image_index.cpp
     ../src/server/src/response/img_list.cpp
-    ../src/server/src/tag_sidecar.cpp
+    ../src/server/src/tag_analysis.cpp
     ../src/server/src/tagger_client.cpp
 )
 add_test(NAME ${PROJECT_NAME}_test_image_index COMMAND ${PROJECT_NAME}_test_image_index)
@@ -98,7 +98,7 @@ add_executable(
     root_cache.cpp
     ../src/server/src/index/image_index.cpp
     ../src/server/src/response/img_list.cpp
-    ../src/server/src/tag_sidecar.cpp
+    ../src/server/src/tag_analysis.cpp
     ../src/server/src/tagger_client.cpp
 )
 add_test(NAME ${PROJECT_NAME}_test_root_cache COMMAND ${PROJECT_NAME}_test_root_cache)
@@ -116,11 +116,33 @@ target_link_libraries(
 )
 
 add_executable(
+    ${PROJECT_NAME}_test_tag_storage
+    tag_storage.cpp
+    ../src/server/src/index/image_index.cpp
+    ../src/server/src/response/img_list.cpp
+    ../src/server/src/tag_analysis.cpp
+    ../src/server/src/tagger_client.cpp
+)
+add_test(NAME ${PROJECT_NAME}_test_tag_storage COMMAND ${PROJECT_NAME}_test_tag_storage)
+set_target_properties(${PROJECT_NAME}_test_tag_storage PROPERTIES FOLDER "${PROJECT_NAME}/test")
+target_include_directories(
+    ${PROJECT_NAME}_test_tag_storage PRIVATE ../src/server/src
+)
+target_link_libraries(
+    ${PROJECT_NAME}_test_tag_storage
+    httplib::httplib
+    OpenSSL::Crypto
+    sprintboard_img
+    TBB::tbb
+    unofficial::sqlite3::sqlite3
+)
+
+add_executable(
     ${PROJECT_NAME}_test_img_walker
     img_walker.cpp
     ../src/server/src/index/image_index.cpp
     ../src/server/src/response/img_list.cpp
-    ../src/server/src/tag_sidecar.cpp
+    ../src/server/src/tag_analysis.cpp
     ../src/server/src/tagger_client.cpp
     ../src/server/src/task/img_walker.cpp
     ../src/server/src/util/wake.cpp
