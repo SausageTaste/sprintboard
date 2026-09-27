@@ -654,7 +654,8 @@ export default function Gallery({ settings, onChangeSettings }: GalleryProps) {
         url.searchParams.set("path", it.src);
         const res = await fetch(url.toString(), { method: "DELETE" });
         if (!res.ok) {
-            alert(`Delete failed: HTTP ${res.status}`);
+            const detail = await res.text().catch(() => "");
+            alert(`Delete failed: HTTP ${res.status}${detail ? `\n${detail}` : ""}`);
             return;
         }
 

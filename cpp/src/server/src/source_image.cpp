@@ -1,7 +1,11 @@
 #include "source_image.hpp"
 
+#include <algorithm>
+#include <format>
 #include <string_view>
 #include <system_error>
+
+#include <refimg/image/simple_img_info.hpp>
 
 #include "sung/auxiliary/filesys.hpp"
 
@@ -54,6 +58,48 @@ namespace {
         return output.empty() ? "download" : output;
     }
 
+    bool equals_ascii_case_insensitive(
+        const std::string_view lhs, const std::string_view rhs
+    ) {
+        if (lhs.size() != rhs.size())
+            return false;
+        for (size_t i = 0; i < lhs.size(); ++i) {
+            auto a = lhs[i];
+            auto b = rhs[i];
+            if (a >= 'A' && a <= 'Z')
+                a = static_cast<char>(a - 'A' + 'a');
+            if (b >= 'A' && b <= 'Z')
+                b = static_cast<char>(b - 'A' + 'a');
+            if (a != b)
+                return false;
+        }
+        return true;
+    }
+
+    // Case-insensitive because the default macOS and Windows filesystems
+    // resolve differently cased names to the same reserved entry.
+    bool is_reserved_image_path(
+        const sung::Path& local_dir, const sung::Path& path
+    ) {
+        for (const auto& part : path.lexically_relative(local_dir)) {
+            if (equals_ascii_case_insensitive(
+                    sung::tostr(part), ".sprintboard"
+                ))
+                return true;
+        }
+        return sung::is_sprintboard_temporary_path(path) ||
+               sung::is_sprintboard_tag_sidecar_path(path);
+    }
+
+    bool is_inside_dir(const sung::Path& dir, const sung::Path& path) {
+        const auto relative = path.lexically_normal().lexically_relative(
+            dir.lexically_normal()
+        );
+        if (relative.empty() || relative == ".")
+            return false;
+        return !sung::tostr(*relative.begin()).starts_with("..");
+    }
+
 }  // namespace
 
 
@@ -84,6 +130,72 @@ namespace sung {
         return "attachment; filename=\"" +
                make_ascii_filename_fallback(filename) +
                "\"; filename*=UTF-8''" + encode_rfc5987(filename);
+    }
+
+    std::expected<std::vector<Path>, DeleteImageFailure> delete_image_files(
+        const Path& local_dir, const Path& requested_path
+    ) {
+        using Kind = DeleteImageFailure::Kind;
+        const auto fail = [](const Kind kind, std::string message) {
+            return std::unexpected(
+                DeleteImageFailure{ kind, std::move(message) }
+            );
+        };
+
+        if (!is_inside_dir(local_dir, requested_path))
+            return fail(Kind::invalid_target, "Path is outside its local_dir");
+
+        // Validate the whole pair before removing anything so a crafted proxy
+        // name cannot make an arbitrary file its "source".
+        const auto paths = image_source_proxy_paths(requested_path);
+        std::vector<Path> targets;
+        for (const auto& path : { paths.source_, paths.proxy_ }) {
+            std::error_code error;
+            const auto status = fs::status(path, error);
+            if (status.type() == fs::file_type::not_found)
+                continue;
+            if (error) {
+                return fail(
+                    Kind::remove_failed,
+                    std::format(
+                        "Cannot access {}: {}", tostr(path), error.message()
+                    )
+                );
+            }
+            if (!fs::is_regular_file(status) ||
+                is_reserved_image_path(local_dir, path) ||
+                !refimg::get_simple_img_info(path)) {
+                return fail(
+                    Kind::invalid_target,
+                    std::format("Not a deletable image: {}", tostr(path))
+                );
+            }
+            targets.push_back(path);
+        }
+        if (std::find(targets.begin(), targets.end(), requested_path) ==
+            targets.end())
+            return fail(Kind::not_found, "Image not found");
+
+        // The source goes first: if the proxy then survives, the remaining
+        // proxy-only state is one the index already supports.
+        std::vector<Path> removed;
+        for (const auto& path : targets) {
+            std::error_code error;
+            // A false return without an error means the file is already gone.
+            fs::remove(path, error);
+            if (error) {
+                auto message = std::format(
+                    "Failed to delete {}: {}", tostr(path), error.message()
+                );
+                for (const auto& done : removed)
+                    message += std::format(
+                        " (already deleted {})", tostr(done)
+                    );
+                return fail(Kind::remove_failed, std::move(message));
+            }
+            removed.push_back(path);
+        }
+        return removed;
     }
 
 }  // namespace sung

@@ -311,7 +311,10 @@ analysis is reused. Tag records are removed only after a successful scan confirm
 that neither source nor proxy exists, or following gallery deletion. Temporarily
 unavailable roots retain their last known state. The gallery delete action removes
 the source, managed proxy, and their database tag records; legacy sidecars remain
-untouched.
+untouched. It deletes only images: a request naming a non-image file, anything
+under `.sprintboard`, or a proxy whose source is not an image is refused without
+deleting anything. If a file cannot be removed, the request fails and the image
+keeps its index entry and tag records.
 
 If the tagging service is unavailable, indexing and HTTP requests continue.
 With tagging enabled, only missing or stale proxy generation waits for the

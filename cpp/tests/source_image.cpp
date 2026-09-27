@@ -1,6 +1,7 @@
 #include <chrono>
 #include <format>
 #include <print>
+#include <source_location>
 #include <string_view>
 #include <system_error>
 #include <vector>
@@ -19,6 +20,155 @@ namespace {
 
     bool write_fixture(const sung::Path& path) {
         return sung::write_file(path, std::vector<uint8_t>{ 1, 2, 3 });
+    }
+
+    sung::Path fixture_image(const char* name) {
+        return sung::Path(std::source_location::current().file_name())
+                   .parent_path()
+                   .parent_path()
+                   .parent_path() /
+               "fixtures" / "images" / sung::fromstr(name);
+    }
+
+    bool copy_image(const sung::Path& fixture, const sung::Path& path) {
+        std::error_code error;
+        sung::fs::create_directories(path.parent_path(), error);
+        return !error && sung::fs::copy_file(fixture, path, error) && !error;
+    }
+
+    bool file_exists(const sung::Path& path) {
+        std::error_code error;
+        return sung::fs::exists(path, error);
+    }
+
+    bool failed_with(
+        const auto& result, const sung::DeleteImageFailure::Kind kind
+    ) {
+        return !result && result.error().kind_ == kind;
+    }
+
+    bool test_delete_image_files(const sung::Path& temp) {
+        using Kind = sung::DeleteImageFailure::Kind;
+        const auto png = fixture_image(
+            "\xEC\x9C\xA0\xEC\x9A\xB0"
+            "\xEC\xB9\xB4.png"
+        );
+        const auto avif = fixture_image("\xC3\x89milie.avif");
+        const auto root = temp / "delete-root";
+
+        const auto source = root / "pair.png";
+        const auto proxy = root / "pair.png.sprintboard.avif";
+        const auto single = root / "single.avif";
+        const auto database = root / ".sprintboard" / "index.sqlite3";
+        const auto reserved_image = root / ".Sprintboard" / "hidden.png";
+        const auto config = root / "config.json";
+        const auto crafted_proxy = root / "config.json.sprintboard.avif";
+        const auto sidecar = root / "tagged.png.sprintboard.tags.json";
+        const auto outside = temp / "outside.png";
+        if (!check(copy_image(png, source), "copies source fixture") ||
+            !check(copy_image(avif, proxy), "copies proxy fixture") ||
+            !check(copy_image(avif, single), "copies single fixture") ||
+            !check(copy_image(png, reserved_image), "copies reserved image") ||
+            !check(copy_image(avif, crafted_proxy), "copies crafted proxy") ||
+            !check(copy_image(png, outside), "copies outside image") ||
+            !check(write_fixture(database), "writes database fixture") ||
+            !check(write_fixture(config), "writes config fixture") ||
+            !check(write_fixture(sidecar), "writes sidecar fixture")) {
+            return false;
+        }
+
+        auto success =
+            check(
+                failed_with(
+                    sung::delete_image_files(root, database),
+                    Kind::invalid_target
+                ) && file_exists(database),
+                "refuses to delete the per-root database"
+            ) &&
+            check(
+                failed_with(
+                    sung::delete_image_files(root, reserved_image),
+                    Kind::invalid_target
+                ) && file_exists(reserved_image),
+                "refuses reserved directories regardless of case"
+            ) &&
+            check(
+                failed_with(
+                    sung::delete_image_files(root, config), Kind::invalid_target
+                ) && file_exists(config),
+                "refuses a file that is not an image"
+            ) &&
+            check(
+                failed_with(
+                    sung::delete_image_files(root, crafted_proxy),
+                    Kind::invalid_target
+                ) && file_exists(config) &&
+                    file_exists(crafted_proxy),
+                "refuses a proxy whose source is not an image"
+            ) &&
+            check(
+                failed_with(
+                    sung::delete_image_files(root, sidecar),
+                    Kind::invalid_target
+                ) && file_exists(sidecar),
+                "refuses a tag sidecar"
+            ) &&
+            check(
+                failed_with(
+                    sung::delete_image_files(root, outside),
+                    Kind::invalid_target
+                ) && file_exists(outside),
+                "refuses a path outside local_dir"
+            ) &&
+            check(
+                failed_with(
+                    sung::delete_image_files(root, root / "missing.png"),
+                    Kind::not_found
+                ),
+                "reports a missing image"
+            );
+
+        const auto pair = sung::delete_image_files(root, proxy);
+        success = check(
+                      pair && pair->size() == 2 && !file_exists(source) &&
+                          !file_exists(proxy),
+                      "deletes the source and proxy from the proxy path"
+                  ) &&
+                  success;
+
+#if !defined(_WIN32)
+        // A read-only directory makes unlink fail, as a locked or
+        // permission-protected file would.
+        std::error_code error;
+        sung::fs::permissions(
+            root,
+            sung::fs::perms::owner_write,
+            sung::fs::perm_options::remove,
+            error
+        );
+        const auto locked = sung::delete_image_files(root, single);
+        sung::fs::permissions(
+            root,
+            sung::fs::perms::owner_write,
+            sung::fs::perm_options::add,
+            error
+        );
+        success = check(
+                      failed_with(locked, Kind::remove_failed) &&
+                          file_exists(single),
+                      "reports a file that could not be removed"
+                  ) &&
+                  success;
+#endif
+
+        const auto single_result = sung::delete_image_files(root, single);
+        success = check(
+                      single_result && single_result->size() == 1 &&
+                          !file_exists(single),
+                      "deletes an image without a proxy"
+                  ) &&
+                  success;
+        return success;
     }
 
 }  // namespace
@@ -145,6 +295,8 @@ int main() {
                   "falls back to a proxy after its source disappears"
               ) &&
               success;
+
+    success = test_delete_image_files(temp) && success;
 
     sung::fs::remove_all(temp, error);
     return success ? 0 : 1;

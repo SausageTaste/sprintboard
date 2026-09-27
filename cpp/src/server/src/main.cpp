@@ -471,25 +471,53 @@ int main() {
             api_path = "/img/" + api_path;
         }
 
+        const auto [namespace_path, rest_path] = ::split_namespace(
+            sung::fromstr(param_path)
+        );
         const auto svrcfg = server_configs.get();
-        const auto full_path = svrcfg->resolve_paths(sung::fromstr(param_path));
-        if (!full_path) {
+        const auto binding = svrcfg->find_binding(namespace_path);
+        if (!binding) {
             res.status = 400;
-            res.set_content(full_path.error(), "text/plain");
+            res.set_content(
+                "Invalid namespace in 'path' parameter", "text/plain"
+            );
             return;
         }
 
-        const auto paths = sung::image_source_proxy_paths(*full_path);
-
-        for (const auto& file_path : { paths.source_, paths.proxy_ }) {
-            std::error_code file_error;
-            if (!sung::fs::is_regular_file(file_path, file_error) || file_error)
-                continue;
-            if (sung::fs::remove(file_path, file_error) && !file_error) {
-                std::println("Deleted file: {}", sung::tostr(file_path));
-            }
+        const auto& local_dir = binding->local_dir_;
+        const auto full_path = sung::concat_path_safely(local_dir, rest_path);
+        if (!full_path) {
+            res.status = 400;
+            res.set_content("Invalid 'path' parameter", "text/plain");
+            return;
         }
 
+        const auto deleted = sung::delete_image_files(local_dir, *full_path);
+        if (!deleted) {
+            using Kind = sung::DeleteImageFailure::Kind;
+            const auto& failure = deleted.error();
+            switch (failure.kind_) {
+                case Kind::invalid_target:
+                    res.status = 400;
+                    break;
+                case Kind::not_found:
+                    res.status = 404;
+                    break;
+                case Kind::remove_failed:
+                    res.status = 500;
+                    break;
+            }
+            std::println(
+                stderr, "Delete failed for {}: {}", api_path, failure.message_
+            );
+            res.set_content(failure.message_, "text/plain");
+            return;
+        }
+        for (const auto& file_path : *deleted)
+            std::println("Deleted file: {}", sung::tostr(file_path));
+
+        // Only forget the image once every file is gone; otherwise its tag
+        // analysis would be lost while a file remains on disk.
         const auto requested_api_path = sung::fromstr(api_path);
         const auto api_paths = sung::image_source_proxy_paths(
             requested_api_path

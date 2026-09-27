@@ -23,7 +23,7 @@ set_target_properties(
 target_include_directories(
     ${PROJECT_NAME}_test_source_image PRIVATE ../src/server/src
 )
-target_link_libraries(${PROJECT_NAME}_test_source_image sprintboard_aux)
+target_link_libraries(${PROJECT_NAME}_test_source_image sprintboard_img)
 
 add_executable(${PROJECT_NAME}_test_png png.cpp)
 add_test(NAME ${PROJECT_NAME}_test_png COMMAND ${PROJECT_NAME}_test_png WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
