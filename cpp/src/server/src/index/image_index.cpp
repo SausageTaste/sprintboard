@@ -1535,6 +1535,27 @@ public:
         });
     }
 
+    ImageIndexRefreshStats initialize(
+        const std::shared_ptr<const ServerConfigs>& configs
+    ) {
+        std::lock_guard refresh_lock{ refresh_mutex_ };
+        sung::MonotonicRealtimeTimer timer;
+        auto cached = gallery_cache::load(*configs);
+        ImageIndexRefreshStats stats;
+        stats.images_available_ = cached->files_.size();
+        stats.folders_available_ = cached->folders_.size();
+        stats.elapsed_seconds_ = timer.elapsed();
+        store_snapshot(std::move(cached));
+        std::println(
+            "ImageIndex: Restored {} images and {} folders in {:.3f} seconds; "
+            "reconciliation pending.",
+            stats.images_available_,
+            stats.folders_available_,
+            stats.elapsed_seconds_
+        );
+        return stats;
+    }
+
     ImageIndexRefreshStats refresh(
         const std::shared_ptr<const ServerConfigs>& configs
     ) {
@@ -1547,8 +1568,7 @@ public:
         const auto initial_refresh = old_snapshot->generation_ == 0;
         if (initial_refresh) {
             std::println(
-                "ImageIndex: Building and validating the image index before "
-                "the server starts..."
+                "ImageIndex: Reconciling the library in the background..."
             );
         }
         auto next = std::make_shared<IndexSnapshot>();
@@ -1954,6 +1974,10 @@ public:
 
         next->tag_analyses_ = tag_analyses_;
         for (auto& file : next->files_) {
+            // Unavailable roots may still contain browsing-only restored
+            // entries.
+            if (file.logical_path_.empty())
+                continue;
             const auto found = tag_analyses_.find(file.logical_path_);
             file.tags_ = found == tag_analyses_.end()
                              ? std::vector<std::string>{}
@@ -2590,35 +2614,81 @@ namespace sung {
     ImageIndexRefreshStats ImageIndex::initialize(
         std::shared_ptr<const ServerConfigs> configs
     ) {
-        return impl_->refresh(configs);
+        return impl_->initialize(configs);
+    }
+
+    void ImageIndex::set_initial_refresh_state(
+        const InitialRefreshState state
+    ) {
+        auto previous = initial_refresh_state_.load();
+        while (previous != InitialRefreshState::ready &&
+               !initial_refresh_state_.compare_exchange_weak(previous, state)) {
+        }
+    }
+
+    bool ImageIndex::ready_for_background_work() const {
+        return initial_refresh_state_.load() == InitialRefreshState::ready;
+    }
+
+    std::string_view ImageIndex::initial_refresh_state() const {
+        switch (initial_refresh_state_.load()) {
+            case InitialRefreshState::pending:
+                return "pending";
+            case InitialRefreshState::running:
+                return "running";
+            case InitialRefreshState::ready:
+                return "ready";
+            case InitialRefreshState::failed:
+                return "failed";
+        }
+        return "failed";
     }
 
     ImageIndexRefreshStats ImageIndex::refresh(
         std::shared_ptr<const ServerConfigs> configs
     ) {
-        return impl_->refresh(configs);
+        set_initial_refresh_state(InitialRefreshState::running);
+        try {
+            const auto stats = impl_->refresh(configs);
+            set_initial_refresh_state(InitialRefreshState::ready);
+            return stats;
+        } catch (...) {
+            set_initial_refresh_state(InitialRefreshState::failed);
+            throw;
+        }
     }
 
     void ImageIndex::start_auto_refresh(
         std::function<std::shared_ptr<const ServerConfigs>()> configs_provider,
         const double interval_seconds
     ) {
-        auto_refresh_thread_ = std::thread(
-            [this,
-             configs_provider = std::move(configs_provider),
-             interval_seconds] {
-                while (!auto_refresh_stop_) {
-                    for (double waited = 0;
-                         waited < interval_seconds && !auto_refresh_stop_;
-                         waited += 0.1) {
-                        sung::sleep_naive(0.1);
-                    }
-                    if (auto_refresh_stop_)
-                        break;
-                    impl_->refresh(configs_provider());
+        auto_refresh_thread_ = std::thread([this,
+                                            configs_provider =
+                                                std::move(configs_provider),
+                                            interval_seconds] {
+            while (!auto_refresh_stop_) {
+                set_initial_refresh_state(InitialRefreshState::running);
+                try {
+                    this->refresh(configs_provider());
+                } catch (const std::exception& error) {
+                    set_initial_refresh_state(InitialRefreshState::failed);
+                    std::println(
+                        "ImageIndex: Background refresh failed; will retry: {}",
+                        error.what()
+                    );
+                } catch (...) {
+                    set_initial_refresh_state(InitialRefreshState::failed);
+                    std::println(
+                        "ImageIndex: Background refresh failed; will retry."
+                    );
+                }
+                for (double waited = 0;
+                     waited < interval_seconds && !auto_refresh_stop_;
+                     waited += 0.1) {
+                    sung::sleep_naive(0.1);
                 }
             }
-        );
+        });
     }
 
     void ImageIndex::start_auto_tagging(
@@ -2627,6 +2697,10 @@ namespace sung {
         auto_tagging_thread_ = std::thread(
             [this, configs_provider = std::move(configs_provider)] {
                 while (!auto_tagging_stop_) {
+                    if (!ready_for_background_work()) {
+                        sung::sleep_naive(0.1);
+                        continue;
+                    }
                     const auto configs = configs_provider();
                     impl_->refresh_tags(configs);
                     const auto interval = std::max(

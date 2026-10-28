@@ -54,6 +54,8 @@ namespace sung {
         ImageIndex(ImageIndex&&) = delete;
         ImageIndex& operator=(ImageIndex&&) = delete;
 
+        // Restore browsing data only; filesystem reconciliation runs
+        // separately.
         ImageIndexRefreshStats initialize(
             std::shared_ptr<const ServerConfigs> configs
         );
@@ -61,12 +63,16 @@ namespace sung {
             std::shared_ptr<const ServerConfigs> configs
         );
 
-        // Runs `refresh` repeatedly on a dedicated thread, waiting
-        // `interval_seconds` after each scan completes before starting the
-        // next one. Keeping this off the shared task-manager thread matters
-        // when the scan roots live behind something slow (an encrypted
-        // vault, a network share): a slow scan there must not stall the
-        // other periodic tasks (AVIF encoding, power-request gating).
+        std::string_view initial_refresh_state() const;
+        bool ready_for_background_work() const;
+
+        // Runs the first refresh immediately, then `refresh` repeatedly on a
+        // dedicated thread, waiting `interval_seconds` after each scan
+        // completes before starting the next one. Keeping this off the shared
+        // task-manager thread matters when the scan roots live behind something
+        // slow (an encrypted vault, a network share): a slow scan there must
+        // not stall the other periodic tasks (AVIF encoding, power-request
+        // gating).
         void start_auto_refresh(
             std::function<std::shared_ptr<const ServerConfigs>()>
                 configs_provider,
@@ -107,6 +113,11 @@ namespace sung {
         );
 
     private:
+        enum class InitialRefreshState { pending, running, ready, failed };
+        void set_initial_refresh_state(InitialRefreshState state);
+        std::atomic<InitialRefreshState> initial_refresh_state_{
+            InitialRefreshState::pending
+        };
         class Impl;
         std::unique_ptr<Impl> impl_;
         std::thread auto_refresh_thread_;

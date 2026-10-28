@@ -129,7 +129,7 @@ namespace {
         {
             sung::ImageIndex index;
             require(
-                index.initialize(configs_for(source, fallback))
+                index.refresh(configs_for(source, fallback))
                         .metadata_indexed_ == 1,
                 "initial scan indexes synced image"
             );
@@ -156,7 +156,7 @@ namespace {
         set_modified_seconds(image, seconds);
         {
             sung::ImageIndex index;
-            const auto stats = index.initialize(configs);
+            const auto stats = index.refresh(configs);
             require(
                 stats.metadata_reused_ == 1 && stats.metadata_indexed_ == 0,
                 "copied collection reuses metadata under a different root"
@@ -165,7 +165,7 @@ namespace {
         set_modified_seconds(image, seconds + 123);
         {
             sung::ImageIndex index;
-            const auto stats = index.initialize(configs);
+            const auto stats = index.refresh(configs);
             require(
                 stats.metadata_reused_ == 1 && stats.metadata_indexed_ == 0,
                 "timestamp-only sync changes reuse metadata by content hash"
@@ -182,7 +182,7 @@ namespace {
         );
         {
             sung::ImageIndex index;
-            const auto stats = index.initialize(configs);
+            const auto stats = index.refresh(configs);
             require(
                 stats.metadata_reused_ == 1 && stats.metadata_indexed_ == 0,
                 "hash-validated metadata survives another restart"
@@ -200,7 +200,7 @@ namespace {
         }
         {
             sung::ImageIndex index;
-            const auto stats = index.initialize(configs);
+            const auto stats = index.refresh(configs);
             require(
                 stats.persistent_ && stats.metadata_indexed_ == 1 &&
                     stats.metadata_reused_ == 0,
@@ -218,7 +218,7 @@ namespace {
         {
             sung::ImageIndex index;
             require(
-                index.initialize(configs).metadata_reused_ == 1,
+                index.refresh(configs).metadata_reused_ == 1,
                 "migrated metadata is reused on subsequent startups"
             );
         }
@@ -235,7 +235,7 @@ namespace {
         );
         {
             sung::ImageIndex index;
-            const auto stats = index.initialize(configs);
+            const auto stats = index.refresh(configs);
             require(
                 stats.metadata_indexed_ == 1 && stats.metadata_reused_ == 0 &&
                     count(index, "a") == 0,
@@ -259,7 +259,7 @@ namespace {
         configs->dir_bindings_["child"].local_dir_ = a / "nested";
         {
             sung::ImageIndex index;
-            require(index.initialize(configs).persistent_, "all roots persist");
+            require(index.refresh(configs).persistent_, "all roots persist");
             require(
                 count(index, "a") == 2 && count(index, "b") == 1 &&
                     count(index, "alias") == 2 && count(index, "child") == 1,
@@ -376,7 +376,7 @@ namespace {
         {
             sung::ImageIndex index;
             require(
-                index.initialize(configs).metadata_indexed_ == 0,
+                index.refresh(configs).metadata_indexed_ == 0,
                 "restart reuses each root cache"
             );
         }
@@ -390,7 +390,7 @@ namespace {
         {
             sung::ImageIndex index;
             require(
-                index.initialize(blocked_configs).persistent_,
+                index.refresh(blocked_configs).persistent_,
                 "external fallback persists"
             );
             const auto caches = databases_under(fallback);
@@ -409,7 +409,7 @@ namespace {
         {
             sung::ImageIndex index;
             require(
-                index.initialize(blocked_configs).persistent_ &&
+                index.refresh(blocked_configs).persistent_ &&
                     fs::exists(database_path(blocked)),
                 "restart reassesses preferred local cache"
             );
@@ -419,7 +419,7 @@ namespace {
         write_text(blocked2 / ".sprintboard", "blocked");
         {
             sung::ImageIndex index;
-            index.initialize(configs_for(blocked2, fallback));
+            index.refresh(configs_for(blocked2, fallback));
             require(
                 databases_under(fallback).size() == 2,
                 "external caches are isolated by root"
@@ -434,7 +434,7 @@ namespace {
         {
             sung::ImageIndex index;
             require(
-                !index.initialize(memory_configs).persistent_ &&
+                !index.refresh(memory_configs).persistent_ &&
                     count(index, "a") == 1,
                 "both failures use memory"
             );
@@ -463,8 +463,7 @@ namespace {
             try {
                 sung::ImageIndex index;
                 require(
-                    index.initialize(configs_for(readonly, fallback))
-                        .persistent_,
+                    index.refresh(configs_for(readonly, fallback)).persistent_,
                     "read-only image root has persistent fallback"
                 );
                 require(
@@ -482,7 +481,7 @@ namespace {
         {
             sung::ImageIndex index;
             require(
-                !index.initialize(absent_configs).persistent_,
+                !index.refresh(absent_configs).persistent_,
                 "missing root is not persistent"
             );
             require(
@@ -529,7 +528,7 @@ namespace {
         record.analysis_id_ = sung::make_analysis_id(record);
         {
             sung::ImageIndex index;
-            index.initialize(configs_for(portable, fallback));
+            index.refresh(configs_for(portable, fallback));
         }
         require(
             tag_test::seed(database_path(portable), record),
@@ -539,7 +538,7 @@ namespace {
         copy_image(fixture, proxy);
         {
             sung::ImageIndex index;
-            index.initialize(configs_for(portable, fallback));
+            index.refresh(configs_for(portable, fallback));
             require(
                 count(index, "a", "portable_tag") == 1,
                 "SQLite restores successful analysis"
@@ -592,7 +591,7 @@ namespace {
         const auto moved_proxy = moved / proxy.filename();
         {
             sung::ImageIndex index;
-            const auto stats = index.initialize(configs_for(moved, fallback));
+            const auto stats = index.refresh(configs_for(moved, fallback));
             require(
                 stats.metadata_indexed_ == 0,
                 "moving directory preserves metadata cache reuse"
@@ -641,7 +640,7 @@ namespace {
                 );
             }
             sung::ImageIndex index;
-            index.initialize(configs_for(moved, fallback));
+            index.refresh(configs_for(moved, fallback));
             require(
                 !index.tag_analysis(moved_image),
                 "rejects escaping field " + field
@@ -669,8 +668,8 @@ namespace {
         {
             sung::ImageIndex index;
             require(
-                index.initialize(configs_for(moved, fallback))
-                        .metadata_indexed_ > 0,
+                index.refresh(configs_for(moved, fallback)).metadata_indexed_ >
+                    0,
                 "rejects escaping metadata keys"
             );
             require(
@@ -685,7 +684,7 @@ namespace {
             sung::ImageIndex index;
             auto moved_configs = configs_for(moved, fallback);
             moved_configs->tagger_enabled_ = true;
-            index.initialize(moved_configs);
+            index.refresh(moved_configs);
             require(
                 !fs::exists(
                     sung::make_sprintboard_tag_sidecar_path(moved_image)

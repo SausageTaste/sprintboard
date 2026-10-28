@@ -177,3 +177,25 @@ add_executable(${PROJECT_NAME}_test_gallery_snapshot gallery_snapshot.cpp)
 add_test(NAME ${PROJECT_NAME}_test_gallery_snapshot COMMAND ${PROJECT_NAME}_test_gallery_snapshot)
 target_include_directories(${PROJECT_NAME}_test_gallery_snapshot PRIVATE ../src/server/src)
 target_link_libraries(${PROJECT_NAME}_test_gallery_snapshot sprintboard_img)
+
+add_executable(
+    ${PROJECT_NAME}_test_image_index_startup
+    image_index_startup.cpp
+    ../src/server/src/index/image_index.cpp
+    ../src/server/src/response/img_list.cpp
+    ../src/server/src/tag_analysis.cpp
+    ../src/server/src/tagger_client.cpp
+)
+add_test(NAME ${PROJECT_NAME}_test_image_index_startup COMMAND ${PROJECT_NAME}_test_image_index_startup)
+set_target_properties(${PROJECT_NAME}_test_image_index_startup PROPERTIES FOLDER "${PROJECT_NAME}/test")
+target_include_directories(
+    ${PROJECT_NAME}_test_image_index_startup PRIVATE ../src/server/src
+)
+target_link_libraries(
+    ${PROJECT_NAME}_test_image_index_startup
+    httplib::httplib
+    OpenSSL::Crypto
+    sprintboard_img
+    TBB::tbb
+    unofficial::sqlite3::sqlite3
+)

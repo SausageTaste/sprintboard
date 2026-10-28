@@ -347,6 +347,15 @@ int main() {
         return;
     });
 
+    svr.Get("/api/images/index/status", [&](const HttpReq&, HttpRes& res) {
+        res.set_header("Cache-Control", "no-store");
+        res.set_content(
+            nlohmann::json{ { "state", image_index.initial_refresh_state() } }
+                .dump(),
+            "application/json"
+        );
+    });
+
     svr.Post("/api/images/index/refresh", [&](const HttpReq&, HttpRes& res) {
         const sung::ScopedWakeLock wake_lock{ power_req->get() };
         const auto stats = image_index.refresh(server_configs.get());

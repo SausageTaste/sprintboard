@@ -333,6 +333,8 @@ namespace {
         ~Task() noexcept override { tg_.wait(); }
 
         void run() override {
+            if (!image_index_.ready_for_background_work())
+                return;
             const auto svrcfg = cfg_.get();
             if (!svrcfg->any_avif_gen())
                 return;

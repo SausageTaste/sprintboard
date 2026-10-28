@@ -90,7 +90,7 @@ int main() {
     configs->tagger_enabled_ = true;
 
     sung::ImageIndex empty_index;
-    empty_index.initialize(configs);
+    empty_index.refresh(configs);
     sung::GatedPowerRequest power_request;
 
     // The production task receives a reloadable manager. Constructing one in
@@ -117,7 +117,7 @@ int main() {
         tag_test::database_path(root), analysis
     );
     sung::ImageIndex index;
-    index.initialize(configs);
+    index.refresh(configs);
     task = sung::create_img_walker_task(manager, power_request, index);
     task->run();
     if (!check(written, "stores walker analysis in SQLite") ||
@@ -174,6 +174,18 @@ int main() {
         return 1;
     }
     sung::ServerConfigManager plain_manager{ plain_config_path };
+    sung::ImageIndex pending_index;
+    pending_index.initialize(plain_configs);
+    auto pending_task = sung::create_img_walker_task(
+        plain_manager, power_request, pending_index
+    );
+    pending_task->run();
+    success = check(
+                  !sung::fs::exists(plain_proxy),
+                  "does not encode before initial reconciliation, even without "
+                  "tagging"
+              ) &&
+              success;
     index.refresh(plain_configs);
     auto plain_task = sung::create_img_walker_task(
         plain_manager, power_request, index

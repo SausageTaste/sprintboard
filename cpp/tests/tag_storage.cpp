@@ -78,7 +78,7 @@ namespace {
     }
     void initialize(const std::shared_ptr<sung::ServerConfigs>& cfg) {
         sung::ImageIndex index;
-        index.initialize(cfg);
+        index.refresh(cfg);
     }
     size_t count(
         const sung::ImageIndex& index,
@@ -180,7 +180,7 @@ namespace {
         }
         {
             sung::ImageIndex index;
-            require(index.initialize(cfg).persistent_, "migrates schema six");
+            require(index.refresh(cfg).persistent_, "migrates schema six");
             const auto result = index.current_tag_analysis(image);
             require(
                 result && result->analysis_id_ == record.analysis_id_ &&
@@ -209,7 +209,7 @@ namespace {
         {
             sung::ImageIndex index;
             require(
-                index.initialize(cfg).metadata_indexed_ == 1,
+                index.refresh(cfg).metadata_indexed_ == 1,
                 "rebuilds missing metadata table"
             );
             require(
@@ -247,7 +247,7 @@ namespace {
                 "NOT NULL DEFAULT ''; PRAGMA user_version=6; BEGIN IMMEDIATE;"
             );
             sung::ImageIndex index;
-            index.initialize(cfg);
+            index.refresh(cfg);
             require(
                 db.scalar("PRAGMA user_version;") == "6" &&
                     db.scalar("SELECT COUNT(*) FROM image_tag_analysis;") ==
@@ -269,7 +269,7 @@ namespace {
         {
             sung::ImageIndex index;
             require(
-                !index.initialize(cfg).persistent_ &&
+                !index.refresh(cfg).persistent_ &&
                     !index.current_tag_analysis(image),
                 "unknown schema disables tagging"
             );
@@ -325,7 +325,7 @@ namespace {
         text_file(future, "{\"schemaVersion\":999}");
         {
             sung::ImageIndex index;
-            index.initialize(ignored_cfg);
+            index.refresh(ignored_cfg);
             require(
                 count(index, "a", "sqlite_tag") == 0 &&
                     !index.tag_analysis(ignored_image),
@@ -398,7 +398,7 @@ namespace {
         );
         {
             sung::ImageIndex index;
-            index.initialize(promoted_cfg);
+            index.refresh(promoted_cfg);
             const auto result = index.current_tag_analysis(promoted_image);
             require(
                 result && result->analyzed_at_ == 200 &&
@@ -413,7 +413,7 @@ namespace {
         );
         {
             sung::ImageIndex index;
-            index.initialize(promoted_cfg);
+            index.refresh(promoted_cfg);
             require(
                 count(index, "a", "local_tie") == 1 &&
                     index.current_tag_analysis(promoted_image)
@@ -436,10 +436,12 @@ namespace {
             "seed parent-owned tag"
         );
         text_file(nested / ".sprintboard", "block destination");
+        // Reconciliation now also creates the disposable gallery cache here.
+        fs::remove_all(temp / "nested-fallback");
         text_file(temp / "nested-fallback", "block fallback");
         {
             sung::ImageIndex index;
-            index.initialize(nested_cfg);
+            index.refresh(nested_cfg);
             nested_cfg->dir_bindings_["nested"].local_dir_ = nested;
             index.refresh(nested_cfg);
             require(
@@ -499,7 +501,7 @@ namespace {
         };
         {
             sung::ImageIndex index;
-            index.initialize(live_cfg);
+            index.refresh(live_cfg);
             index.start_auto_tagging([live_cfg] { return live_cfg; });
             wait_for(
                 [&] {
@@ -572,7 +574,7 @@ namespace {
         }
         {
             sung::ImageIndex index;
-            index.initialize(live_cfg);
+            index.refresh(live_cfg);
             require(
                 index.tag_analysis(bad / "image.png").has_value(),
                 "tagger result survives restart"
@@ -591,7 +593,7 @@ namespace {
         {
             sung::ImageIndex index;
             require(
-                !index.initialize(memory_cfg).persistent_,
+                !index.refresh(memory_cfg).persistent_,
                 "no writable database uses browsing-only mode"
             );
             const auto requests = tagger.analyses.load();

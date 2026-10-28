@@ -339,7 +339,7 @@ int main() {
 
     {
         sung::ImageIndex index;
-        const auto first = index.initialize(configs);
+        const auto first = index.refresh(configs);
         if (!check(first.persistent_, "opens a persistent SQLite cache") ||
             !check(first.metadata_indexed_ == 2, "indexes initial metadata") ||
             !check(image_count(index) == 2, "indexes recursive images") ||
@@ -447,7 +447,7 @@ int main() {
 
     {
         sung::ImageIndex index;
-        const auto reopened = index.initialize(configs);
+        const auto reopened = index.refresh(configs);
         if (!check(
                 reopened.metadata_reused_ == 0,
                 "invalidates platform-specific metadata during schema migration"
@@ -562,9 +562,7 @@ int main() {
         }
         {
             sung::ImageIndex reopened_after_failure;
-            const auto reopened_stats = reopened_after_failure.initialize(
-                configs
-            );
+            const auto reopened_stats = reopened_after_failure.refresh(configs);
             if (!check(
                     reopened_stats.metadata_reused_ == 3,
                     "persists the recovered in-memory metadata"
@@ -678,7 +676,7 @@ int main() {
     sqlite3_close(database);
     {
         sung::ImageIndex index;
-        const auto rebuilt = index.initialize(configs);
+        const auto rebuilt = index.refresh(configs);
         if (!check(
                 rebuilt.metadata_indexed_ >= 4 && !rebuilt.persistent_,
                 "browses unknown schemas without replacing the database"
@@ -694,7 +692,7 @@ int main() {
     configs->cache_dir_ = sung::tostr(saved_database);
     {
         sung::ImageIndex index;
-        const auto fallback = index.initialize(configs);
+        const auto fallback = index.refresh(configs);
         if (!check(
                 !fallback.persistent_, "falls back when SQLite cannot open"
             ) ||
@@ -716,7 +714,7 @@ int main() {
     const auto source_date_configs = make_configs(source_date_root);
     {
         sung::ImageIndex index;
-        index.initialize(source_date_configs);
+        index.refresh(source_date_configs);
     }
     int64_t source_sort_time = 0;
     if (!check(
@@ -741,7 +739,7 @@ int main() {
     }
     {
         sung::ImageIndex index;
-        index.initialize(source_date_configs);
+        index.refresh(source_date_configs);
     }
     if (!check(
             set_sort_time(
@@ -754,7 +752,7 @@ int main() {
     }
     {
         sung::ImageIndex index;
-        index.initialize(source_date_configs);
+        index.refresh(source_date_configs);
     }
     int64_t avif_sort_time = 0;
     if (!check(
@@ -770,7 +768,7 @@ int main() {
     }
     {
         sung::ImageIndex index;
-        index.initialize(source_date_configs);
+        index.refresh(source_date_configs);
         const auto paired = index.query(sung::fromstr("test"), "", true)
                                 .make_json(0, 100)["imageFiles"];
         if (!check(
@@ -809,7 +807,7 @@ int main() {
     const auto ordering_configs = make_configs(ordering_root);
     {
         sung::ImageIndex index;
-        index.initialize(ordering_configs);
+        index.refresh(ordering_configs);
     }
     if (!check(
             set_sort_time(ordering_database, "z-old.avif", 100),
@@ -828,7 +826,7 @@ int main() {
     }
     {
         sung::ImageIndex index;
-        const auto reopened = index.initialize(ordering_configs);
+        const auto reopened = index.refresh(ordering_configs);
         const auto direct = index.query(sung::fromstr("test"), "", false)
                                 .make_json(0, 100)["imageFiles"];
         const auto recursive = index.query(sung::fromstr("test"), "", true)
@@ -932,7 +930,7 @@ int main() {
     const auto staging_configs = make_configs(staging_root);
     {
         sung::ImageIndex index;
-        const auto initial = index.initialize(staging_configs);
+        const auto initial = index.refresh(staging_configs);
         const auto refreshed = index.refresh(staging_configs);
         if (!check(
                 initial.files_scanned_ == 1 && initial.metadata_indexed_ == 1 &&
@@ -953,7 +951,7 @@ int main() {
     }
     {
         sung::ImageIndex index;
-        const auto reopened = index.initialize(staging_configs);
+        const auto reopened = index.refresh(staging_configs);
         if (!check(
                 reopened.metadata_reused_ == 1 && image_count(index) == 1 &&
                     !index.tag_analysis(staging_proxy),
