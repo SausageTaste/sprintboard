@@ -412,8 +412,15 @@ v25.2.1
 Open the Command Prompt and run following commands:
 
 * `npm ci` - Download dependencies and initialize React project.
-* `npm run build` - Generate `dist` foder which backend server can serve.
+* `npm run build` - Generate the `dist` folder which the backend server can serve.
 * `npm run dev` - Run React web app server in dev mode.
+
+After pulling changes, rebuild both the frontend and backend. The C++ build does
+not rebuild `dist`; the server serves those existing files from its working
+directory. An older frontend can leave the gallery empty after the new backend
+starts a background scan because it does not poll the scan status or reload the
+image list when ready. Run `npm run build`, then reload the browser to load the
+updated frontend. On a cold start, images appear after the initial scan finishes.
 
 ## C++ Backend
 
