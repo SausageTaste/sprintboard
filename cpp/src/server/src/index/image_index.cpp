@@ -26,6 +26,7 @@
 
 #include "gallery_snapshot.hpp"
 #include "image_query.hpp"
+#include "snapshot_store.hpp"
 #include "tag_analysis.hpp"
 #include "tagger_client.hpp"
 
@@ -518,8 +519,6 @@ public:
                 sqlite3_close(database_);
         }
     };
-
-    Impl() { snapshot_ = std::make_shared<const IndexSnapshot>(); }
 
     static Path canonical_path(const Path& path) {
         std::error_code ec;
@@ -1608,6 +1607,7 @@ public:
         const std::shared_ptr<const ServerConfigs>& configs
     ) {
         std::lock_guard refresh_lock{ refresh_mutex_ };
+        snapshot_configs_ = configs;
         sung::MonotonicRealtimeTimer timer;
         auto cached = gallery_cache::load(*configs);
         ImageIndexRefreshStats stats;
@@ -1630,6 +1630,8 @@ public:
         const std::string_view date = {}
     ) {
         std::lock_guard refresh_lock{ refresh_mutex_ };
+        snapshot_configs_ = configs;
+        flush_pending_removals_locked();
         sung::MonotonicRealtimeTimer timer;
         ImageIndexRefreshStats stats;
         reconcile_stores(*configs);
@@ -2129,8 +2131,8 @@ public:
         stats.images_available_ = next->files_.size();
         stats.folders_available_ = next->folders_.size();
         stats.elapsed_seconds_ = timer.elapsed();
-        gallery_cache::save(*configs, *next);
         store_snapshot(std::move(next));
+        gallery_cache::save(*configs, *load_snapshot());
 
         std::println(
             "ImageIndex ({}): {} images, {} folders ({} reused, {} indexed, "
@@ -2651,22 +2653,32 @@ public:
     }
 
     void remove_api_path(const std::string_view api_path) {
+        snapshots_.remove_api_path(api_path);
+    }
+
+    void flush_pending_removals() {
         std::lock_guard refresh_lock{ refresh_mutex_ };
-        const auto current = load_snapshot();
-        auto next = std::make_shared<IndexSnapshot>(*current);
-        std::vector<std::string> removed_logical_paths;
+        flush_pending_removals_locked();
+    }
+
+    void flush_pending_removals_locked() {
+        const auto pending = snapshots_.take_removals();
+        if (pending.empty())
+            return;
+        if (stores_.empty() && snapshot_configs_)
+            reconcile_stores(*snapshot_configs_);
         std::vector<std::string> removed_physical_paths;
-        std::erase_if(next->files_, [&](const auto& file) {
-            if (sung::tostr(file.info_.path_) != api_path)
-                return false;
-            removed_logical_paths.push_back(file.logical_path_);
+        for (const auto& [api_path, file] : pending) {
+            if (file.physical_path_.empty())
+                continue;
             removed_physical_paths.push_back(file.physical_path_);
             metadata_.erase(file.physical_path_);
-            return true;
-        });
-        for (const auto& logical_path : removed_logical_paths) {
+            const auto logical_path = file.logical_path_.empty()
+                                          ? detail::logical_image_key(
+                                                fromstr(file.physical_path_)
+                                            )
+                                          : file.logical_path_;
             tag_analyses_.erase(logical_path);
-            next->tag_analyses_.erase(logical_path);
             if (!erase_tag_analysis(logical_path)) {
                 std::println(
                     "ImageIndex: Failed to remove tag analysis for {}",
@@ -2674,9 +2686,11 @@ public:
                 );
             }
         }
-        flush_stores({}, removed_physical_paths);
-        ++next->generation_;
-        store_snapshot(std::move(next));
+        // Ownership reconciliation touches every persisted tag's filesystem
+        // path. It belongs to full scans, not individual deletions.
+        flush_stores({}, removed_physical_paths, false);
+        if (snapshot_configs_)
+            gallery_cache::save(*snapshot_configs_, *load_snapshot());
     }
 
     bool persistent() const {
@@ -2693,13 +2707,11 @@ public:
 
 private:
     std::shared_ptr<const IndexSnapshot> load_snapshot() const {
-        std::lock_guard lock{ snapshot_mutex_ };
-        return snapshot_;
+        return snapshots_.load();
     }
 
-    void store_snapshot(std::shared_ptr<const IndexSnapshot> snapshot) {
-        std::lock_guard lock{ snapshot_mutex_ };
-        snapshot_ = std::move(snapshot);
+    void store_snapshot(std::shared_ptr<IndexSnapshot> snapshot) {
+        snapshots_.store(std::move(snapshot));
     }
 
     std::map<std::string, std::unique_ptr<Store>> stores_;
@@ -2709,9 +2721,9 @@ private:
     std::unordered_map<std::string, CachedTagAnalysis> tag_analyses_;
     std::unordered_map<std::string, bool> analysis_local_;
     std::string current_analyzer_fingerprint_;
-    std::shared_ptr<const IndexSnapshot> snapshot_;
+    gallery_cache::SnapshotStore snapshots_;
+    std::shared_ptr<const ServerConfigs> snapshot_configs_;
     mutable std::mutex refresh_mutex_;
-    mutable std::mutex snapshot_mutex_;
     // Isolated from the default TBB arena (used by CPU-bound AVIF encoding)
     // since this one is deliberately oversubscribed for I/O latency-hiding.
     tbb::task_arena scan_arena_{ SCAN_CONCURRENCY };
@@ -2742,6 +2754,15 @@ namespace sung {
             auto_refresh_thread_.join();
         if (auto_tagging_thread_.joinable())
             auto_tagging_thread_.join();
+        try {
+            impl_->flush_pending_removals();
+        } catch (const std::exception& error) {
+            std::println(
+                stderr,
+                "ImageIndex: Cannot flush deletions at shutdown: {}",
+                error.what()
+            );
+        }
     }
 
     ImageIndexRefreshStats ImageIndex::initialize(
@@ -2817,6 +2838,7 @@ namespace sung {
                 bool failed = false;
                 try {
                     const auto configs = configs_provider();
+                    impl_->flush_pending_removals();
                     const auto now = Clock::now();
                     const auto due = [&](const auto& last, double seconds) {
                         return !last ||

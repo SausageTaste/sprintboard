@@ -92,6 +92,8 @@ namespace sung {
             bool avif_only = false
         ) const;
 
+        // Immediately hide a successfully deleted file. Storage cleanup runs
+        // on the index worker, next refresh, or shutdown without delaying HTTP.
         void remove_api_path(std::string_view api_path);
 
         std::optional<nlohmann::json> tag_analysis(

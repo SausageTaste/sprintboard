@@ -1,13 +1,81 @@
 #include <chrono>
+#include <future>
 #include <print>
 #include <stdexcept>
+#include <thread>
 
 #include "index/gallery_snapshot.hpp"
+#include "index/snapshot_store.hpp"
 
 namespace {
     void require(bool condition, const char* message) {
         if (!condition)
             throw std::runtime_error(message);
+    }
+
+    void test_deletion_during_scan() {
+        namespace cache = sung::gallery_cache;
+        cache::SnapshotStore store;
+        auto initial = std::make_shared<cache::IndexSnapshot>();
+        cache::IndexedFile file;
+        file.info_.path_ = sung::fromstr(
+            "/img/test/image.png.sprintboard.avif"
+        );
+        file.physical_path_ = "root/image.png.sprintboard.avif";
+        file.logical_path_ = "root/image.png";
+        initial->files_.push_back(file);
+        initial->tag_analyses_[file.logical_path_] = {};
+        store.store(initial);
+
+        // Hold a scan after it captures its input, independently of UI removal.
+        std::promise<void> captured, resume;
+        auto captured_future = captured.get_future();
+        auto resume_future = resume.get_future();
+        std::thread scanner([&] {
+            auto stale = std::make_shared<cache::IndexSnapshot>(*store.load());
+            captured.set_value();
+            resume_future.wait();
+            store.store(std::move(stale));
+        });
+        captured_future.wait();
+        store.remove_api_path(sung::tostr(file.info_.path_));
+        const bool hidden_immediately = store.load()->files_.empty() &&
+                                        store.load()->tag_analyses_.empty();
+        // Release the worker even when an assertion would fail.
+        resume.set_value();
+        scanner.join();
+        require(
+            hidden_immediately,
+            "deletion hides image and tags while the scanner is paused"
+        );
+        require(
+            store.load()->files_.empty() && store.load()->tag_analyses_.empty(),
+            "a stale scan cannot restore a deleted image or its tags"
+        );
+        const auto pending = store.take_removals();
+        require(
+            pending.size() == 1 &&
+                pending.begin()->second.physical_path_ == file.physical_path_ &&
+                pending.begin()->second.logical_path_ == file.logical_path_,
+            "deferred cleanup retains the physical and logical identity"
+        );
+        require(
+            store.take_removals().empty(), "cleanup drains each removal once"
+        );
+        store.store(std::make_shared<cache::IndexSnapshot>(*initial));
+        require(
+            store.load()->files_.size() == 1,
+            "a newly created file can be rediscovered after cleanup"
+        );
+
+        cache::SnapshotStore cold;
+        cold.remove_api_path(sung::tostr(file.info_.path_));
+        cold.store(std::make_shared<cache::IndexSnapshot>(*initial));
+        require(
+            cold.load()->files_.empty() && cold.take_removals().size() == 1,
+            "a deletion also filters entries first discovered by an in-flight "
+            "scan"
+        );
     }
 }  // namespace
 
@@ -21,6 +89,7 @@ int main() {
             std::chrono::steady_clock::now().time_since_epoch().count()
         );
     try {
+        test_deletion_during_scan();
         sung::ServerConfigs configs;
         configs.fill_default();
         configs.dir_bindings_.clear();

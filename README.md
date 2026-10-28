@@ -361,6 +361,11 @@ under `.sprintboard`, or a proxy whose source is not an image is refused without
 deleting anything. If a file cannot be removed, the request fails and the image
 keeps its index entry and tag records.
 
+After files are deleted successfully, the gallery entry is removed immediately.
+Database and saved-snapshot cleanup runs on the index worker, so deletion does
+not wait for a full library scan or a cache-wide storage check. In-progress scans
+cannot restore entries awaiting deletion cleanup.
+
 If the tagging service is unavailable, indexing and HTTP requests continue.
 With tagging enabled, only missing or stale proxy generation waits for the
 service; already-current proxies remain available.

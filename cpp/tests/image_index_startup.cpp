@@ -197,6 +197,38 @@ int main() {
                 "corrupt snapshot recovers without damaging database"
             );
         }
+        {
+            auto slow_configs = std::make_shared<sung::ServerConfigs>(*configs);
+            slow_configs->image_index_full_refresh_interval_seconds_ = 3600;
+            slow_configs->image_index_date_refresh_interval_seconds_ = 0;
+            sung::ImageIndex index;
+            index.initialize(slow_configs);
+            index.start_auto_refresh([slow_configs] { return slow_configs; });
+            require(
+                eventually([&] { return index.ready_for_background_work(); }),
+                "deletion test finishes startup reconciliation"
+            );
+            fs::remove(root / "new.avif");
+            index.remove_api_path("/img/test/new.avif");
+            require(
+                listing(index)["totalImageCount"] == 0,
+                "API deletion updates browsing immediately"
+            );
+            require(
+                eventually([&] {
+                    return sung::gallery_cache::load(*slow_configs)
+                        ->files_.empty();
+                }),
+                "worker persists deletions without waiting for a scheduled scan"
+            );
+        }
+        {
+            sung::ImageIndex restored;
+            require(
+                restored.initialize(configs).images_available_ == 0,
+                "deleted image does not return on warm startup"
+            );
+        }
         fs::remove_all(temp);
         std::println("Image index startup tests passed.");
         return 0;
