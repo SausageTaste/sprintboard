@@ -258,6 +258,27 @@ not carry its database records. Include `.sprintboard` in collection backups.
 Stop Sprintboard before copying database files so SQLite can checkpoint and
 close its WAL. Writes use `synchronous=FULL`.
 
+Startup restores the last gallery view from `<cache_dir>/gallery-snapshot.json`
+without walking the library or checking individual images. The server starts even
+when that snapshot is missing or unusable, showing an empty gallery until the
+first background reconciliation completes. The gallery shows its startup status
+and automatically reloads the current folder, filters, and sort order when ready.
+Cached results can briefly include deleted images or omit new ones.
+
+The first reconciliation starts immediately; subsequent scans retain the existing
+30-second interval after each scan completes. Tagging and AVIF generation wait
+for the first pass. Unavailable roots retain their cached browsing entries, and
+failed background scans retain the last published view and retry. The snapshot is
+a disposable, atomically replaced browsing cache; it does not replace the SQLite
+tag databases or authorize tagging and encoding. Invalid snapshots or changed
+namespace-to-directory mappings cause an empty start and a background rebuild.
+Keep `cache_dir` on a fast local disk to avoid slow snapshot reads.
+
+`GET /api/images/index/status` returns a JSON `state` of `pending`, `running`,
+`ready`, or `failed` for initial reconciliation. Once ready, it stays ready through later
+periodic scans. The gallery polls every two seconds until ready (five seconds
+after failures); the existing manual refresh API remains available.
+
 Image metadata stores file size, modification time as Unix nanoseconds, and
 SHA-256. Unchanged size and time reuse metadata without reading image contents.
 When only the timestamp changes (including sync-related precision changes), a

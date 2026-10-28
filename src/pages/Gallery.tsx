@@ -4,6 +4,8 @@ import { VirtuosoGrid } from "react-virtuoso";
 import PhotoSwipeLightbox, { type PhotoSwipe } from "photoswipe/lightbox";
 import "photoswipe/style.css";
 
+import { watchInitialIndexStatus, type InitialIndexState } from "../func/indexStatus";
+
 import Breadcrumbs from "../widgets/Breadcrumbs";
 import FolderCard from "../widgets/FolderCard";
 import { downloadImage, downloadSourceImage } from "../func/downloadImage";
@@ -547,6 +549,10 @@ type GalleryProps = {
 };
 
 export default function Gallery({ settings, onChangeSettings }: GalleryProps) {
+    const [initialIndexState, setInitialIndexState] = React.useState<InitialIndexState>("pending");
+    const initialIndexReady = initialIndexState === "ready";
+    React.useEffect(() => watchInitialIndexStatus(setInitialIndexState), []);
+
     // Query result of image list
     const [imgItems, setImgItems] = React.useState<ImageFileInfo[]>([]);
     const [folders, setFolders] = React.useState<FolderInfo[]>([]);
@@ -871,6 +877,7 @@ export default function Gallery({ settings, onChangeSettings }: GalleryProps) {
 
         return () => controller.abort();
     }, [
+        initialIndexReady,
         curDir,
         settings.filesRecursive,
         settings.imageSortOrder,
@@ -1354,6 +1361,16 @@ export default function Gallery({ settings, onChangeSettings }: GalleryProps) {
             <div className="headerRow">
                 <h2 style={{ margin: 0 }}>Sprintboard Images</h2>
             </div>
+
+            {!initialIndexReady && (
+                <p role="status" aria-live="polite">
+                    {initialIndexState === "failed"
+                        ? "Library update interrupted. Retrying…"
+                        : imgItems.length > 0 || folders.length > 0
+                            ? "Updating library…"
+                            : "Scanning library…"}
+                </p>
+            )}
 
             <div style={{ height: 12 }} />
 
