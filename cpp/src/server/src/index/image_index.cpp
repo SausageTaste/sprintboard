@@ -82,6 +82,54 @@ namespace {
     constexpr int DATABASE_SCHEMA_VERSION = 8;
     constexpr int64_t NANOSECONDS_PER_SECOND = 1'000'000'000;
 
+    bool is_date_folder(const std::string_view name) {
+        if (name.size() != 10 || name[4] != '-' || name[7] != '-')
+            return false;
+        for (size_t i = 0; i < name.size(); ++i) {
+            if (i != 4 && i != 7 && (name[i] < '0' || name[i] > '9'))
+                return false;
+        }
+        const auto number = [&](size_t offset, size_t count) {
+            unsigned value = 0;
+            for (size_t i = offset; i < offset + count; ++i)
+                value = value * 10 + (name[i] - '0');
+            return value;
+        };
+        return std::chrono::year_month_day{
+            std::chrono::year{ static_cast<int>(number(0, 4)) },
+            std::chrono::month{ number(5, 2) },
+            std::chrono::day{ number(8, 2) }
+        }.ok();
+    }
+
+    enum class DateScope { container, selected, excluded };
+
+    // Purely lexical: preserving old entries must not stat archived images.
+    DateScope date_scope(
+        const sung::Path& directory,
+        const sung::Path& root,
+        const std::string_view date
+    ) {
+#if defined(SUNG_OS_WINDOWS)
+        const auto relative =
+            sung::fromstr(absl::AsciiStrToLower(sung::tostr(directory)))
+                .lexically_relative(
+                    sung::fromstr(absl::AsciiStrToLower(sung::tostr(root)))
+                );
+#else
+        const auto relative = directory.lexically_relative(root);
+#endif
+        if (relative.empty() || *relative.begin() == "..")
+            return DateScope::excluded;
+        const auto parts = root.filename() / relative;
+        for (const auto& part : parts) {
+            const auto name = sung::tostr(part);
+            if (is_date_folder(name))
+                return name == date ? DateScope::selected : DateScope::excluded;
+        }
+        return DateScope::container;
+    }
+
 
     int64_t make_timestamp_ns(
         const int64_t seconds, const int64_t nanoseconds
@@ -1461,7 +1509,8 @@ public:
 
     void flush_stores(
         const std::vector<CachedMetadata>& changed,
-        const std::vector<std::string>& removed
+        const std::vector<std::string>& removed,
+        const bool reconcile_ownership = true
     ) {
         for (auto& [key, store] : stores_) {
             if (store->blocked_)
@@ -1500,6 +1549,8 @@ public:
         // A previous owner is pruned only after the new owner has committed.
         for (auto& [key, store] : stores_) {
             for (const auto& [path, relative] : store->persisted_tags_) {
+                if (!reconcile_ownership)
+                    break;
                 auto* destination = owner(path);
                 if (destination && destination != store.get() &&
                     destination->persisted_tags_.contains(path) &&
@@ -1557,7 +1608,8 @@ public:
     }
 
     ImageIndexRefreshStats refresh(
-        const std::shared_ptr<const ServerConfigs>& configs
+        const std::shared_ptr<const ServerConfigs>& configs,
+        const std::string_view date = {}
     ) {
         std::lock_guard refresh_lock{ refresh_mutex_ };
         sung::MonotonicRealtimeTimer timer;
@@ -1595,17 +1647,35 @@ public:
             );
         };
 
-        const auto preserve_root = [&](const std::string& root_key) {
+        const auto preserve_root = [&](const std::string& root_key,
+                                       const bool only_unscanned = false) {
             const auto root = sung::fromstr(
                 root_key.substr(root_key.find('\n') + 1)
             );
-            Store unavailable;
-            unavailable.root_ = root;
-            for (const auto& [path, metadata] : metadata_)
-                if (relative_path(unavailable, path))
+            const auto namespace_name = root_key.substr(0, root_key.find('\n'));
+            if (const auto previous =
+                    old_snapshot->namespace_sort_times_.find(namespace_name);
+                previous != old_snapshot->namespace_sort_times_.end())
+                next->namespace_sort_times_[namespace_name] = std::max(
+                    next->namespace_sort_times_[namespace_name],
+                    previous->second
+                );
+            const auto preserve_directory = [&](const Path& directory) {
+                return !only_unscanned ||
+                       date_scope(directory, root, date) != DateScope::selected;
+            };
+            for (const auto& [path, metadata] : metadata_) {
+                const auto physical = sung::fromstr(path);
+                const auto relative = physical.lexically_relative(root);
+                if (!relative.empty() && *relative.begin() != ".." &&
+                    preserve_directory(physical.parent_path()))
                     seen_physical.insert(path);
+            }
             for (const auto& file : old_snapshot->files_) {
-                if (file.root_key_ != root_key)
+                if (file.root_key_ != root_key ||
+                    !preserve_directory(
+                        fromstr(file.physical_path_).parent_path()
+                    ))
                     continue;
                 if (seen_api_paths.insert(sung::tostr(file.info_.path_)).second)
                     next->files_.push_back(file);
@@ -1613,6 +1683,13 @@ public:
             }
             for (const auto& folder : old_snapshot->folders_) {
                 if (folder.root_key_ != root_key)
+                    continue;
+                const auto relative =
+                    fromstr(folder.path_)
+                        .lexically_relative(
+                            fromstr(root_key.substr(0, root_key.find('\n')))
+                        );
+                if (!preserve_directory(root / relative))
                     continue;
                 add_folder(folder);
             }
@@ -1625,6 +1702,12 @@ public:
             const auto& root =
                 stores_.at(binding_roots_.at(namespace_name))->root_;
             const auto root_key = make_root_key(namespace_name, root);
+
+            if (!date.empty() &&
+                date_scope(root, root, date) == DateScope::excluded) {
+                preserve_root(root_key);
+                continue;
+            }
 
             if (!fs::is_directory(root, ec) || ec) {
                 all_roots_accessible = false;
@@ -1655,7 +1738,10 @@ public:
             std::vector<Path> physical_files;
             std::vector<IndexedFolder> root_folders;
             fs::recursive_directory_iterator iterator{
-                root, fs::directory_options::skip_permission_denied, ec
+                root,
+                date.empty() ? fs::directory_options::skip_permission_denied
+                             : fs::directory_options::none,
+                ec
             };
             bool scan_failed = static_cast<bool>(ec);
             Path scan_path = root;
@@ -1669,7 +1755,9 @@ public:
                 // inaccessible legacy artifacts must not abort image discovery.
                 if (entry.path().filename() == ".sprintboard" ||
                     sung::is_sprintboard_temporary_path(entry.path()) ||
-                    sung::is_sprintboard_tag_sidecar_path(entry.path())) {
+                    sung::is_sprintboard_tag_sidecar_path(entry.path()) ||
+                    (!date.empty() && date_scope(entry.path(), root, date) ==
+                                          DateScope::excluded)) {
                     iterator.disable_recursion_pending();
                     scan_operation = "advance directory iterator";
                     iterator.increment(ec);
@@ -1694,7 +1782,13 @@ public:
                             get_image_sort_time(entry.path()),
                         }
                     );
-                } else if (!ec && entry.is_regular_file(ec) && !ec) {
+                } else if (
+                    !ec &&
+                    (date.empty() ||
+                     date_scope(entry.path().parent_path(), root, date) ==
+                         DateScope::selected) &&
+                    entry.is_regular_file(ec) && !ec
+                ) {
                     auto path =
                         fs::absolute(entry.path(), ec).lexically_normal();
                     if (!ec)
@@ -1726,6 +1820,8 @@ public:
                 continue;
             }
 
+            if (!date.empty())
+                preserve_root(root_key, true);
             for (auto& folder : root_folders) add_folder(std::move(folder));
 
             for (const auto& path : physical_files) {
@@ -1933,6 +2029,24 @@ public:
             for (const auto& file : next->files_)
                 visible_logical_paths.insert(file.logical_path_);
             for (auto it = tag_analyses_.begin(); it != tag_analyses_.end();) {
+                if (!date.empty()) {
+                    const auto directory = fromstr(it->first).parent_path();
+                    const auto selected = std::any_of(
+                        binding_roots_.begin(),
+                        binding_roots_.end(),
+                        [&](const auto& binding) {
+                            return date_scope(
+                                       directory,
+                                       stores_.at(binding.second)->root_,
+                                       date
+                                   ) == DateScope::selected;
+                        }
+                    );
+                    if (!selected) {
+                        ++it;
+                        continue;
+                    }
+                }
                 if (visible_logical_paths.contains(it->first)) {
                     ++it;
                     continue;
@@ -1969,7 +2083,7 @@ public:
             }
         }
 
-        flush_stores(changed, removed);
+        flush_stores(changed, removed, date.empty());
         stats.persistent_ = persistent();
 
         next->tag_analyses_ = tag_analyses_;
@@ -2001,8 +2115,9 @@ public:
         store_snapshot(std::move(next));
 
         std::println(
-            "ImageIndex: {} images, {} folders ({} reused, {} indexed, "
+            "ImageIndex ({}): {} images, {} folders ({} reused, {} indexed, "
             "{} removed) in {:.3f} seconds",
+            date.empty() ? std::string_view{ "full" } : date,
             stats.images_available_,
             stats.folders_available_,
             stats.metadata_reused_,
@@ -2656,6 +2771,15 @@ namespace sung {
             set_initial_refresh_state(InitialRefreshState::failed);
             throw;
         }
+    }
+
+    ImageIndexRefreshStats ImageIndex::refresh_date(
+        std::shared_ptr<const ServerConfigs> configs,
+        const std::string_view date
+    ) {
+        if (!is_date_folder(date))
+            throw std::invalid_argument("Image scan date must be YYYY-MM-DD");
+        return impl_->refresh(configs, date);
     }
 
     void ImageIndex::start_auto_refresh(

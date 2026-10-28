@@ -62,6 +62,11 @@ namespace sung {
         ImageIndexRefreshStats refresh(
             std::shared_ptr<const ServerConfigs> configs
         );
+        // Reconcile only subtrees whose first YYYY-MM-DD folder matches date.
+        // Other cached entries remain untouched until the next full refresh.
+        ImageIndexRefreshStats refresh_date(
+            std::shared_ptr<const ServerConfigs> configs, std::string_view date
+        );
 
         std::string_view initial_refresh_state() const;
         bool ready_for_background_work() const;
