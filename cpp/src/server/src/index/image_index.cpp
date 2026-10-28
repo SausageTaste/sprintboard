@@ -23,6 +23,7 @@
 
 #include "sung/image/img_info.hpp"
 
+#include "gallery_snapshot.hpp"
 #include "image_query.hpp"
 #include "tag_analysis.hpp"
 #include "tagger_client.hpp"
@@ -204,38 +205,9 @@ namespace {
 
     using CachedTagAnalysis = sung::TagAnalysisRecord;
 
-    struct IndexedFile {
-        std::string root_key_;
-        std::string physical_path_;
-        std::string browser_path_;
-        std::string parent_browser_path_;
-        sung::ImageListResponse::FileInfo info_;
-        std::string model_;
-        std::vector<std::string> prompts_;
-        std::string logical_path_;
-        std::string tag_input_path_;
-        int64_t tag_input_size_ = 0;
-        int64_t tag_input_modified_time_ = 0;
-        std::vector<std::string> tags_;
-    };
-
-    struct IndexedFolder {
-        std::string root_key_;
-        std::string name_;
-        std::string path_;
-        std::string parent_path_;
-        int64_t sort_time_ns_ = 0;
-    };
-
-    struct IndexSnapshot {
-        uint64_t generation_ = 0;
-        std::vector<IndexedFile> files_;
-        std::vector<IndexedFolder> folders_;
-        std::set<std::string> namespaces_;
-        std::unordered_map<std::string, int64_t> namespace_sort_times_;
-        std::unordered_map<std::string, CachedTagAnalysis> tag_analyses_;
-    };
-
+    using sung::gallery_cache::IndexedFile;
+    using sung::gallery_cache::IndexedFolder;
+    using sung::gallery_cache::IndexSnapshot;
 
     bool file_before(const IndexedFile& a, const IndexedFile& b) {
         return sung::ImageListResponse::file_before(a.info_, b.info_);
@@ -2001,6 +1973,7 @@ public:
         stats.images_available_ = next->files_.size();
         stats.folders_available_ = next->folders_.size();
         stats.elapsed_seconds_ = timer.elapsed();
+        gallery_cache::save(*configs, *next);
         store_snapshot(std::move(next));
 
         std::println(

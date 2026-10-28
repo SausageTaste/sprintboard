@@ -172,3 +172,8 @@ if (APPLE)
         "-framework IOKit"
     )
 endif()
+
+add_executable(${PROJECT_NAME}_test_gallery_snapshot gallery_snapshot.cpp)
+add_test(NAME ${PROJECT_NAME}_test_gallery_snapshot COMMAND ${PROJECT_NAME}_test_gallery_snapshot)
+target_include_directories(${PROJECT_NAME}_test_gallery_snapshot PRIVATE ../src/server/src)
+target_link_libraries(${PROJECT_NAME}_test_gallery_snapshot sprintboard_img)
