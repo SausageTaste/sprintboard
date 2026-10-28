@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <ctime>
 #include <limits>
 #include <mutex>
 #include <print>
@@ -103,6 +104,23 @@ namespace {
     }
 
     enum class DateScope { container, selected, excluded };
+
+    std::string local_date_folder() {
+        const auto now = std::time(nullptr);
+        std::tm local{};
+#if defined(SUNG_OS_WINDOWS)
+        if (localtime_s(&local, &now) != 0)
+#else
+        if (!localtime_r(&now, &local))
+#endif
+            throw std::runtime_error("Cannot determine local image scan date");
+        return std::format(
+            "{:04}-{:02}-{:02}",
+            local.tm_year + 1900,
+            local.tm_mon + 1,
+            local.tm_mday
+        );
+    }
 
     // Purely lexical: preserving old entries must not stat archived images.
     DateScope date_scope(
@@ -2783,31 +2801,67 @@ namespace sung {
     }
 
     void ImageIndex::start_auto_refresh(
-        std::function<std::shared_ptr<const ServerConfigs>()> configs_provider,
-        const double interval_seconds
+        std::function<std::shared_ptr<const ServerConfigs>()> configs_provider
     ) {
         auto_refresh_thread_ = std::thread([this,
                                             configs_provider =
-                                                std::move(configs_provider),
-                                            interval_seconds] {
+                                                std::move(configs_provider)] {
+            using Clock = std::chrono::steady_clock;
+            std::optional<Clock::time_point> last_full;
+            std::optional<Clock::time_point> last_date;
             while (!auto_refresh_stop_) {
-                set_initial_refresh_state(InitialRefreshState::running);
+                if (!last_full)
+                    set_initial_refresh_state(InitialRefreshState::running);
+                bool full_attempted = false;
+                bool date_attempted = false;
+                bool failed = false;
                 try {
-                    this->refresh(configs_provider());
+                    const auto configs = configs_provider();
+                    const auto now = Clock::now();
+                    const auto due = [&](const auto& last, double seconds) {
+                        return !last ||
+                               std::chrono::duration<double>(now - *last)
+                                       .count() >= seconds;
+                    };
+                    if (due(
+                            last_full,
+                            configs->image_index_full_refresh_interval_seconds_
+                        )) {
+                        full_attempted = true;
+                        this->refresh(configs);
+                    } else if (
+                        ready_for_background_work() &&
+                        configs->image_index_date_refresh_interval_seconds_ >
+                            0 &&
+                        due(last_date,
+                            configs->image_index_date_refresh_interval_seconds_)
+                    ) {
+                        date_attempted = true;
+                        this->refresh_date(configs, local_date_folder());
+                    }
                 } catch (const std::exception& error) {
+                    failed = true;
                     set_initial_refresh_state(InitialRefreshState::failed);
                     std::println(
                         "ImageIndex: Background refresh failed; will retry: {}",
                         error.what()
                     );
                 } catch (...) {
+                    failed = true;
                     set_initial_refresh_state(InitialRefreshState::failed);
                     std::println(
                         "ImageIndex: Background refresh failed; will retry."
                     );
                 }
+                if (full_attempted) {
+                    last_full = Clock::now();
+                    // A full scan also reconciles today's subtree.
+                    last_date = last_full;
+                } else if (date_attempted) {
+                    last_date = Clock::now();
+                }
                 for (double waited = 0;
-                     waited < interval_seconds && !auto_refresh_stop_;
+                     waited < (failed ? 1.0 : 0.1) && !auto_refresh_stop_;
                      waited += 0.1) {
                     sung::sleep_naive(0.1);
                 }

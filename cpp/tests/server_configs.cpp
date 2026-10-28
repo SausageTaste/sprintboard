@@ -18,6 +18,46 @@ namespace {
 
 
 int main() {
+    {
+        sung::ServerConfigs defaults;
+        defaults.fill_default();
+        if (!check(
+                defaults.image_index_full_refresh_interval_seconds_ == 30 &&
+                    defaults.image_index_date_refresh_interval_seconds_ == 5,
+                "default scan intervals retain full scanning and enable quick "
+                "scans"
+            ))
+            return 1;
+        defaults.import_json({ { "avif_pix_format", "yuv444" } });
+        if (!check(
+                defaults.image_index_full_refresh_interval_seconds_ == 30 &&
+                    defaults.image_index_date_refresh_interval_seconds_ == 5,
+                "old config files receive default scan intervals"
+            ))
+            return 1;
+        for (const auto* key :
+             { "image_index_full_refresh_interval_seconds",
+               "image_index_date_refresh_interval_seconds" }) {
+            for (const double value : { -1.0, 0.5 }) {
+                bool rejected = false;
+                try {
+                    defaults.import_json({ { key, value } });
+                } catch (const std::runtime_error&) {
+                    rejected = true;
+                }
+                if (!check(rejected, "rejects invalid scan intervals"))
+                    return 1;
+            }
+        }
+        defaults.import_json(
+            { { "image_index_date_refresh_interval_seconds", 0 } }
+        );
+        if (!check(
+                defaults.image_index_date_refresh_interval_seconds_ == 0,
+                "date scans can be disabled"
+            ))
+            return 1;
+    }
     const auto source = nlohmann::json::parse(R"({
         "dir_bindings": {
             "inheriting": {
@@ -38,7 +78,9 @@ int main() {
         "tagger_host": "localhost",
         "tagger_port": 9001,
         "tagger_batch_size": 8,
-        "tagger_poll_interval_seconds": 12.5
+        "tagger_poll_interval_seconds": 12.5,
+        "image_index_full_refresh_interval_seconds": 300,
+        "image_index_date_refresh_interval_seconds": 7.5
     })");
 
     sung::ServerConfigs configs;
@@ -96,6 +138,15 @@ int main() {
     }
 
     const auto exported = configs.export_json();
+    if (!check(
+            configs.image_index_full_refresh_interval_seconds_ == 300 &&
+                configs.image_index_date_refresh_interval_seconds_ == 7.5 &&
+                exported.at("image_index_full_refresh_interval_seconds") ==
+                    300 &&
+                exported.at("image_index_date_refresh_interval_seconds") == 7.5,
+            "imports and exports independent scan intervals"
+        ))
+        return 1;
     if (!check(
             exported.at("tagger_enabled") == true &&
                 exported.at("tagger_host") == "localhost" &&

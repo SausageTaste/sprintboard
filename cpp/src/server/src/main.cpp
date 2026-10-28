@@ -35,7 +35,6 @@ namespace {
     // Scan roots can sit behind something slow (an encrypted vault, a
     // network share), so this is deliberately longer than a plain local
     // directory would need.
-    constexpr double IMAGE_INDEX_REFRESH_INTERVAL = 30;
 
 
     std::expected<size_t, std::string> parse_size_param(
@@ -193,10 +192,9 @@ int main() {
 
     sung::ImageIndex image_index;
     image_index.initialize(server_configs.get());
-    image_index.start_auto_refresh(
-        [&server_configs]() { return server_configs.get(); },
-        ::IMAGE_INDEX_REFRESH_INTERVAL
-    );
+    image_index.start_auto_refresh([&server_configs]() {
+        return server_configs.get();
+    });
     image_index.start_auto_tagging([&server_configs]() {
         return server_configs.get();
     });

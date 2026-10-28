@@ -54,6 +54,8 @@ int main() {
         configs->dir_bindings_["test"].local_dir_ = root;
         configs->cache_dir_ = sung::tostr(temp / "cache");
         configs->tagger_enabled_ = false;
+        configs->image_index_full_refresh_interval_seconds_ = 60;
+        configs->image_index_date_refresh_interval_seconds_ = 0;
         nlohmann::json expected;
         {
             sung::ImageIndex index;
@@ -72,12 +74,13 @@ int main() {
             const auto released = release.get_future().share();
             auto started = entered.get_future();
             index.start_auto_refresh(
-                [&] {
-                    entered.set_value();
-                    released.wait_for(std::chrono::seconds(5));
+                [&, signaled = std::make_shared<std::atomic_bool>(false)] {
+                    if (!signaled->exchange(true)) {
+                        entered.set_value();
+                        released.wait_for(std::chrono::seconds(5));
+                    }
                     return configs;
-                },
-                60
+                }
             );
             const bool started_immediately = started.wait_for(
                                                  std::chrono::seconds(2)
@@ -146,14 +149,14 @@ int main() {
         {
             sung::ImageIndex index;
             index.initialize(configs);
-            std::atomic_int attempts{ 0 };
+            configs->image_index_full_refresh_interval_seconds_ = 1;
             index.start_auto_refresh(
-                [&]() -> std::shared_ptr<const sung::ServerConfigs> {
-                    if (++attempts == 1)
+                [&, attempts = std::make_shared<std::atomic_int>(0)]()
+                    -> std::shared_ptr<const sung::ServerConfigs> {
+                    if (++*attempts == 1)
                         throw std::runtime_error("injected startup failure");
                     return configs;
-                },
-                0.5
+                }
             );
             require(
                 eventually([&] {

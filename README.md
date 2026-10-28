@@ -83,6 +83,8 @@ Open it with any text editor.
   "tagger_port": 8790,
   "tagger_batch_size": 4,
   "tagger_poll_interval_seconds": 30.0,
+  "image_index_full_refresh_interval_seconds": 30.0,
+  "image_index_date_refresh_interval_seconds": 5.0,
   "dir_bindings": {
     "example": {
       "local_dir": "./fixtures/images"
@@ -265,9 +267,31 @@ first background reconciliation completes. The gallery shows its startup status
 and automatically reloads the current folder, filters, and sort order when ready.
 Cached results can briefly include deleted images or omit new ones.
 
-The first reconciliation starts immediately; subsequent scans retain the existing
-30-second interval after each scan completes. Tagging and AVIF generation wait
-for the first pass. Unavailable roots retain their cached browsing entries, and
+The first full reconciliation starts immediately. Subsequent full scans use
+`image_index_full_refresh_interval_seconds` (default: 30). A second schedule scans
+today's `YYYY-MM-DD` folders every `image_index_date_refresh_interval_seconds`
+(default: 5; set to 0 to disable). Both intervals are measured after scan completion;
+positive values must be at least one second. Settings reload without a restart.
+For large dated collections, restart with the rebuilt server and add these settings
+to your local `server_configs.json` to run full scans every five minutes:
+
+```json
+"image_index_full_refresh_interval_seconds": 300,
+"image_index_date_refresh_interval_seconds": 5
+```
+
+Date scans use the server's local calendar date, recalculated on each pass. They
+walk undated container folders to find date folders, skip other dated subtrees,
+and recursively scan today's subtree (including when the binding itself is named
+for today). The first `YYYY-MM-DD` folder from the binding root determines the
+subtree's date. New date folders are discovered without waiting for a full scan.
+Cached images and folders outside today's subtree remain unchanged until a full
+scan; additions and deletions inside today's subtree are reconciled immediately.
+All scans run serially on the dedicated index worker, so a long full scan can delay
+a date scan. Manual refresh still scans the complete library.
+
+Tagging and AVIF generation wait for the first full pass.
+Unavailable roots retain their cached browsing entries, and
 failed background scans retain the last published view and retry. The snapshot is
 a disposable, atomically replaced browsing cache; it does not replace the SQLite
 tag databases or authorize tagging and encoding. Invalid snapshots or changed

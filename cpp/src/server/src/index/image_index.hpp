@@ -71,17 +71,12 @@ namespace sung {
         std::string_view initial_refresh_state() const;
         bool ready_for_background_work() const;
 
-        // Runs the first refresh immediately, then `refresh` repeatedly on a
-        // dedicated thread, waiting `interval_seconds` after each scan
-        // completes before starting the next one. Keeping this off the shared
-        // task-manager thread matters when the scan roots live behind something
-        // slow (an encrypted vault, a network share): a slow scan there must
-        // not stall the other periodic tasks (AVIF encoding, power-request
-        // gating).
+        // Run a full refresh immediately, then full and local-date scans at
+        // their configured intervals after completion. The dedicated worker
+        // serializes scans and stays separate from the shared task manager.
         void start_auto_refresh(
             std::function<std::shared_ptr<const ServerConfigs>()>
-                configs_provider,
-            double interval_seconds
+                configs_provider
         );
 
         void start_auto_tagging(

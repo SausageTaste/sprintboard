@@ -1,7 +1,9 @@
 #include <chrono>
+#include <ctime>
 #include <print>
 #include <source_location>
 #include <stdexcept>
+#include <thread>
 
 #include "index/image_index.hpp"
 
@@ -9,6 +11,34 @@ namespace {
     void require(bool condition, const char* message) {
         if (!condition)
             throw std::runtime_error(message);
+    }
+
+    template <typename Predicate>
+    bool eventually(Predicate predicate) {
+        for (int i = 0; i < 500; ++i) {
+            if (predicate())
+                return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return false;
+    }
+
+    std::string today_name() {
+        const auto now = std::time(nullptr);
+        std::tm local{};
+#ifdef _WIN32
+        require(localtime_s(&local, &now) == 0, "local calendar available");
+#else
+        require(
+            localtime_r(&now, &local) != nullptr, "local calendar available"
+        );
+#endif
+        return std::format(
+            "{:04}-{:02}-{:02}",
+            local.tm_year + 1900,
+            local.tm_mon + 1,
+            local.tm_mday
+        );
     }
 
     size_t count(const sung::ImageIndex& index, const char* path = "test") {
@@ -155,6 +185,58 @@ int main() {
                 invalid = true;
             }
             require(invalid, "invalid dates are rejected");
+        }
+        {
+            const auto scheduled_root = temp / "scheduled";
+            const auto current = today_name();
+            add(scheduled_root / "2000-01-01" / "old.avif");
+            auto scheduled = std::make_shared<sung::ServerConfigs>(*configs);
+            scheduled->dir_bindings_["test"].local_dir_ = scheduled_root;
+            scheduled->cache_dir_ = sung::tostr(temp / "scheduled-cache");
+            scheduled->image_index_full_refresh_interval_seconds_ = 60;
+            scheduled->image_index_date_refresh_interval_seconds_ = 1;
+            sung::ServerConfigsHolder holder;
+            holder.store(scheduled);
+            sung::ImageIndex index;
+            index.start_auto_refresh([&] { return holder.get(); });
+            require(
+                eventually([&] { return index.ready_for_background_work(); }),
+                "scheduled full scan runs immediately"
+            );
+            fs::remove(scheduled_root / "2000-01-01" / "old.avif");
+            add(scheduled_root / current / "first.avif");
+            const auto date_path = "test/" + current;
+            require(
+                eventually([&] {
+                    return count(index, date_path.c_str()) == 1;
+                }),
+                "automatic scan uses the local current date and discovers a "
+                "new date folder"
+            );
+            require(
+                count(index, "test/2000-01-01") == 1,
+                "quick schedule does not run a full reconciliation"
+            );
+            auto disabled = std::make_shared<sung::ServerConfigs>(*scheduled);
+            disabled->image_index_date_refresh_interval_seconds_ = 0;
+            holder.store(disabled);
+            add(scheduled_root / current / "second.avif");
+            std::this_thread::sleep_for(std::chrono::milliseconds(1300));
+            require(
+                count(index, date_path.c_str()) == 1,
+                "reloaded settings disable date scanning"
+            );
+            auto full = std::make_shared<sung::ServerConfigs>(*disabled);
+            full->image_index_full_refresh_interval_seconds_ = 1;
+            holder.store(full);
+            require(
+                eventually([&] {
+                    return count(index, date_path.c_str()) == 2 &&
+                           count(index, "test/2000-01-01") == 0;
+                }),
+                "full scans continue with date scans disabled and honor "
+                "changed intervals"
+            );
         }
         fs::remove_all(temp);
         return 0;
