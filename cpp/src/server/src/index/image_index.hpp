@@ -67,6 +67,10 @@ namespace sung {
         ImageIndexRefreshStats refresh_date(
             std::shared_ptr<const ServerConfigs> configs, std::string_view date
         );
+        // Reconcile date and the previous four calendar days in one pass.
+        ImageIndexRefreshStats refresh_recent(
+            std::shared_ptr<const ServerConfigs> configs, std::string_view date
+        );
 
         std::string_view initial_refresh_state() const;
         bool ready_for_background_work() const;

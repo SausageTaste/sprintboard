@@ -23,7 +23,7 @@ namespace {
         return false;
     }
 
-    std::string today_name() {
+    std::string today_name(const int days_ago = 0) {
         const auto now = std::time(nullptr);
         std::tm local{};
 #ifdef _WIN32
@@ -33,12 +33,12 @@ namespace {
             localtime_r(&now, &local) != nullptr, "local calendar available"
         );
 #endif
-        return std::format(
-            "{:04}-{:02}-{:02}",
-            local.tm_year + 1900,
-            local.tm_mon + 1,
-            local.tm_mday
-        );
+        const auto today = std::chrono::sys_days{
+            std::chrono::year{ local.tm_year + 1900 } /
+            std::chrono::month{ static_cast<unsigned>(local.tm_mon + 1) } /
+            std::chrono::day{ static_cast<unsigned>(local.tm_mday) }
+        };
+        return std::format("{:%F}", today - std::chrono::days{ days_ago });
     }
 
     size_t count(const sung::ImageIndex& index, const char* path = "test") {
@@ -187,6 +187,79 @@ int main() {
             require(invalid, "invalid dates are rejected");
         }
         {
+            const auto recent_root = temp / "recent";
+            auto recent = std::make_shared<sung::ServerConfigs>(*configs);
+            recent->dir_bindings_["test"].local_dir_ = recent_root;
+            recent->cache_dir_ = sung::tostr(temp / "recent-cache");
+            for (const auto date : { "2025-12-27",
+                                     "2025-12-28",
+                                     "2025-12-29",
+                                     "2025-12-30",
+                                     "2025-12-31",
+                                     "2026-01-01",
+                                     "2026-01-02" })
+                add(recent_root / date / "one.avif");
+            add(recent_root / "loose.avif");
+            {
+                sung::ImageIndex index;
+                const auto stats = index.refresh_recent(recent, "2026-01-01");
+                require(
+                    stats.files_scanned_ == 5 && count(index) == 5 &&
+                        count(index, "test/2025-12-28") == 1 &&
+                        count(index, "test/2025-12-27") == 0 &&
+                        count(index, "test/2026-01-02") == 0,
+                    "five-day scan crosses the year boundary and excludes "
+                    "older, future, and undated images"
+                );
+                index.refresh(recent);
+            }
+            fs::remove(recent_root / "2025-12-27" / "one.avif");
+            fs::remove_all(recent_root / "2025-12-28");
+            add(recent_root / "2025-12-27" / "unseen.avif");
+            add(recent_root / "album" / "2025-12-29" / "deep" / "new.avif");
+            {
+                sung::ImageIndex index;
+                index.initialize(recent);
+                const auto stats = index.refresh_recent(recent, "2026-01-01");
+                require(
+                    stats.files_scanned_ == 5 && count(index) == 8 &&
+                        count(index, "test/2025-12-28") == 0 &&
+                        count(index, "test/album/2025-12-29") == 1,
+                    "warm five-day scan reconciles deletions and nested "
+                    "additions while preserving unscanned cached images"
+                );
+                require(
+                    index.query(sung::fromstr("test/2025-12-27"), "", true)
+                            .make_json(0, 100)["imageFiles"][0]["src"] ==
+                        "/img/test/2025-12-27/one.avif",
+                    "archived changes remain untouched"
+                );
+                add(recent_root / "2025-12-28" / "unseen.avif");
+                require(
+                    index.refresh_recent(recent, "2026-01-02").files_scanned_ ==
+                            6 &&
+                        count(index, "test/2025-12-28") == 0,
+                    "rolling the window forward excludes the former oldest day"
+                );
+            }
+            recent->dir_bindings_["test"].local_dir_ = recent_root / "leap";
+            for (const auto date : { "2024-02-26",
+                                     "2024-02-27",
+                                     "2024-02-28",
+                                     "2024-02-29",
+                                     "2024-03-01",
+                                     "2024-03-02" })
+                add(recent_root / "leap" / date / "one.avif");
+            sung::ImageIndex leap;
+            require(
+                leap.refresh_recent(recent, "2024-03-02").files_scanned_ == 5 &&
+                    count(leap, "test/2024-02-26") == 0 &&
+                    count(leap, "test/2024-02-27") == 1 &&
+                    count(leap, "test/2024-02-29") == 1,
+                "five-day window includes leap day and handles month boundaries"
+            );
+        }
+        {
             const auto scheduled_root = temp / "scheduled";
             const auto current = today_name();
             add(scheduled_root / "2000-01-01" / "old.avif");
@@ -205,16 +278,21 @@ int main() {
             );
             fs::remove(scheduled_root / "2000-01-01" / "old.avif");
             add(scheduled_root / current / "first.avif");
+            add(scheduled_root / today_name(4) / "recent.avif");
+            add(scheduled_root / today_name(5) / "excluded.avif");
             const auto date_path = "test/" + current;
+            const auto oldest_path = "test/" + today_name(4);
+            const auto excluded_path = "test/" + today_name(5);
             require(
                 eventually([&] {
-                    return count(index, date_path.c_str()) == 1;
+                    return count(index, date_path.c_str()) == 1 &&
+                           count(index, oldest_path.c_str()) == 1;
                 }),
-                "automatic scan uses the local current date and discovers a "
-                "new date folder"
+                "automatic scan discovers folders from today and four days ago"
             );
             require(
-                count(index, "test/2000-01-01") == 1,
+                count(index, "test/2000-01-01") == 1 &&
+                    count(index, excluded_path.c_str()) == 0,
                 "quick schedule does not run a full reconciliation"
             );
             auto disabled = std::make_shared<sung::ServerConfigs>(*scheduled);

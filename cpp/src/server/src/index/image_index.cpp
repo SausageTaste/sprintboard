@@ -84,12 +84,14 @@ namespace {
     constexpr int DATABASE_SCHEMA_VERSION = 8;
     constexpr int64_t NANOSECONDS_PER_SECOND = 1'000'000'000;
 
-    bool is_date_folder(const std::string_view name) {
+    std::optional<std::chrono::year_month_day> parse_date_folder(
+        const std::string_view name
+    ) {
         if (name.size() != 10 || name[4] != '-' || name[7] != '-')
-            return false;
+            return std::nullopt;
         for (size_t i = 0; i < name.size(); ++i) {
             if (i != 4 && i != 7 && (name[i] < '0' || name[i] > '9'))
-                return false;
+                return std::nullopt;
         }
         const auto number = [&](size_t offset, size_t count) {
             unsigned value = 0;
@@ -97,14 +99,33 @@ namespace {
                 value = value * 10 + (name[i] - '0');
             return value;
         };
-        return std::chrono::year_month_day{
+        const auto date = std::chrono::year_month_day{
             std::chrono::year{ static_cast<int>(number(0, 4)) },
             std::chrono::month{ number(5, 2) },
             std::chrono::day{ number(8, 2) }
-        }.ok();
+        };
+        if (!date.ok())
+            return std::nullopt;
+        return date;
     }
 
     enum class DateScope { container, selected, excluded };
+
+    struct DateRange {
+        std::string first_;
+        std::string last_;
+
+        bool empty() const { return first_.empty(); }
+    };
+
+    DateRange date_range(const std::string_view date, const int days) {
+        const auto parsed = parse_date_folder(date);
+        if (!parsed)
+            throw std::invalid_argument("Image scan date must be YYYY-MM-DD");
+        const auto first = std::chrono::sys_days{ *parsed } -
+                           std::chrono::days{ days - 1 };
+        return { std::format("{:%F}", first), std::string{ date } };
+    }
 
     std::string local_date_folder() {
         const auto now = std::time(nullptr);
@@ -127,7 +148,7 @@ namespace {
     DateScope date_scope(
         const sung::Path& directory,
         const sung::Path& root,
-        const std::string_view date
+        const DateRange& date
     ) {
 #if defined(SUNG_OS_WINDOWS)
         const auto relative =
@@ -143,8 +164,10 @@ namespace {
         const auto parts = root.filename() / relative;
         for (const auto& part : parts) {
             const auto name = sung::tostr(part);
-            if (is_date_folder(name))
-                return name == date ? DateScope::selected : DateScope::excluded;
+            if (parse_date_folder(name))
+                return name >= date.first_ && name <= date.last_
+                           ? DateScope::selected
+                           : DateScope::excluded;
         }
         return DateScope::container;
     }
@@ -1627,7 +1650,7 @@ public:
 
     ImageIndexRefreshStats refresh(
         const std::shared_ptr<const ServerConfigs>& configs,
-        const std::string_view date = {}
+        const DateRange& date = {}
     ) {
         std::lock_guard refresh_lock{ refresh_mutex_ };
         snapshot_configs_ = configs;
@@ -2137,7 +2160,9 @@ public:
         std::println(
             "ImageIndex ({}): {} images, {} folders ({} reused, {} indexed, "
             "{} removed) in {:.3f} seconds",
-            date.empty() ? std::string_view{ "full" } : date,
+            date.empty()
+                ? "full"
+                : std::format("{} through {}", date.first_, date.last_),
             stats.images_available_,
             stats.folders_available_,
             stats.metadata_reused_,
@@ -2816,9 +2841,14 @@ namespace sung {
         std::shared_ptr<const ServerConfigs> configs,
         const std::string_view date
     ) {
-        if (!is_date_folder(date))
-            throw std::invalid_argument("Image scan date must be YYYY-MM-DD");
-        return impl_->refresh(configs, date);
+        return impl_->refresh(configs, date_range(date, 1));
+    }
+
+    ImageIndexRefreshStats ImageIndex::refresh_recent(
+        std::shared_ptr<const ServerConfigs> configs,
+        const std::string_view date
+    ) {
+        return impl_->refresh(configs, date_range(date, 5));
     }
 
     void ImageIndex::start_auto_refresh(
@@ -2859,7 +2889,7 @@ namespace sung {
                             configs->image_index_date_refresh_interval_seconds_)
                     ) {
                         date_attempted = true;
-                        this->refresh_date(configs, local_date_folder());
+                        this->refresh_recent(configs, local_date_folder());
                     }
                 } catch (const std::exception& error) {
                     failed = true;
@@ -2877,7 +2907,7 @@ namespace sung {
                 }
                 if (full_attempted) {
                     last_full = Clock::now();
-                    // A full scan also reconciles today's subtree.
+                    // A full scan also reconciles the recent date subtrees.
                     last_date = last_full;
                 } else if (date_attempted) {
                     last_date = Clock::now();

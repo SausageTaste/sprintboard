@@ -269,7 +269,7 @@ Cached results can briefly include deleted images or omit new ones.
 
 The first full reconciliation starts immediately. Subsequent full scans use
 `image_index_full_refresh_interval_seconds` (default: 30). A second schedule scans
-today's `YYYY-MM-DD` folders every `image_index_date_refresh_interval_seconds`
+the most recent five days of `YYYY-MM-DD` folders every `image_index_date_refresh_interval_seconds`
 (default: 5; set to 0 to disable). Both intervals are measured after scan completion;
 positive values must be at least one second. Settings reload without a restart.
 For large dated collections, restart with the rebuilt server and add these settings
@@ -280,13 +280,14 @@ to your local `server_configs.json` to run full scans every five minutes:
 "image_index_date_refresh_interval_seconds": 5
 ```
 
-Date scans use the server's local calendar date, recalculated on each pass. They
-walk undated container folders to find date folders, skip other dated subtrees,
-and recursively scan today's subtree (including when the binding itself is named
-for today). The first `YYYY-MM-DD` folder from the binding root determines the
+Date scans cover today and the previous four calendar days using the server's
+local date, recalculated on each pass. They walk undated container folders to find
+date folders, skip older and future dated subtrees, and recursively scan the
+selected subtrees (including when the binding itself is named for a selected
+date). The first `YYYY-MM-DD` folder from the binding root determines the
 subtree's date. New date folders are discovered without waiting for a full scan.
-Cached images and folders outside today's subtree remain unchanged until a full
-scan; additions and deletions inside today's subtree are reconciled immediately.
+Cached images and folders outside the five-day window remain unchanged until a
+full scan; additions and deletions inside the window are reconciled immediately.
 All scans run serially on the dedicated index worker, so a long full scan can delay
 a date scan. Manual refresh still scans the complete library.
 
