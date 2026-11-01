@@ -1,5 +1,6 @@
 #include <chrono>
 #include <ctime>
+#include <future>
 #include <print>
 #include <source_location>
 #include <stdexcept>
@@ -257,6 +258,76 @@ int main() {
                     count(leap, "test/2024-02-27") == 1 &&
                     count(leap, "test/2024-02-29") == 1,
                 "five-day window includes leap day and handles month boundaries"
+            );
+        }
+        for (const bool warm : { false, true }) {
+            const auto startup_root = temp / (warm ? "warm" : "cold");
+            auto startup = std::make_shared<sung::ServerConfigs>(*configs);
+            startup->dir_bindings_["test"].local_dir_ = startup_root;
+            startup->cache_dir_ = sung::tostr(startup_root / ".sprintboard");
+            startup->image_index_full_refresh_interval_seconds_ = 3600;
+            // Disabling recurring fast scans still allows the startup pass.
+            startup->image_index_date_refresh_interval_seconds_ = 0;
+            for (int i = 0; i < 6; ++i)
+                add(startup_root / today_name(i) / "one.avif");
+            add(startup_root / "loose.avif");
+            if (warm) {
+                sung::ImageIndex seed;
+                seed.refresh(startup);
+                fs::remove(startup_root / today_name(5) / "one.avif");
+                fs::remove(startup_root / today_name() / "one.avif");
+                add(startup_root / today_name() / "new.avif");
+            }
+
+            sung::ImageIndex index;
+            index.initialize(startup);
+            // Stop at the next provider call to inspect the published fast
+            // scan before the full scan can hide incorrect startup ordering.
+            std::promise<void> entered, release;
+            auto started_full = entered.get_future();
+            const auto released = release.get_future().share();
+            index.start_auto_refresh(
+                [&, calls = std::make_shared<std::atomic_int>(0)] {
+                    if (++*calls == 2) {
+                        entered.set_value();
+                        released.wait_for(std::chrono::seconds(5));
+                    }
+                    return startup;
+                }
+            );
+            const bool reached_full = started_full.wait_for(
+                                          std::chrono::seconds(3)
+                                      ) == std::future_status::ready;
+            const bool recent_ready = index.initial_refresh_state() ==
+                                          "recent_ready" &&
+                                      !index.ready_for_background_work();
+            const auto fast_count = count(index);
+            const auto oldest = "test/" + today_name(4);
+            const auto archive = "test/" + today_name(5);
+            const auto oldest_count = count(index, oldest.c_str());
+            const auto archive_count = count(index, archive.c_str());
+            const auto today_listing =
+                index.query(sung::fromstr("test/" + today_name()), "", true)
+                    .make_json(0, 100);
+            release.set_value();
+            require(
+                reached_full && recent_ready && fast_count == (warm ? 7 : 5) &&
+                    oldest_count == 1 && archive_count == (warm ? 1 : 0),
+                "startup publishes five recent days before full reconciliation "
+                "and keeps expensive workers gated"
+            );
+            require(
+                today_listing["imageFiles"][0]["src"] ==
+                    "/img/test/" + today_name() +
+                        (warm ? "/new.avif" : "/one.avif"),
+                "startup fast scan discovers today's changes on cold and "
+                "warm starts"
+            );
+            require(
+                eventually([&] { return index.ready_for_background_work(); }) &&
+                    count(index) == (warm ? 6 : 7),
+                "full startup scan follows immediately despite a long interval "
+                "and reconciles archived and undated images"
             );
         }
         {

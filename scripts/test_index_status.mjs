@@ -28,6 +28,24 @@ test('startup polling retries failures, reports completion, and stops', async (t
     assert.equal(fetch.mock.callCount(), 4);
 });
 
+test('recent results are reported while polling continues until full completion', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const responses = ['running', 'recent_ready', 'recent_ready', 'ready'];
+    const states = [];
+    const fetch = t.mock.method(globalThis, 'fetch', async () =>
+        new Response(JSON.stringify({ state: responses.shift() })));
+    const stop = watchInitialIndexStatus(state => states.push(state));
+    t.after(stop);
+    await setImmediate();
+    for (let i = 0; i < 3; ++i) {
+        t.mock.timers.tick(2000);
+        await setImmediate();
+    }
+    assert.deepEqual(states, ['running', 'recent_ready', 'recent_ready', 'ready']);
+    t.mock.timers.tick(60000);
+    assert.equal(fetch.mock.callCount(), 4);
+});
+
 test('network errors retry and cleanup cancels the next poll', async (t) => {
     t.mock.timers.enable({ apis: ['setTimeout'] });
     const states = [];

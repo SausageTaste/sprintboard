@@ -550,8 +550,14 @@ type GalleryProps = {
 
 export default function Gallery({ settings, onChangeSettings }: GalleryProps) {
     const [initialIndexState, setInitialIndexState] = React.useState<InitialIndexState>("pending");
+    const [initialIndexProgress, setInitialIndexProgress] = React.useState(0);
     const initialIndexReady = initialIndexState === "ready";
-    React.useEffect(() => watchInitialIndexStatus(setInitialIndexState), []);
+    React.useEffect(() => watchInitialIndexStatus(state => {
+        setInitialIndexState(state);
+        // Reload each published startup phase once, including after retries.
+        setInitialIndexProgress(previous => Math.max(previous,
+            state === "ready" ? 2 : state === "recent_ready" ? 1 : 0));
+    }), []);
 
     // Query result of image list
     const [imgItems, setImgItems] = React.useState<ImageFileInfo[]>([]);
@@ -877,7 +883,7 @@ export default function Gallery({ settings, onChangeSettings }: GalleryProps) {
 
         return () => controller.abort();
     }, [
-        initialIndexReady,
+        initialIndexProgress,
         curDir,
         settings.filesRecursive,
         settings.imageSortOrder,
@@ -1366,9 +1372,11 @@ export default function Gallery({ settings, onChangeSettings }: GalleryProps) {
                 <p role="status" aria-live="polite">
                     {initialIndexState === "failed"
                         ? "Library update interrupted. Retrying…"
-                        : imgItems.length > 0 || folders.length > 0
-                            ? "Updating library…"
-                            : "Scanning library…"}
+                        : initialIndexState === "recent_ready"
+                            ? "Recent folders scanned. Updating the rest of the library…"
+                            : imgItems.length > 0 || folders.length > 0
+                                ? "Updating library…"
+                                : "Scanning library…"}
                 </p>
             )}
 

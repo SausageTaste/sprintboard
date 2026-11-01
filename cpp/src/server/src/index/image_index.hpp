@@ -75,9 +75,10 @@ namespace sung {
         std::string_view initial_refresh_state() const;
         bool ready_for_background_work() const;
 
-        // Run a full refresh immediately, then full and local-date scans at
-        // their configured intervals after completion. The dedicated worker
-        // serializes scans and stays separate from the shared task manager.
+        // Publish the recent five days first, then reconcile the full library.
+        // Repeat full and recent scans at their configured completion
+        // intervals. The dedicated worker serializes scans separately from
+        // other tasks.
         void start_auto_refresh(
             std::function<std::shared_ptr<const ServerConfigs>()>
                 configs_provider
@@ -119,7 +120,13 @@ namespace sung {
         );
 
     private:
-        enum class InitialRefreshState { pending, running, ready, failed };
+        enum class InitialRefreshState {
+            pending,
+            running,
+            recent_ready,
+            ready,
+            failed
+        };
         void set_initial_refresh_state(InitialRefreshState state);
         std::atomic<InitialRefreshState> initial_refresh_state_{
             InitialRefreshState::pending

@@ -263,14 +263,19 @@ close its WAL. Writes use `synchronous=FULL`.
 Startup restores the last gallery view from `<cache_dir>/gallery-snapshot.json`
 without walking the library or checking individual images. The server starts even
 when that snapshot is missing or unusable, showing an empty gallery until the
-first background reconciliation completes. The gallery shows its startup status
-and automatically reloads the current folder, filters, and sort order when ready.
+first background scan completes. Startup scans today's date folders and the
+previous four calendar days first, publishes those results, then immediately
+reconciles the full library. The gallery shows its startup status and automatically
+reloads the current folder, filters, and sort order after each startup phase.
+Tagging and AVIF generation wait until the full reconciliation completes.
 Cached results can briefly include deleted images or omit new ones.
 
-The first full reconciliation starts immediately. Subsequent full scans use
+After the startup scans, subsequent full scans use
 `image_index_full_refresh_interval_seconds` (default: 30). A second schedule scans
-the most recent five days of `YYYY-MM-DD` folders every `image_index_date_refresh_interval_seconds`
-(default: 5; set to 0 to disable). Both intervals are measured after scan completion;
+the most recent five days of `YYYY-MM-DD` folders every
+`image_index_date_refresh_interval_seconds`
+(default: 5; set to 0 to disable recurring fast scans; startup still scans recent
+folders first). Both intervals are measured after scan completion;
 positive values must be at least one second. Settings reload without a restart.
 For large dated collections, restart with the rebuilt server and add these settings
 to your local `server_configs.json` to run full scans every five minutes:
@@ -300,9 +305,11 @@ namespace-to-directory mappings cause an empty start and a background rebuild.
 Keep `cache_dir` on a fast local disk to avoid slow snapshot reads.
 
 `GET /api/images/index/status` returns a JSON `state` of `pending`, `running`,
-`ready`, or `failed` for initial reconciliation. Once ready, it stays ready through later
-periodic scans. The gallery polls every two seconds until ready (five seconds
-after failures); the existing manual refresh API remains available.
+`recent_ready`, `ready`, or `failed` for initial reconciliation. Once ready, it
+stays ready through later periodic scans. `recent_ready` means the five-day startup
+results are available while the full reconciliation is still pending or running.
+The gallery polls every two seconds until ready (five seconds after failures);
+the existing manual refresh API remains available.
 
 Image metadata stores file size, modification time as Unix nanoseconds, and
 SHA-256. Unchanged size and time reuse metadata without reading image contents.
@@ -450,7 +457,8 @@ not rebuild `dist`; the server serves those existing files from its working
 directory. An older frontend can leave the gallery empty after the new backend
 starts a background scan because it does not poll the scan status or reload the
 image list when ready. Run `npm run build`, then reload the browser to load the
-updated frontend. On a cold start, images appear after the initial scan finishes.
+updated frontend. On a cold start, recent images appear after the five-day scan;
+older and undated images appear when the following full scan finishes.
 
 ## C++ Backend
 

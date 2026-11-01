@@ -1661,7 +1661,13 @@ public:
 
         const auto old_snapshot = load_snapshot();
         const auto initial_refresh = old_snapshot->generation_ == 0;
-        if (initial_refresh) {
+        if (!date.empty()) {
+            std::println(
+                "ImageIndex: Scanning date folders from {} through {}...",
+                date.first_,
+                date.last_
+            );
+        } else {
             std::println(
                 "ImageIndex: Reconciling the library in the background..."
             );
@@ -2800,8 +2806,13 @@ namespace sung {
         const InitialRefreshState state
     ) {
         auto previous = initial_refresh_state_.load();
-        while (previous != InitialRefreshState::ready &&
-               !initial_refresh_state_.compare_exchange_weak(previous, state)) {
+        while (previous != InitialRefreshState::ready) {
+            // Keep the published fast-scan phase visible during the full scan.
+            if (previous == InitialRefreshState::recent_ready &&
+                state == InitialRefreshState::running)
+                return;
+            if (initial_refresh_state_.compare_exchange_weak(previous, state))
+                return;
         }
     }
 
@@ -2815,6 +2826,8 @@ namespace sung {
                 return "pending";
             case InitialRefreshState::running:
                 return "running";
+            case InitialRefreshState::recent_ready:
+                return "recent_ready";
             case InitialRefreshState::ready:
                 return "ready";
             case InitialRefreshState::failed:
@@ -2860,6 +2873,7 @@ namespace sung {
             using Clock = std::chrono::steady_clock;
             std::optional<Clock::time_point> last_full;
             std::optional<Clock::time_point> last_date;
+            bool startup_recent_attempted = false;
             while (!auto_refresh_stop_) {
                 if (!last_full)
                     set_initial_refresh_state(InitialRefreshState::running);
@@ -2875,10 +2889,18 @@ namespace sung {
                                std::chrono::duration<double>(now - *last)
                                        .count() >= seconds;
                     };
-                    if (due(
-                            last_full,
-                            configs->image_index_full_refresh_interval_seconds_
-                        )) {
+                    if (!startup_recent_attempted) {
+                        // A failed fast scan must not prevent full recovery.
+                        startup_recent_attempted = true;
+                        date_attempted = true;
+                        this->refresh_recent(configs, local_date_folder());
+                        set_initial_refresh_state(
+                            InitialRefreshState::recent_ready
+                        );
+                    } else if (
+                        due(last_full,
+                            configs->image_index_full_refresh_interval_seconds_)
+                    ) {
                         full_attempted = true;
                         this->refresh(configs);
                     } else if (
