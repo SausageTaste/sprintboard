@@ -74,6 +74,12 @@ pending, and a stale proxy never hides a changed source image.
 
 ## Storage and availability
 
+Content scans queue new or changed images for tagging. Completed images stay
+idle until a scan detects a change. The periodic `tagger_poll_interval_seconds`
+check only asks the service for its analyzer fingerprint; a model or threshold
+change requeues known images once. Queued batches run independently of that
+polling interval, and failed images retry with increasing delays.
+
 Tags live in each image collection's SQLite database. Include its `.sprintboard`
 folder in backups. See [storage and backups](storage-and-indexing.md#tag-database)
 for details and migration behavior.

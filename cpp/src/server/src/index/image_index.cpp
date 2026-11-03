@@ -29,6 +29,7 @@
 #include "image_query.hpp"
 #include "snapshot_store.hpp"
 #include "tag_analysis.hpp"
+#include "tag_queue.hpp"
 #include "tagger_client.hpp"
 
 #if defined(SUNG_OS_WINDOWS)
@@ -2406,16 +2407,27 @@ public:
         stats.persistent_ = persistent();
 
         next->tag_analyses_ = tag_analyses_;
+        std::unordered_set<std::string> tag_inputs;
         for (auto& file : next->files_) {
             // Unavailable roots may still contain browsing-only restored
             // entries.
             if (file.logical_path_.empty())
                 continue;
+            if (file.tag_input_size_ > 0) {
+                tag_inputs.insert(file.logical_path_);
+                tag_queue_.observe(
+                    { file.logical_path_,
+                      sung::fromstr(file.tag_input_path_),
+                      file.tag_input_size_,
+                      file.tag_input_modified_time_ }
+                );
+            }
             const auto found = tag_analyses_.find(file.logical_path_);
             file.tags_ = found == tag_analyses_.end()
                              ? std::vector<std::string>{}
                              : found->second.searchable_tags_;
         }
+        tag_queue_.retain(tag_inputs);
         std::sort(next->files_.begin(), next->files_.end(), file_before);
         std::sort(
             next->folders_.begin(),
@@ -2451,32 +2463,53 @@ public:
     }
 
     void refresh_tags(const std::shared_ptr<const ServerConfigs>& configs) {
-        if (!configs->tagger_enabled_)
-            return;
-
-        const TaggerClient client{ configs->tagger_host_,
-                                   configs->tagger_port_ };
-        const auto info = client.get_info();
-        if (!info) {
-            std::println(
-                "ImageTagger: Service unavailable at {}:{}: {}",
-                configs->tagger_host_,
-                configs->tagger_port_,
-                info.error()
-            );
+        using Clock = detail::TagQueue::Clock;
+        if (!configs->tagger_enabled_) {
+            tagger_info_.reset();
+            tagger_info_checked_at_.reset();
             return;
         }
 
-        {
+        const auto interval = std::chrono::duration_cast<Clock::duration>(
+            std::chrono::duration<double>{
+                std::max(configs->tagger_poll_interval_seconds_, 1.0) }
+        );
+        const auto endpoint = std::make_pair(
+            configs->tagger_host_, configs->tagger_port_
+        );
+        const TaggerClient client{ endpoint.first, endpoint.second };
+        if (!tagger_info_checked_at_ || endpoint != tagger_endpoint_ ||
+            Clock::now() - *tagger_info_checked_at_ >= interval) {
+            const auto fetched = client.get_info();
+            tagger_info_checked_at_ = Clock::now();
+            tagger_endpoint_ = endpoint;
+            if (!fetched) {
+                tagger_info_.reset();
+                std::println(
+                    "ImageTagger: Service unavailable at {}:{}: {}",
+                    endpoint.first,
+                    endpoint.second,
+                    fetched.error()
+                );
+                return;
+            }
+            tagger_info_ = *fetched;
             std::lock_guard refresh_lock{ refresh_mutex_ };
-            current_analyzer_fingerprint_ = info->fingerprint_;
+            if (current_analyzer_fingerprint_ != fetched->fingerprint_) {
+                current_analyzer_fingerprint_ = fetched->fingerprint_;
+                tag_queue_.invalidate();
+            }
         }
-
-        struct Candidate {
-            std::string logical_path_;
-            Path input_path_;
-            int64_t input_size_ = 0;
-            int64_t input_modified_time_ = 0;
+        if (!tagger_info_)
+            return;
+        const auto& info = tagger_info_;
+        using Candidate = detail::TagInput;
+        const auto batch_size = static_cast<size_t>(
+            std::max(configs->tagger_batch_size_, 1)
+        );
+        const auto retry_delay = [](int failures) {
+            const auto shift = std::min(std::max(failures - 1, 0), 7);
+            return std::min<int64_t>(30LL << shift, 3600);
         };
 
         const auto now = std::chrono::duration_cast<std::chrono::seconds>(
@@ -2486,23 +2519,26 @@ public:
         std::vector<Candidate> candidates;
         {
             std::lock_guard refresh_lock{ refresh_mutex_ };
-            const auto current = load_snapshot();
-            std::unordered_set<std::string> queued;
-            for (const auto& file : current->files_) {
-                if (!tag_ready(file.logical_path_))
-                    continue;
-                if (file.tag_input_size_ <= 0 ||
-                    !queued.insert(file.logical_path_).second) {
+            // Bound cache validation as well as inference so a startup/model
+            // change backlog releases the index mutex between small batches.
+            for (size_t checked = 0;
+                 checked < 128 && candidates.size() < batch_size;
+                 ++checked) {
+                const auto queued = tag_queue_.take();
+                if (!queued)
+                    break;
+                const auto& file = *queued;
+                if (!tag_ready(file.logical_path_)) {
+                    tag_queue_.retry(file, interval);
                     continue;
                 }
 
                 const auto existing = tag_analyses_.find(file.logical_path_);
                 if (existing != tag_analyses_.end() &&
                     !existing->second.analysis_.is_null() &&
-                    existing->second.input_path_ != file.tag_input_path_ &&
-                    sung::is_sprintboard_proxy_path(
-                        sung::fromstr(file.tag_input_path_)
-                    )) {
+                    existing->second.input_path_ !=
+                        sung::tostr(file.input_path_) &&
+                    sung::is_sprintboard_proxy_path(file.input_path_)) {
                     std::error_code old_input_error;
                     if (!sung::fs::is_regular_file(
                             sung::fromstr(existing->second.input_path_),
@@ -2512,7 +2548,7 @@ public:
                     }
                 }
                 const auto input_kind = sung::is_sprintboard_proxy_path(
-                                            sung::fromstr(file.tag_input_path_)
+                                            file.input_path_
                                         )
                                             ? "proxy"
                                             : "source";
@@ -2520,12 +2556,13 @@ public:
                     existing != tag_analyses_.end() &&
                     !existing->second.analysis_.is_null() &&
                     existing->second.input_kind_ == input_kind &&
-                    existing->second.input_path_ == file.tag_input_path_ &&
+                    existing->second.input_path_ ==
+                        sung::tostr(file.input_path_) &&
                     existing->second.analyzer_fingerprint_ ==
                         info->fingerprint_;
                 if (current_analysis) {
                     const auto validated = ::validate_fingerprint(
-                        sung::fromstr(file.tag_input_path_),
+                        file.input_path_,
                         existing->second.input_size_,
                         existing->second.input_modified_time_,
                         existing->second.input_sha256_
@@ -2548,38 +2585,27 @@ public:
                     const auto& attempt = existing->second;
                     const bool same_failed_attempt =
                         !attempt.last_error_.empty() &&
-                        attempt.attempt_input_path_ == file.tag_input_path_ &&
-                        attempt.attempt_input_size_ == file.tag_input_size_ &&
+                        attempt.attempt_input_path_ ==
+                            sung::tostr(file.input_path_) &&
+                        attempt.attempt_input_size_ == file.input_size_ &&
                         attempt.attempt_input_modified_time_ ==
-                            file.tag_input_modified_time_ &&
+                            file.input_modified_time_ &&
                         attempt.attempt_analyzer_fingerprint_ ==
                             info->fingerprint_;
-                    const auto shift = std::min(
-                        std::max(attempt.failure_count_ - 1, 0), 7
-                    );
-                    const int64_t retry_delay = std::min<int64_t>(
-                        30LL << shift, 3600
-                    );
-                    if (same_failed_attempt &&
-                        now - attempt.last_attempt_at_ < retry_delay) {
+                    const auto remaining = retry_delay(attempt.failure_count_) -
+                                           (now - attempt.last_attempt_at_);
+                    if (same_failed_attempt && remaining > 0) {
+                        tag_queue_.retry(
+                            file, std::chrono::seconds{ remaining }
+                        );
                         continue;
                     }
                 }
 
-                candidates.push_back(
-                    {
-                        file.logical_path_,
-                        sung::fromstr(file.tag_input_path_),
-                        file.tag_input_size_,
-                        file.tag_input_modified_time_,
-                    }
-                );
+                candidates.push_back(file);
             }
         }
 
-        const auto batch_size = static_cast<size_t>(
-            std::max(configs->tagger_batch_size_, 1)
-        );
         for (size_t offset = 0; offset < candidates.size();
              offset += batch_size) {
             const auto end = std::min(offset + batch_size, candidates.size());
@@ -2591,6 +2617,8 @@ public:
                     if (tag_ready(candidates[i].logical_path_)) {
                         batch.push_back(candidates[i]);
                         paths.push_back(candidates[i].input_path_);
+                    } else {
+                        tag_queue_.retry(candidates[i], interval);
                     }
             }
             const auto count = batch.size();
@@ -2602,6 +2630,12 @@ public:
                 std::println(
                     "ImageTagger: Batch request failed: {}", results.error()
                 );
+                std::lock_guard refresh_lock{ refresh_mutex_ };
+                for (const auto& candidate : batch)
+                    tag_queue_.retry(candidate, interval);
+                // Pause the backlog until the next service-info check too.
+                tagger_info_.reset();
+                tagger_info_checked_at_ = Clock::now();
                 return;
             }
 
@@ -2715,6 +2749,13 @@ public:
                     analysis.last_error_.clear();
                 }
 
+                if (!result.error_.empty()) {
+                    tag_queue_.retry(
+                        candidate,
+                        std::chrono::seconds{
+                            retry_delay(analysis.failure_count_) }
+                    );
+                }
                 if (!persist_tag_analysis(analysis)) {
                     std::println(
                         "ImageTagger: Failed to persist analysis state for {}",
@@ -3079,6 +3120,7 @@ public:
                                             )
                                           : file.logical_path_;
             proxy_queue_.forget(fromstr(logical_path));
+            tag_queue_.forget(logical_path);
             tag_analyses_.erase(logical_path);
             if (!erase_tag_analysis(logical_path)) {
                 std::println(
@@ -3122,6 +3164,11 @@ private:
     std::unordered_map<std::string, CachedTagAnalysis> tag_analyses_;
     std::unordered_map<std::string, bool> analysis_local_;
     std::string current_analyzer_fingerprint_;
+    detail::TagQueue tag_queue_;
+    // Accessed only by the tagging worker; queue/analyses use refresh_mutex_.
+    std::optional<TaggerInfo> tagger_info_;
+    std::optional<detail::TagQueue::Clock::time_point> tagger_info_checked_at_;
+    std::pair<std::string, int> tagger_endpoint_;
     detail::ProxyQueue proxy_queue_;
     nlohmann::json proxy_config_signature_;
     std::vector<std::pair<Path, ServerConfigs::AvifOptions>> proxy_roots_;
@@ -3362,14 +3409,8 @@ namespace sung {
                     }
                     const auto configs = configs_provider();
                     impl_->refresh_tags(configs);
-                    const auto interval = std::max(
-                        configs->tagger_poll_interval_seconds_, 1.0
-                    );
-                    for (double waited = 0;
-                         waited < interval && !auto_tagging_stop_;
-                         waited += 0.1) {
-                        sung::sleep_naive(0.1);
-                    }
+                    // Work drains independently of the model-info cadence.
+                    sung::sleep_naive(0.1);
                 }
             }
         );

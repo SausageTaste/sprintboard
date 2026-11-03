@@ -108,7 +108,14 @@ namespace {
     struct Tagger {
         httplib::Server server;
         std::thread thread;
-        std::atomic<int> infos{ 0 }, analyses{ 0 };
+        std::atomic<int> infos{ 0 }, analyses{ 0 }, requests{ 0 },
+            revision{ 0 };
+        std::atomic<bool> fail_request{ false }, fail_image{ false };
+        std::string fingerprint() const {
+            const auto value = revision.load();
+            return value == 0 ? "sqlite-analyzer"
+                              : "sqlite-analyzer-" + std::to_string(value);
+        }
         std::function<void(const std::string&)> before_result;
         int port = -1;
         Tagger() {
@@ -116,7 +123,7 @@ namespace {
                 ++infos;
                 res.set_content(
                     nlohmann::json{ { "protocolVersion", 1 },
-                                    { "fingerprint", "sqlite-analyzer" },
+                                    { "fingerprint", fingerprint() },
                                     { "modelId", "sqlite-model" },
                                     { "generalThreshold", .35 },
                                     { "characterThreshold", .75 } }
@@ -125,6 +132,11 @@ namespace {
                 );
             });
             server.Post("/v1/analyze", [&](const auto& req, auto& res) {
+                ++requests;
+                if (fail_request.exchange(false)) {
+                    res.status = 503;
+                    return;
+                }
                 auto results = nlohmann::json::array();
                 const auto request = nlohmann::json::parse(req.body);
                 for (const auto& path : request.at("paths")) {
@@ -132,14 +144,17 @@ namespace {
                     if (before_result)
                         before_result(value);
                     auto record = tag_test::analysis(sung::fromstr(value));
-                    auto result = record.analysis_;
+                    auto result = fail_image.load()
+                                      ? nlohmann::json{ { "error",
+                                                          "test failure" } }
+                                      : record.analysis_;
                     result["path"] = value;
                     results.push_back(result);
                     ++analyses;
                 }
                 res.set_content(
                     nlohmann::json{ { "protocolVersion", 1 },
-                                    { "fingerprint", "sqlite-analyzer" },
+                                    { "fingerprint", fingerprint() },
                                     { "results", results } }
                         .dump(),
                     "application/json"
@@ -155,6 +170,139 @@ namespace {
                 thread.join();
         }
     };
+
+    void queued_tagging(const Path& temp, const Path& fixture) {
+        const auto root = temp / "queued";
+        const auto first = root / "first.png";
+        create_image(fixture, first);
+        create_image(fixture, root / "second.png");
+        Tagger tagger;
+        auto cfg = configs(root, temp / "queued-fallback");
+        cfg->tagger_enabled_ = true;
+        cfg->tagger_host_ = "127.0.0.1";
+        cfg->tagger_port_ = tagger.port;
+        cfg->tagger_batch_size_ = 1;
+        cfg->tagger_poll_interval_seconds_ = 60;
+        sung::ServerConfigsHolder live;
+        live.store(cfg);
+        sung::ImageIndex index;
+        tagger.before_result = [&](const std::string& path) {
+            if (path == sung::tostr(root / "deleted.png"))
+                index.remove_api_path("/img/a/deleted.png");
+        };
+        index.refresh(cfg);
+        index.start_auto_tagging([&] { return live.get(); });
+        wait_for(
+            [&] { return count(index, "a", "sqlite_tag") == 2; },
+            "queued batches drain without waiting for model polls"
+        );
+        require(tagger.analyses == 2, "initial work runs once per image");
+
+        cfg = std::make_shared<sung::ServerConfigs>(*cfg);
+        cfg->tagger_poll_interval_seconds_ = 1;
+        live.store(cfg);
+        wait_for([&] { return tagger.infos >= 2; }, "poll interval reload");
+        const auto polls = tagger.infos.load();
+        {
+            std::ofstream out(first, std::ios::app | std::ios::binary);
+            out << "changed";
+        }
+        wait_for(
+            [&] { return tagger.infos >= polls + 2; }, "idle model polling"
+        );
+        require(
+            tagger.analyses == 2,
+            "idle polls do not inspect changed files or run inference"
+        );
+
+        index.refresh_folder(cfg, sung::fromstr("a"));
+        wait_for(
+            [&] {
+                const auto current = index.current_tag_analysis(first);
+                return current && current->input_size_ == fs::file_size(first);
+            },
+            "content scan queues the changed input"
+        );
+        require(tagger.analyses == 3, "only the changed image is analyzed");
+        index.refresh_folder(cfg, sung::fromstr("a"));
+        const auto unchanged_polls = tagger.infos.load();
+        wait_for(
+            [&] { return tagger.infos >= unchanged_polls + 2; },
+            "unchanged scan remains idle"
+        );
+        require(tagger.analyses == 3, "unchanged scans do not rerun inference");
+
+        tagger.revision = 1;
+        wait_for(
+            [&] {
+                const auto current = index.current_tag_analysis(first);
+                return current &&
+                       current->analyzer_fingerprint_ == tagger.fingerprint() &&
+                       tagger.analyses == 5;
+            },
+            "model changes requeue all known images"
+        );
+        const auto model_polls = tagger.infos.load();
+        wait_for(
+            [&] { return tagger.infos >= model_polls + 2; },
+            "unchanged model remains idle"
+        );
+        require(tagger.analyses == 5, "model invalidation runs once");
+
+        const auto third = root / "third.png";
+        create_image(fixture, third);
+        tagger.fail_request = true;
+        const auto requests = tagger.requests.load();
+        index.refresh_folder(cfg, sung::fromstr("a"));
+        wait_for(
+            [&] { return index.tag_analysis(third).has_value(); },
+            "transport failure retries queued work"
+        );
+        require(
+            tagger.requests == requests + 2 && tagger.analyses == 6,
+            "one failed request followed by one successful retry"
+        );
+
+        const auto failed = root / "failed.png";
+        create_image(fixture, failed);
+        tagger.fail_image = true;
+        index.refresh_folder(cfg, sung::fromstr("a"));
+        wait_for([&] { return tagger.analyses == 7; }, "per-image failure");
+        const auto failure_polls = tagger.infos.load();
+        wait_for(
+            [&] { return tagger.infos >= failure_polls + 2; },
+            "failed input waits through model polls"
+        );
+        require(
+            tagger.analyses == 7 && !index.tag_analysis(failed),
+            "per-image failures back off without publishing tags"
+        );
+        tagger.fail_image = false;
+        {
+            std::ofstream out(failed, std::ios::app | std::ios::binary);
+            out << "changed";
+        }
+        index.refresh_folder(cfg, sung::fromstr("a"));
+        wait_for(
+            [&] { return index.tag_analysis(failed).has_value(); },
+            "changed input bypasses obsolete failure backoff"
+        );
+        require(tagger.analyses == 8, "changed failed input runs once");
+
+        const auto deleted = root / "deleted.png";
+        create_image(fixture, deleted);
+        index.refresh_folder(cfg, sung::fromstr("a"));
+        wait_for([&] { return tagger.analyses == 9; }, "in-flight deletion");
+        const auto deletion_polls = tagger.infos.load();
+        wait_for(
+            [&] { return tagger.infos >= deletion_polls + 2; },
+            "deleted result discarded"
+        );
+        require(
+            !index.tag_analysis(deleted) && count(index, "a", "") == 4,
+            "late inference cannot resurrect a deleted gallery entry"
+        );
+    }
 
     void run(const Path& temp, const Path& fixture) {
         const auto root = temp / "durable";
@@ -639,6 +787,7 @@ int main() {
         );
     try {
         run(temp, fixture);
+        queued_tagging(temp, fixture);
         fs::remove_all(temp);
         return 0;
     } catch (const std::exception& e) {

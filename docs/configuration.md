@@ -60,7 +60,7 @@ These settings reload automatically.
 |`tagger_host` |Host running the tagging service. The default is `127.0.0.1`. |
 |`tagger_port` |Port used by the tagging service. The default is `8790`. |
 |`tagger_batch_size` |Maximum number of image paths submitted in one analysis request. This must not exceed the service's `--batch-size`. |
-|`tagger_poll_interval_seconds` |Minimum delay between checks for missing or stale analyses. |
+|`tagger_poll_interval_seconds` |Interval between service/model checks. New or changed images are queued by content scans without waiting for this interval. |
 |`cache_dir` |External fallback cache directory, used when an image root cannot host a writable database. Defaults to `.sprintboard/cache`; relative paths resolve against the server working directory. Must be a nonempty string. |
 |`dir_bindings` |Add folder entries here. Each key will appear as a folder in the root directory, and all contents in `local_dir` will be placed inside it. You can use both absolute and relative paths for `local_dir`. Each binding maps to exactly one local directory. |
 |`image_index_folder_discovery_interval_seconds` |Seconds between folder discovery passes (default: `300`). |
