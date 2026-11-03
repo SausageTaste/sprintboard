@@ -340,9 +340,8 @@ int main() {
             }
             json_data = *cursor_response;
         }
-        // Visits refresh represented folders and a bounded discovery batch.
-        // Polls use visit=0 so refreshing cached results cannot perpetually
-        // schedule more filesystem work.
+        // Visits refresh the selected folder (or subtree). Passive result
+        // reads use visit=0; the gallery sends separate periodic visits.
         if (!req.has_param("visit") || req.get_param_value("visit") != "0")
             image_index.visit_page(
                 sung::fromstr(param_dir), json_data, recursive

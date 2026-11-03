@@ -455,15 +455,15 @@ int main() {
                 "contents"
             );
 
-            // Simulate a recursive page containing only one descendant folder.
+            // Repeated shallow visits inspect only the opened folder.
             const auto page =
                 index.query(sung::fromstr("test/visited"), "", true)
                     .make_json(0, 100);
             for (int i = 0; i < 20; ++i)
-                index.visit_page(sung::fromstr("test"), page);
+                index.visit_page(sung::fromstr("test/visited"), page);
             require(
                 eventually([&] { return count(index, "test/visited") == 2; }),
-                "a recursive page queues its represented parent folder"
+                "duplicate visits queue the opened folder"
             );
             require(
                 count(index, "test/visited/child") == 0 &&
@@ -481,10 +481,10 @@ int main() {
             auto faster = std::make_shared<sung::ServerConfigs>(*scheduled);
             faster->image_index_visit_refresh_interval_seconds_ = 1;
             holder.store(faster);
-            index.visit_page(sung::fromstr("test/visited"), page);
             require(
                 eventually([&] { return count(index, "test/visited") == 3; }),
-                "visit interval changes reload without restart"
+                "deferred visits run after interval changes without another "
+                "request"
             );
             fs::remove(scheduled_root / "visited" / "old.avif");
             const auto shallow = index.refresh_folder(
@@ -513,20 +513,12 @@ int main() {
                 index.query(batch, "", true).make_json(0, 100);
             index.visit_page(batch, empty_page, true);
             require(
-                eventually([&] { return count(index, "test/batch") == 4; }),
-                "recursive visits discover a bounded batch of new folder "
-                "contents"
-            );
-            std::this_thread::sleep_for(std::chrono::milliseconds(1200));
-            require(
-                count(index, "test/batch") == 4 &&
-                    index.unscanned_folders(batch) == 2,
-                "periodic discovery does not drain unvisited folder contents"
-            );
-            index.visit_page(batch, empty_page, true);
-            require(
                 eventually([&] { return count(index, "test/batch") == 6; }),
-                "a later recursive visit continues discovering contents"
+                "recursive visits inspect the entire subtree in one request"
+            );
+            require(
+                index.unscanned_folders(batch) == 0,
+                "recursive visits clear all successfully scanned folders"
             );
             const auto generation = index.generation();
             fs::rename(scheduled_root, temp / "offline-scheduled");
@@ -546,6 +538,166 @@ int main() {
                 rejected = true;
             }
             require(rejected, "visit paths cannot escape a configured root");
+        }
+        {
+            const auto scoped_root = temp / "scoped";
+            const auto selected = scoped_root / "selected";
+            add(selected / "old" / "deleted.avif");
+            add(scoped_root / "selected-sibling" / "cached.avif");
+            fs::create_directories(selected / "empty");
+            auto scoped = std::make_shared<sung::ServerConfigs>(*configs);
+            scoped->dir_bindings_["test"].local_dir_ = scoped_root;
+            scoped->cache_dir_ = sung::tostr(temp / "scoped-cache");
+            sung::ImageIndex index;
+            index.refresh(scoped);
+            fs::remove_all(selected / "old");
+            fs::remove(scoped_root / "selected-sibling" / "cached.avif");
+            add(scoped_root / "selected-sibling" / "unseen.avif");
+            add(selected / "empty" / "first.avif");
+            add(selected / "new" / "deep" / "new.avif");
+
+            const auto scope = sung::fromstr("test/selected");
+            index.refresh_folder(scoped, scope);
+            require(
+                count(index, "test/selected") == 1 &&
+                    index.unscanned_folders(scope) == 1,
+                "shallow scans register new folders without inspecting them"
+            );
+            index.discover_folders(scoped);
+            require(
+                index.unscanned_folders(scope) == 2,
+                "discovery retains folders first found by a shallow scan"
+            );
+            const auto stats = index.refresh_folder(scoped, scope, true);
+            require(
+                stats.files_scanned_ == 2 && stats.metadata_removed_ == 1 &&
+                    count(index, "test/selected") == 2 &&
+                    index.unscanned_folders(scope) == 0,
+                "recursive scans discover new and formerly empty folders and "
+                "reconcile deep deletions"
+            );
+            const auto sibling =
+                index.query(sung::fromstr("test/selected-sibling"), "", true)
+                    .make_json(0, 100);
+            require(
+                sibling["imageFiles"][0]["src"] ==
+                    "/img/test/selected-sibling/cached.avif",
+                "recursive scans preserve siblings with a shared name prefix"
+            );
+            const auto folders =
+                index.query(scope, "", false).make_json(0, 100);
+            for (const auto& item : folders["folders"])
+                require(
+                    item["name"] != "old",
+                    "removed subfolders leave the snapshot"
+                );
+
+            add(scoped_root / "undated" / "child" / "unseen.avif");
+            index.refresh_recent(scoped, "2026-10-29");
+            require(
+                index.unscanned_folders(sung::fromstr("test/undated")) == 2,
+                "date scans register undated folders whose contents were "
+                "skipped"
+            );
+            index.discover_folders(scoped);
+            require(
+                index.unscanned_folders(sung::fromstr("test/undated")) == 2,
+                "discovery retains folders first found by a date scan"
+            );
+            fs::rename(scoped_root, temp / "scoped-offline");
+            index.refresh_folder(scoped, scope, true);
+            require(
+                count(index, "test/selected") == 2 &&
+                    index.unscanned_folders(sung::fromstr("test/undated")) == 2,
+                "failed recursive scans preserve cached images and pending "
+                "folders"
+            );
+            fs::rename(temp / "scoped-offline", scoped_root);
+            fs::remove_all(selected);
+            index.refresh_folder(scoped, scope, true);
+            require(
+                count(index, "test/selected") == 0,
+                "a removed subtree loses all cached descendants"
+            );
+        }
+        {
+            const auto queue_root = temp / "queue";
+            add(queue_root / "active" / "old.avif");
+            add(queue_root / "other" / "old.avif");
+            auto queued = std::make_shared<sung::ServerConfigs>(*configs);
+            queued->dir_bindings_["test"].local_dir_ = queue_root;
+            queued->cache_dir_ = sung::tostr(temp / "queue-cache");
+            queued->image_index_date_refresh_interval_seconds_ = 0;
+            queued->image_index_folder_discovery_interval_seconds_ = 3600;
+            queued->image_index_visit_refresh_interval_seconds_ = 2;
+            sung::ImageIndex index;
+            index.start_auto_refresh([&] { return queued; });
+            require(
+                eventually([&] { return index.ready_for_background_work(); }),
+                "queue test finishes startup"
+            );
+            const auto active = sung::fromstr("test/active");
+            const auto empty_page = nlohmann::json{
+                { "imageFiles", nlohmann::json::array() }
+            };
+            auto generation = index.generation();
+            index.visit_page(active, empty_page);
+            require(
+                eventually([&] { return index.generation() > generation; }),
+                "initial shallow visit finishes"
+            );
+            // Give completion bookkeeping time to finish after publication.
+            std::this_thread::sleep_for(std::chrono::milliseconds(150));
+            add(queue_root / "active" / "deep" / "first.avif");
+            add(queue_root / "other" / "new.avif");
+            index.visit_page(active, empty_page);
+            for (int i = 0; i < 20; ++i)
+                index.visit_page(active, empty_page, true);
+            index.visit_page(sung::fromstr("test/other"), empty_page);
+            require(
+                eventually([&] { return count(index, "test/other") == 2; }),
+                "a deferred visit does not block another eligible folder"
+            );
+            require(
+                count(index, "test/active") == 1,
+                "upgrading a pending visit still respects the minimum interval"
+            );
+            require(
+                eventually([&] { return count(index, "test/active") == 2; }),
+                "a deferred visit runs automatically with its upgraded scope"
+            );
+            generation = index.generation();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2300));
+            require(
+                index.generation() == generation,
+                "duplicate requests do not leave extra queued scans"
+            );
+
+            const auto other_root = temp / "queue-other-root";
+            add(other_root / "initial.avif");
+            // Update bindings only while the worker is stopped in a separate
+            // index below.
+            auto top = std::make_shared<sung::ServerConfigs>(*queued);
+            top->dir_bindings_["second"].local_dir_ = other_root;
+            top->cache_dir_ = sung::tostr(temp / "top-cache");
+            sung::ImageIndex top_index;
+            top_index.start_auto_refresh([&] { return top; });
+            require(
+                eventually([&] {
+                    return top_index.ready_for_background_work();
+                }),
+                "virtual root test finishes startup"
+            );
+            add(queue_root / "new-tree" / "deep" / "first.avif");
+            add(other_root / "new.avif");
+            top_index.visit_page({}, empty_page, true);
+            require(
+                eventually([&] {
+                    return count(top_index, "test/new-tree") == 1 &&
+                           count(top_index, "second") == 2;
+                }),
+                "recursive virtual-root visits inspect every configured root"
+            );
         }
         fs::remove_all(temp);
         return 0;

@@ -76,10 +76,12 @@ namespace sung {
         // Discover directory structure without inspecting image contents.
         void discover_folders(std::shared_ptr<const ServerConfigs> configs);
         ImageIndexRefreshStats refresh_folder(
-            std::shared_ptr<const ServerConfigs> configs, const Path& directory
+            std::shared_ptr<const ServerConfigs> configs,
+            const Path& directory,
+            bool recursive = false
         );
-        // Queue the opened folder and parents represented on this page.
-        // Recursive visits also explore up to four newly discovered folders.
+        // Queue the opened folder, including its entire subtree if recursive.
+        // Recursive visits to the virtual root queue all configured roots.
         void visit_page(
             const Path& directory,
             const nlohmann::json& page,

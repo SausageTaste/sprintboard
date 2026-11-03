@@ -1759,7 +1759,8 @@ public:
 
     ImageIndexRefreshStats refresh_folder(
         const std::shared_ptr<const ServerConfigs>& configs,
-        const Path& directory
+        const Path& directory,
+        bool recursive = false
     ) {
         const auto normalized = directory.lexically_normal();
         for (const auto& part : normalized)
@@ -1773,42 +1774,34 @@ public:
             const auto physical = concat_path_safely(root, relative);
             if (!physical)
                 throw std::invalid_argument("Visited directory outside root");
-            return refresh(configs, {}, canonical_path(*physical));
+            return refresh(configs, {}, canonical_path(*physical), recursive);
         }
         throw std::invalid_argument("Unknown visited directory");
     }
 
     void visit_page(
-        const Path& directory, const nlohmann::json& page, bool recursive
+        const Path& directory, const nlohmann::json&, bool recursive
     ) {
         std::lock_guard lock{ visits_mutex_ };
         const auto enqueue = [&](const Path& path) {
             const auto name = tostr(path.lexically_normal());
-            if (name.empty() || name == "." || pending_visits_.size() >= 256)
+            if (name.empty() || name == ".")
                 return;
-            if (pending_visits_.insert(name).second)
-                visits_.push_back(name);
-        };
-        enqueue(directory);
-        for (const auto& file : page.at("imageFiles")) {
-            const auto path = file.at("src").get<std::string>();
-            if (path.starts_with("/img/"))
-                enqueue(fromstr(path.substr(5)).parent_path());
-        }
-        // Newly discovered folders have no images to represent them on a
-        // cached page. Explore a bounded batch only on an actual recursive
-        // visit; background result polling must never drain this set.
-        if (recursive) {
-            size_t queued = 0;
-            for (const auto& path : unscanned_folders_) {
-                if (is_descendant_or_child(tostr(directory), path) &&
-                    !pending_visits_.contains(path)) {
-                    enqueue(fromstr(path));
-                    if (++queued == 4)
-                        break;
-                }
+            if (const auto it = pending_visits_.find(name);
+                it != pending_visits_.end()) {
+                it->second |= recursive;
+                return;
             }
-        }
+            if (pending_visits_.size() >= 256)
+                return;
+            pending_visits_.emplace(name, recursive);
+            visits_.push_back(name);
+        };
+        if (recursive && (directory.empty() || directory == ".")) {
+            for (const auto& name : load_snapshot()->namespaces_)
+                enqueue(fromstr(name));
+        } else
+            enqueue(directory);
     }
 
     size_t unscanned_folders(const Path& directory) const {
@@ -1826,25 +1819,32 @@ public:
         const std::shared_ptr<const ServerConfigs>& configs
     ) {
         std::string directory;
+        bool recursive = false;
         {
             std::lock_guard lock{ visits_mutex_ };
-            if (visits_.empty())
-                return;
-            directory = std::move(visits_.front());
-            visits_.pop_front();
-            const auto last = visited_at_.find(directory);
-            if (last != visited_at_.end() &&
-                std::chrono::duration<double>(
-                    std::chrono::steady_clock::now() - last->second
-                )
-                        .count() <
-                    configs->image_index_visit_refresh_interval_seconds_) {
-                pending_visits_.erase(directory);
-                return;
+            // Rotate deferred visits once, so a fresh folder cannot block
+            // another folder whose scan is already due.
+            const auto now = std::chrono::steady_clock::now();
+            for (size_t remaining = visits_.size(); remaining > 0;
+                 --remaining) {
+                auto candidate = std::move(visits_.front());
+                visits_.pop_front();
+                const auto last = visited_at_.find(candidate);
+                if (last != visited_at_.end() &&
+                    std::chrono::duration<double>(now - last->second).count() <
+                        configs->image_index_visit_refresh_interval_seconds_) {
+                    visits_.push_back(std::move(candidate));
+                    continue;
+                }
+                directory = std::move(candidate);
+                recursive = pending_visits_.at(directory);
+                break;
             }
+            if (directory.empty())
+                return;
         }
         try {
-            refresh_folder(configs, fromstr(directory));
+            refresh_folder(configs, fromstr(directory), recursive);
         } catch (const std::exception& error) {
             std::println(
                 "ImageIndex: Visit refresh failed for {}: {}",
@@ -1854,7 +1854,11 @@ public:
         }
         std::lock_guard lock{ visits_mutex_ };
         visited_at_[directory] = std::chrono::steady_clock::now();
-        pending_visits_.erase(directory);
+        // An HTTP request may upgrade a shallow visit while it is running.
+        if (!recursive && pending_visits_.at(directory))
+            visits_.push_back(directory);
+        else
+            pending_visits_.erase(directory);
     }
 
     uint64_t generation() const { return load_snapshot()->generation_; }
@@ -1862,7 +1866,8 @@ public:
     ImageIndexRefreshStats refresh(
         const std::shared_ptr<const ServerConfigs>& configs,
         const DateRange& date = {},
-        const Path& folder = {}
+        const Path& folder = {},
+        bool recursive = false
     ) {
         std::lock_guard refresh_lock{ refresh_mutex_ };
         snapshot_configs_ = configs;
@@ -1875,7 +1880,9 @@ public:
         const auto initial_refresh = old_snapshot->generation_ == 0;
         if (!folder.empty()) {
             std::println(
-                "ImageIndex: Scanning visited folder {}...", tostr(folder)
+                "ImageIndex: Scanning visited {} {}...",
+                recursive ? "subtree" : "folder",
+                tostr(folder)
             );
         } else if (!date.empty()) {
             std::println(
@@ -1896,6 +1903,29 @@ public:
         std::unordered_map<std::string, size_t> seen_folder_paths;
         std::vector<CachedMetadata> changed;
         bool all_roots_accessible = true;
+
+        const auto within = [](const Path& path, const Path& parent) {
+            const auto relative = fromstr(make_path_key(path))
+                                      .lexically_relative(
+                                          fromstr(make_path_key(parent))
+                                      );
+            return !relative.empty() && *relative.begin() != "..";
+        };
+        const auto folder_selected = [&](const Path& directory) {
+            return recursive
+                       ? within(directory, folder)
+                       : make_path_key(directory) == make_path_key(folder);
+        };
+        const auto contents_scanned = [&](const Path& directory,
+                                          const Path& root) {
+            if (!folder.empty())
+                return folder_selected(directory);
+            return date.empty() ||
+                   date_scope(directory, root, date) == DateScope::selected;
+        };
+        std::set<std::pair<std::string, std::string>> known_folders;
+        for (const auto& item : old_snapshot->folders_)
+            known_folders.emplace(item.root_key_, item.path_);
 
         const auto add_folder = [&](IndexedFolder folder) {
             const auto [it, inserted] = seen_folder_paths.try_emplace(
@@ -1926,10 +1956,7 @@ public:
                     previous->second
                 );
             const auto preserve_directory = [&](const Path& directory) {
-                if (!folder.empty())
-                    return !only_unscanned || directory != folder;
-                return !only_unscanned ||
-                       date_scope(directory, root, date) != DateScope::selected;
+                return !only_unscanned || !contents_scanned(directory, root);
             };
             // Paired PNG sources may be absent from the visible metadata map.
             for (const auto& [key, path] : proxy_queue_.sources()) {
@@ -1963,7 +1990,8 @@ public:
                         .lexically_relative(
                             fromstr(root_key.substr(0, root_key.find('\n')))
                         );
-                if (folder.empty() && !preserve_directory(root / relative))
+                if ((folder.empty() || recursive) &&
+                    !preserve_directory(root / relative))
                     continue;
                 add_folder(cached_folder);
             }
@@ -1977,12 +2005,10 @@ public:
                 stores_.at(binding_roots_.at(namespace_name))->root_;
             const auto root_key = make_root_key(namespace_name, root);
 
-            if (!folder.empty()) {
-                const auto relative = folder.lexically_relative(root);
-                if (relative.empty() || *relative.begin() == "..") {
-                    preserve_root(root_key);
-                    continue;
-                }
+            if (!folder.empty() && !within(folder, root) &&
+                !(recursive && within(root, folder))) {
+                preserve_root(root_key);
+                continue;
             }
 
             if (!date.empty() &&
@@ -2019,14 +2045,18 @@ public:
 
             std::vector<Path> physical_files;
             std::vector<IndexedFolder> root_folders;
+            const auto scan_root = folder.empty() || within(root, folder)
+                                       ? root
+                                       : folder;
             fs::recursive_directory_iterator iterator{
-                folder.empty() ? root : folder,
+                scan_root,
                 date.empty() && folder.empty()
                     ? fs::directory_options::skip_permission_denied
                     : fs::directory_options::none,
                 ec
             };
-            // A removed visited directory has no remaining direct contents.
+            const bool directory_opened = !ec;
+            // A removed visited directory has no remaining contents in scope.
             // Unavailable roots were handled above and must retain their cache.
             if (!folder.empty() && ec == std::errc::no_such_file_or_directory)
                 ec.clear();
@@ -2036,7 +2066,7 @@ public:
             const fs::recursive_directory_iterator end;
             while (!scan_failed && iterator != end) {
                 const auto entry = *iterator;
-                if (!folder.empty())
+                if (!folder.empty() && !recursive)
                     iterator.disable_recursion_pending();
                 scan_path = entry.path();
                 scan_operation = "read entry metadata";
@@ -2109,21 +2139,36 @@ public:
                 continue;
             }
 
+            // Recursive preservation drops the selected folder as well as its
+            // descendants. Add it back only when the directory still exists.
+            if (!folder.empty() && recursive && directory_opened &&
+                scan_root != root) {
+                const auto path = fromstr(namespace_name) /
+                                  scan_root.lexically_relative(root);
+                root_folders.push_back(
+                    { root_key,
+                      tostr(scan_root.filename()),
+                      tostr(path),
+                      tostr(path.parent_path()),
+                      get_image_sort_time(scan_root) }
+                );
+            }
             {
                 std::lock_guard lock{ visits_mutex_ };
-                if (!folder.empty()) {
-                    unscanned_folders_.erase(
-                        folder == root ? namespace_name
-                                       : tostr(
-                                             fromstr(namespace_name) /
-                                             folder.lexically_relative(root)
-                                         )
-                    );
-                } else if (date.empty()) {
-                    std::erase_if(unscanned_folders_, [&](const auto& path) {
-                        return is_descendant_or_child(namespace_name, path);
-                    });
+                for (const auto& item : root_folders) {
+                    if (!known_folders.contains({ item.root_key_, item.path_ }))
+                        unscanned_folders_.insert(item.path_);
                 }
+                std::erase_if(unscanned_folders_, [&](const auto& path) {
+                    if (!is_descendant_or_child(namespace_name, path))
+                        return false;
+                    return contents_scanned(
+                        root / fromstr(path).lexically_relative(
+                                   fromstr(namespace_name)
+                               ),
+                        root
+                    );
+                });
             }
 
             if (!date.empty() || !folder.empty())
@@ -2345,7 +2390,7 @@ public:
                 visible_logical_paths.insert(file.logical_path_);
             for (auto it = tag_analyses_.begin(); it != tag_analyses_.end();) {
                 if (!folder.empty() &&
-                    fromstr(it->first).parent_path() != folder) {
+                    !folder_selected(fromstr(it->first).parent_path())) {
                     ++it;
                     continue;
                 }
@@ -3178,7 +3223,7 @@ private:
     mutable std::mutex visits_mutex_;
     std::set<std::string> unscanned_folders_;
     std::deque<std::string> visits_;
-    std::unordered_set<std::string> pending_visits_;
+    std::unordered_map<std::string, bool> pending_visits_;
     std::unordered_map<std::string, std::chrono::steady_clock::time_point>
         visited_at_;
     // Isolated from the default TBB arena (used by CPU-bound AVIF encoding)
@@ -3298,9 +3343,11 @@ namespace sung {
     }
 
     ImageIndexRefreshStats ImageIndex::refresh_folder(
-        std::shared_ptr<const ServerConfigs> configs, const Path& directory
+        std::shared_ptr<const ServerConfigs> configs,
+        const Path& directory,
+        bool recursive
     ) {
-        return impl_->refresh_folder(configs, directory);
+        return impl_->refresh_folder(configs, directory, recursive);
     }
 
     void ImageIndex::visit_page(
