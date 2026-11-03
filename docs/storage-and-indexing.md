@@ -157,6 +157,19 @@ Size and the portable Unix timestamp provide the normal fingerprint validation
 fast path. If a copied file's timestamp changes, Sprintboard checks its SHA-256
 digest before reusing analysis.
 
+## AVIF work scheduling
+
+AVIF generation uses a queue populated by image-content scans, committed tag
+updates, and encoding settings changes. It no longer walks the library every
+three seconds. Idle polling checks only the queue; new files and externally
+removed proxies are picked up when their folders are scanned.
+
+Each worker pass handles at most two images concurrently, with one encoder thread
+per image. Failed jobs retry individually after 30 seconds, increasing to a
+five-minute maximum. New scan or tag events can retry them sooner. Generation
+still waits for startup reconciliation and, when tagging is enabled, committed
+analysis. Disabling AVIF stops further jobs after the current batch finishes.
+
 ## AVIF metadata
 
 The `.sprintboard.avif` suffix is reserved for generated proxies. Legacy

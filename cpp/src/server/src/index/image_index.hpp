@@ -12,6 +12,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "proxy_queue.hpp"
 #include "response/img_list.hpp"
 #include "sung/auxiliary/server_configs.hpp"
 #include "tag_analysis.hpp"
@@ -132,6 +133,11 @@ namespace sung {
             const Path& proxy_path,
             std::string materialization_id
         );
+
+        std::vector<ProxyWorkItem> take_proxy_work(
+            const ServerConfigs& configs, size_t limit
+        );
+        void retry_proxy_work(ProxyWorkItem item);
 
     private:
         enum class InitialRefreshState {

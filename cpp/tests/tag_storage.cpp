@@ -479,6 +479,7 @@ namespace {
         auto live_cfg = configs(bad, temp / "live-fallback");
         live_cfg->dir_bindings_["z"].local_dir_ = good;
         live_cfg->tagger_enabled_ = true;
+        live_cfg->avif_gen_ = true;
         live_cfg->tagger_batch_size_ = 1;
         live_cfg->tagger_poll_interval_seconds_ = 1;
         initialize(live_cfg);
@@ -502,6 +503,13 @@ namespace {
         {
             sung::ImageIndex index;
             index.refresh(live_cfg);
+            const auto pending_proxies = index.take_proxy_work(*live_cfg, 2);
+            require(
+                pending_proxies.size() == 2,
+                "initial scans queue both PNG sources"
+            );
+            for (const auto& item : pending_proxies)
+                index.retry_proxy_work(item);
             index.start_auto_tagging([live_cfg] { return live_cfg; });
             wait_for(
                 [&] {
@@ -509,6 +517,13 @@ namespace {
                            index.tag_analysis(good / "image.png").has_value();
                 },
                 "healthy root tagging completes"
+            );
+            const auto ready_proxies = index.take_proxy_work(*live_cfg, 2);
+            require(
+                ready_proxies.size() == 1 &&
+                    ready_proxies[0].path_ == good / "image.png",
+                "committed tags wake only the healthy source before its retry "
+                "deadline"
             );
             require(
                 tagger.analyses == 2, "failed root does not repeat inference"

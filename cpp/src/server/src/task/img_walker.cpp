@@ -3,9 +3,8 @@
 #include <optional>
 #include <print>
 
-#include <absl/strings/ascii.h>
+#include <tbb/task_arena.h>
 #include <tbb/task_group.h>
-#include <sung/basic/os_detect.hpp>
 #include <sung/basic/time.hpp>
 
 #include "index/image_index.hpp"
@@ -13,13 +12,6 @@
 #include "sung/image/avif.hpp"
 #include "sung/image/png.hpp"
 #include "sung/image/xmp.hpp"
-
-#if defined(__cpp_lib_generator) && __cpp_lib_generator >= SUNG__cplusplus
-    #include <generator>
-    #define HAS_GENERATOR 1
-#else
-    #define HAS_GENERATOR 0
-#endif
 
 
 namespace {
@@ -113,6 +105,7 @@ namespace {
         // constant quality for simplicity
         enc->maxQuantizer = enc->minQuantizer;
         enc->speed = params.speed();
+        enc->maxThreads = 1;
 
         avifRWData encoded = AVIF_DATA_EMPTY;
         res = avifEncoderWrite(enc, image, &encoded);
@@ -134,186 +127,6 @@ namespace {
         return outData;
     }
 
-    struct PngWorkItem {
-        sung::Path path_;
-        const sung::ServerConfigs::BindingInfo* binding_;
-        sung::FileFingerprint source_fingerprint_;
-        std::optional<sung::TagAnalysisRecord> analysis_;
-        std::string materialization_id_;
-    };
-
-#if HAS_GENERATOR
-    std::generator<PngWorkItem> gen_png_files(
-#else
-    std::vector<PngWorkItem> gen_png_files(
-#endif
-        const sung::ServerConfigs& cfg, const sung::ImageIndex& image_index
-    ) {
-#if !HAS_GENERATOR
-        std::vector<PngWorkItem> result;
-#endif
-
-        for (const auto& [name, binding_info] : cfg.dir_bindings_) {
-            if (!cfg.effective_avif_options(binding_info).gen_)
-                continue;
-
-            const auto& local_dir = binding_info.local_dir_;
-            if (!sung::fs::is_directory(local_dir))
-                continue;
-
-            // Walks with the error-code API instead of the throwing
-            // recursive iterator: a volume that fails mid-scan (e.g. EIO
-            // from a flaky external drive) must only cost the unreadable
-            // subtree, not the process. The next scan retries whatever
-            // was skipped.
-            std::vector<sung::Path> pending{ local_dir };
-            while (!pending.empty()) {
-                const auto dir = std::move(pending.back());
-                pending.pop_back();
-
-                std::error_code iter_error;
-                auto entry_it = sung::fs::directory_iterator(dir, iter_error);
-                if (iter_error) {
-                    std::println(
-                        "ImgWalker: Skipping unreadable directory {}: {}",
-                        sung::tostr(dir),
-                        iter_error.message()
-                    );
-                    continue;
-                }
-
-                const sung::fs::directory_iterator dir_end;
-                while (entry_it != dir_end) {
-                    const auto& entry = *entry_it;
-
-                    // Queue subdirectories without following symlinks,
-                    // matching recursive_directory_iterator's default.
-                    std::error_code type_error;
-                    if (entry.is_directory(type_error) && !type_error) {
-                        if (entry.path().filename() != ".sprintboard" &&
-                            !entry.is_symlink(type_error) && !type_error)
-                            pending.push_back(entry.path());
-                    }
-
-                    auto ext_str = sung::tostr(entry.path().extension());
-                    ext_str = absl::AsciiStrToLower(ext_str);
-                    if (ext_str == ".png") {
-                        std::error_code absolute_error;
-                        auto source_path = sung::fs::absolute(
-                            entry.path(), absolute_error
-                        );
-                        if (absolute_error)
-                            source_path = entry.path().lexically_normal();
-                        else
-                            source_path = source_path.lexically_normal();
-
-                        const auto source_fingerprint = sung::fingerprint_file(
-                            source_path
-                        );
-                        auto analysis = source_fingerprint
-                                            ? image_index.current_tag_analysis(
-                                                  source_path,
-                                                  cfg.tagger_enabled_
-                                              )
-                                            : std::nullopt;
-                        if (!source_fingerprint ||
-                            (cfg.tagger_enabled_ && !analysis)) {
-                            entry_it.increment(iter_error);
-                            if (iter_error) {
-                                std::println(
-                                    "ImgWalker: Stopping scan of "
-                                    "directory {}: {}",
-                                    sung::tostr(dir),
-                                    iter_error.message()
-                                );
-                                break;
-                            }
-                            continue;
-                        }
-
-                        const auto avif_opts = cfg.effective_avif_options(
-                            binding_info
-                        );
-                        std::string materialization_id;
-                        if (analysis) {
-                            materialization_id =
-                                sung::make_proxy_materialization_id(
-                                    *analysis,
-                                    ::pix_format_name(avif_opts.pix_format_),
-                                    avif_opts.quality_,
-                                    avif_opts.speed_
-                                );
-                        }
-                        const auto avif = sung::make_sprintboard_proxy_path(
-                            source_path
-                        );
-
-                        // A generated AVIF carries the source's mtime
-                        // from encode time, so anything other than an
-                        // exact match means the source has changed since.
-                        // This costs the same one stat per file as the
-                        // previous exists() check; the source mtime comes
-                        // from attributes the directory iteration already
-                        // fetched.
-                        std::error_code avif_error;
-                        const auto avif_time = sung::fs::last_write_time(
-                            avif, avif_error
-                        );
-                        bool up_to_date = false;
-                        if (!avif_error) {
-                            std::error_code png_error;
-                            const auto png_time = entry.last_write_time(
-                                png_error
-                            );
-                            up_to_date = !png_error && png_time == avif_time;
-                            if (up_to_date && analysis) {
-                                up_to_date =
-                                    image_index.proxy_materialization_current(
-                                        avif, materialization_id
-                                    );
-                            }
-                        }
-
-                        if (!up_to_date) {
-#if HAS_GENERATOR
-                            co_yield PngWorkItem{
-                                source_path,
-                                &binding_info,
-                                *source_fingerprint,
-                                std::move(analysis),
-                                std::move(materialization_id),
-                            };
-#else
-                            result.push_back(
-                                {
-                                    source_path,
-                                    &binding_info,
-                                    *source_fingerprint,
-                                    std::move(analysis),
-                                    std::move(materialization_id),
-                                }
-                            );
-#endif
-                        }
-                    }
-
-                    entry_it.increment(iter_error);
-                    if (iter_error) {
-                        std::println(
-                            "ImgWalker: Stopping scan of directory {}: {}",
-                            sung::tostr(dir),
-                            iter_error.message()
-                        );
-                        break;
-                    }
-                }
-            }
-        }
-
-#if !HAS_GENERATOR
-        return result;
-#endif
-    }
 
 }  // namespace
 
@@ -330,134 +143,170 @@ namespace {
         )
             : cfg_(cfg), power_req_(power_req), image_index_(image_index) {}
 
-        ~Task() noexcept override { tg_.wait(); }
-
         void run() override {
             if (!image_index_.ready_for_background_work())
                 return;
-            const auto svrcfg = cfg_.get();
-            if (!svrcfg->any_avif_gen())
+            const auto configs = cfg_.get();
+            const auto work = image_index_.take_proxy_work(*configs, 2);
+            if (work.empty())
                 return;
+            arena_.execute([&] {
+                tbb::task_group group;
+                for (const auto& item : work) {
+                    group.run([&, item] {
+                        bool success = false;
+                        try {
+                            success = process(item, *configs);
+                        } catch (const std::exception& error) {
+                            std::println(
+                                "ImgWalker: Failed to process {}: {}",
+                                sung::tostr(item.path_),
+                                error.what()
+                            );
+                        }
+                        if (!success)
+                            image_index_.retry_proxy_work(item);
+                    });
+                }
+                group.wait();
+            });
+        }
 
-            size_t count = 0;
-            for (const auto& item : ::gen_png_files(*svrcfg, image_index_)) {
-                ++count;
-
-                const auto avif_opts = svrcfg->effective_avif_options(
-                    *item.binding_
+    private:
+        bool process(
+            const sung::ProxyWorkItem& item, const sung::ServerConfigs& configs
+        ) {
+            const auto& p = item.path_;
+            const auto source = sung::fingerprint_file(p);
+            if (!source)
+                return false;
+            const auto source_fingerprint = *source;
+            const auto analysis = image_index_.current_tag_analysis(
+                p, configs.tagger_enabled_
+            );
+            if (configs.tagger_enabled_ && !analysis)
+                return false;
+            const auto& avif_opts = item.options_;
+            const auto materialization_id =
+                analysis ? sung::make_proxy_materialization_id(
+                               *analysis,
+                               pix_format_name(avif_opts.pix_format_),
+                               avif_opts.quality_,
+                               avif_opts.speed_
+                           )
+                         : std::string{};
+            if (!item.force_) {
+                const auto proxy = sung::fingerprint_file(
+                    sung::make_sprintboard_proxy_path(p)
                 );
-                tg_.run([p = item.path_,
-                         source_fingerprint = item.source_fingerprint_,
-                         analysis = item.analysis_,
-                         materialization_id = item.materialization_id_,
-                         avif_opts,
-                         this]() {
-                    const sung::ScopedWakeLock wake_lock{ power_req_ };
-                    sung::MonotonicRealtimeTimer one_timer;
+                if (proxy &&
+                    proxy->modified_time_ ==
+                        source_fingerprint.modified_time_ &&
+                    (!analysis || image_index_.proxy_materialization_current(
+                                      sung::make_sprintboard_proxy_path(p),
+                                      materialization_id
+                                  )))
+                    return true;
+            }
+            const sung::ScopedWakeLock wake_lock{ power_req_ };
+            sung::MonotonicRealtimeTimer one_timer;
 
-                    // Captured before reading the pixels: if the source is
-                    // edited while encoding, the AVIF keeps the pre-edit
-                    // timestamp, and the mismatch makes a later scan
-                    // regenerate it.
-                    sung::FileTimestamps src_timestamps;
-                    const auto src_ts_error = sung::read_file_timestamps(
-                        p, src_timestamps
-                    );
+            // Captured before reading the pixels: if the source is
+            // edited while encoding, the AVIF keeps the pre-edit
+            // timestamp, and the mismatch makes a later scan
+            // regenerate it.
+            sung::FileTimestamps src_timestamps;
+            const auto src_ts_error = sung::read_file_timestamps(
+                p, src_timestamps
+            );
 
-                    const auto png_data = sung::read_png(p);
-                    if (!png_data)
-                        return;
+            const auto png_data = sung::read_png(p);
+            if (!png_data)
+                return false;
 
-                    sung::AvifEncodeParams avif_params;
-                    avif_params.set_quality(avif_opts.quality_);
-                    avif_params.set_speed(avif_opts.speed_);
-                    if (analysis) {
-                        avif_params.set_xmp(
-                            sung::make_xmp_packet(
-                                *png_data,
-                                sung::make_embedded_tag_analysis(*analysis)
-                            )
-                        );
-                    } else {
-                        avif_params.set_xmp(sung::make_xmp_packet(*png_data));
-                    }
-                    avif_params.set_yuv_format(
-                        ::conv_pix_format(avif_opts.pix_format_)
-                    );
+            sung::AvifEncodeParams avif_params;
+            avif_params.set_quality(avif_opts.quality_);
+            avif_params.set_speed(avif_opts.speed_);
+            if (analysis) {
+                avif_params.set_xmp(
+                    sung::make_xmp_packet(
+                        *png_data, sung::make_embedded_tag_analysis(*analysis)
+                    )
+                );
+            } else {
+                avif_params.set_xmp(sung::make_xmp_packet(*png_data));
+            }
+            avif_params.set_yuv_format(
+                ::conv_pix_format(avif_opts.pix_format_)
+            );
 
-                    const auto avif_blob = encode_avif(*png_data, avif_params);
-                    if (!avif_blob) {
-                        std::println(
-                            "ImgWalker: AVIF encoding failed for {}: {}",
-                            sung::tostr(p),
-                            avif_blob.error()
-                        );
-                        return;
-                    }
-
-                    const auto avif_path = sung::make_sprintboard_proxy_path(p);
-                    const auto current_fingerprint = sung::fingerprint_file(p);
-                    if (!current_fingerprint ||
-                        *current_fingerprint != source_fingerprint) {
-                        std::println(
-                            "ImgWalker: Source PNG changed, skipping: {}",
-                            sung::tostr(p)
-                        );
-                        return;
-                    }
-
-                    std::error_code write_error;
-                    if (!sung::write_file_atomically(
-                            avif_path, *avif_blob, write_error
-                        )) {
-                        std::println(
-                            "ImgWalker: Failed to save AVIF {}: {}",
-                            sung::tostr(avif_path),
-                            write_error.message()
-                        );
-                        return;
-                    }
-
-                    const auto timestamp_error =
-                        src_ts_error ? src_ts_error
-                                     : sung::set_file_timestamps(
-                                           avif_path, src_timestamps
-                                       );
-                    if (timestamp_error) {
-                        std::println(
-                            "ImgWalker: Failed to copy timestamps from {} to "
-                            "{}: {}",
-                            sung::tostr(p),
-                            sung::tostr(avif_path),
-                            timestamp_error.message()
-                        );
-                    }
-
-                    if (analysis) {
-                        image_index_.mark_proxy_materialized(
-                            p, avif_path, materialization_id
-                        );
-                    }
-
-                    std::println(
-                        "ImgWalker: AVIF saved: {} ({:.3f} sec)",
-                        sung::tostr(avif_path),
-                        one_timer.elapsed()
-                    );
-                });
-
-                if (count > 32)
-                    break;
+            const auto avif_blob = encode_avif(*png_data, avif_params);
+            if (!avif_blob) {
+                std::println(
+                    "ImgWalker: AVIF encoding failed for {}: {}",
+                    sung::tostr(p),
+                    avif_blob.error()
+                );
+                return false;
             }
 
-            tg_.wait();
+            const auto avif_path = sung::make_sprintboard_proxy_path(p);
+            const auto current_fingerprint = sung::fingerprint_file(p);
+            if (!current_fingerprint ||
+                *current_fingerprint != source_fingerprint) {
+                std::println(
+                    "ImgWalker: Source PNG changed, skipping: {}",
+                    sung::tostr(p)
+                );
+                return false;
+            }
+
+            std::error_code write_error;
+            if (!sung::write_file_atomically(
+                    avif_path, *avif_blob, write_error
+                )) {
+                std::println(
+                    "ImgWalker: Failed to save AVIF {}: {}",
+                    sung::tostr(avif_path),
+                    write_error.message()
+                );
+                return false;
+            }
+
+            const auto timestamp_error = src_ts_error
+                                             ? src_ts_error
+                                             : sung::set_file_timestamps(
+                                                   avif_path, src_timestamps
+                                               );
+            if (timestamp_error) {
+                std::println(
+                    "ImgWalker: Failed to copy timestamps from {} to "
+                    "{}: {}",
+                    sung::tostr(p),
+                    sung::tostr(avif_path),
+                    timestamp_error.message()
+                );
+            }
+
+            if (analysis) {
+                image_index_.mark_proxy_materialized(
+                    p, avif_path, materialization_id
+                );
+            }
+
+            std::println(
+                "ImgWalker: AVIF saved: {} ({:.3f} sec)",
+                sung::tostr(avif_path),
+                one_timer.elapsed()
+            );
+            return true;
         }
 
     private:
         const sung::ServerConfigManager& cfg_;
         sung::GatedPowerRequest& power_req_;
         sung::ImageIndex& image_index_;
-        tbb::task_group tg_;
+        tbb::task_arena arena_{ 2 };
     };
 
 }  // namespace

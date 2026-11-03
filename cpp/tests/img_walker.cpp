@@ -153,6 +153,11 @@ int main() {
                   !sung::fs::exists(sidecar), "never creates a tag sidecar"
               ) &&
               success;
+    success = check(
+                  index.take_proxy_work(*configs, 2).empty(),
+                  "recording a finished proxy does not requeue the same encode"
+              ) &&
+              success;
     const auto plain_source = root / "plain.png";
     const auto plain_proxy = sung::make_sprintboard_proxy_path(plain_source);
     const auto plain_written = sung::write_file(plain_source, fixture);
@@ -206,6 +211,108 @@ int main() {
     success = check(
                   sung::fs::is_regular_file(plain_proxy),
                   "preserves proxy generation when tagging is disabled"
+              ) &&
+              success;
+
+    const auto unseen = root / "unseen.png";
+    sung::write_file(unseen, fixture);
+    plain_task->run();
+    success =
+        check(
+            !sung::fs::exists(sung::make_sprintboard_proxy_path(unseen)),
+            "idle AVIF polling does not discover files by walking the library"
+        ) &&
+        success;
+    index.refresh_folder(plain_configs, sung::fromstr("test"));
+    for (int i = 0; i < 3; ++i) plain_task->run();
+    success = check(
+                  sung::fs::exists(sung::make_sprintboard_proxy_path(unseen)),
+                  "a visited-folder scan schedules a newly discovered PNG"
+              ) &&
+              success;
+
+    const auto batch = root / "batch";
+    sung::fs::create_directories(batch);
+    for (int i = 0; i < 5; ++i)
+        sung::write_file(batch / std::format("{}.png", i), fixture);
+    index.refresh_folder(plain_configs, sung::fromstr("test/batch"));
+    const auto proxy_count = [&] {
+        size_t count = 0;
+        for (int i = 0; i < 5; ++i)
+            count += sung::fs::exists(
+                sung::make_sprintboard_proxy_path(
+                    batch / std::format("{}.png", i)
+                )
+            );
+        return count;
+    };
+    plain_task->run();
+    success = check(
+                  proxy_count() == 2, "a worker pass encodes at most two images"
+              ) &&
+              success;
+    plain_task->run();
+    plain_task->run();
+    success = check(
+                  proxy_count() == 5 &&
+                      index.take_proxy_work(*plain_configs, 2).empty(),
+                  "queued work drains and leaves the worker idle"
+              ) &&
+              success;
+    const auto removed_proxy = sung::make_sprintboard_proxy_path(
+        batch / "0.png"
+    );
+    sung::fs::remove(removed_proxy);
+    plain_task->run();
+    success = check(
+                  !sung::fs::exists(removed_proxy),
+                  "an idle worker does not repeatedly stat existing proxies"
+              ) &&
+              success;
+    index.refresh_folder(plain_configs, sung::fromstr("test/batch"));
+    for (int i = 0; i < 3; ++i) plain_task->run();
+    success = check(
+                  sung::fs::exists(removed_proxy),
+                  "scanning a folder schedules repair of a missing proxy"
+              ) &&
+              success;
+
+    const auto bad = batch / "bad.png";
+    sung::write_file(bad, std::string{ "invalid PNG" });
+    index.refresh_folder(plain_configs, sung::fromstr("test/batch"));
+    for (int i = 0; i < 3; ++i) plain_task->run();
+    success =
+        check(
+            index.take_proxy_work(*plain_configs, 2).empty(),
+            "failed encodes wait for their retry deadline instead of spinning"
+        ) &&
+        success;
+    sung::write_file(bad, fixture);
+    index.refresh_folder(plain_configs, sung::fromstr("test/batch"));
+    for (int i = 0; i < 3; ++i) plain_task->run();
+    success =
+        check(
+            sung::fs::exists(sung::make_sprintboard_proxy_path(bad)),
+            "a new scan retries a corrected source without waiting for backoff"
+        ) &&
+        success;
+
+    auto disabled = *plain_configs;
+    disabled.dir_bindings_["test"].avif_.gen_ = false;
+    success = check(
+                  index.take_proxy_work(disabled, 2).empty(),
+                  "disabling AVIF drops pending work without forgetting sources"
+              ) &&
+              success;
+    auto changed = *plain_configs;
+    changed.avif_quality_ = 65;
+    const auto reconfigured = index.take_proxy_work(changed, 2);
+    success = check(
+                  reconfigured.size() == 2 && reconfigured[0].force_ &&
+                      reconfigured[1].force_ &&
+                      reconfigured[0].options_.quality_ == 65,
+                  "changed encoder options requeue known sources with current "
+                  "settings"
               ) &&
               success;
 

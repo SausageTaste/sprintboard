@@ -1518,8 +1518,16 @@ public:
         for (const auto& [path, item] : store.pending_tags_) {
             store.persisted_tags_[path] = stored_logical_path(store, item);
             if (owner(path) == &store) {
+                const auto previous = tag_analyses_.find(path);
+                const bool changed = previous == tag_analyses_.end() ||
+                                     previous->second.analysis_id_ !=
+                                         item.analysis_id_ ||
+                                     previous->second.input_modified_time_ !=
+                                         item.input_modified_time_;
                 tag_analyses_.insert_or_assign(path, item);
                 analysis_local_[path] = store.path_ != store.fallback_;
+                if (changed && !item.analysis_.is_null())
+                    proxy_queue_.enqueue(fromstr(path), false, true);
             }
         }
         for (const auto& [path, relative] : store.deleted_tags_)
@@ -1922,6 +1930,13 @@ public:
                 return !only_unscanned ||
                        date_scope(directory, root, date) != DateScope::selected;
             };
+            // Paired PNG sources may be absent from the visible metadata map.
+            for (const auto& [key, path] : proxy_queue_.sources()) {
+                const auto relative = path.lexically_relative(root);
+                if (!relative.empty() && *relative.begin() != ".." &&
+                    preserve_directory(path.parent_path()))
+                    seen_physical.insert(tostr(path));
+            }
             for (const auto& [path, metadata] : metadata_) {
                 const auto physical = sung::fromstr(path);
                 const auto relative = physical.lexically_relative(root);
@@ -2117,6 +2132,10 @@ public:
             for (const auto& path : physical_files) {
                 const auto path_str = sung::tostr(path);
                 seen_physical.insert(path_str);
+                auto extension = tostr(path.extension());
+                absl::AsciiStrToLower(&extension);
+                if (extension == ".png")
+                    proxy_queue_.discover(path);
             }
 
             // A Sprintboard AVIF proxy is the browser-facing derivative
@@ -2312,6 +2331,11 @@ public:
             it = metadata_.erase(it);
         }
         stats.metadata_removed_ = removed.size();
+        std::vector<Path> removed_sources;
+        for (const auto& [key, path] : proxy_queue_.sources())
+            if (!seen_physical.contains(tostr(path)))
+                removed_sources.push_back(path);
+        for (const auto& path : removed_sources) proxy_queue_.forget(path);
 
         if (all_roots_accessible) {
             std::unordered_set<std::string> visible_logical_paths;
@@ -2872,6 +2896,87 @@ public:
         }
     }
 
+    std::vector<ProxyWorkItem> take_proxy_work(
+        const ServerConfigs& configs, size_t limit
+    ) {
+        std::lock_guard lock{ refresh_mutex_ };
+        auto signature = nlohmann::json::array({ configs.tagger_enabled_ });
+        for (const auto& [name, binding] : configs.dir_bindings_) {
+            const auto options = configs.effective_avif_options(binding);
+            signature.push_back(
+                { name,
+                  tostr(binding.local_dir_),
+                  options.gen_,
+                  static_cast<int>(options.pix_format_),
+                  options.quality_,
+                  options.speed_ }
+            );
+        }
+        const auto options_for =
+            [](const Path& path,
+               const auto& roots) -> std::optional<ServerConfigs::AvifOptions> {
+            const auto normalized = fromstr(detail::ProxyQueue::key(path));
+            for (const auto& [root, options] : roots) {
+                const auto relative = normalized.lexically_relative(root);
+                if (!relative.empty() && *relative.begin() != "..")
+                    return options;
+            }
+            return std::nullopt;
+        };
+        if (signature != proxy_config_signature_) {
+            auto previous_roots = std::move(proxy_roots_);
+            proxy_roots_.clear();
+            for (const auto& [name, binding] : configs.dir_bindings_) {
+                proxy_roots_.emplace_back(
+                    fromstr(
+                        detail::ProxyQueue::key(
+                            canonical_path(binding.local_dir_)
+                        )
+                    ),
+                    configs.effective_avif_options(binding)
+                );
+            }
+            std::stable_sort(
+                proxy_roots_.begin(),
+                proxy_roots_.end(),
+                [](const auto& a, const auto& b) {
+                    return tostr(a.first).size() > tostr(b.first).size();
+                }
+            );
+            proxy_queue_.clear_pending();
+            for (const auto& [key, source] : proxy_queue_.sources()) {
+                const auto next = options_for(source, proxy_roots_);
+                if (!next || !next->gen_)
+                    continue;
+                const auto previous = options_for(source, previous_roots);
+                const bool force = previous &&
+                                   (previous->pix_format_ !=
+                                        next->pix_format_ ||
+                                    previous->quality_ != next->quality_ ||
+                                    previous->speed_ != next->speed_);
+                proxy_queue_.enqueue(source, force);
+            }
+            proxy_config_signature_ = std::move(signature);
+        }
+        std::vector<ProxyWorkItem> result;
+        while (result.size() < limit) {
+            auto item = proxy_queue_.take();
+            if (!item)
+                break;
+            const auto options = options_for(item->path_, proxy_roots_);
+            if (!options || !options->gen_)
+                continue;
+            item->options_ = *options;
+            result.push_back(std::move(*item));
+        }
+        return result;
+    }
+
+    void retry_proxy_work(ProxyWorkItem item) {
+        std::lock_guard lock{ refresh_mutex_ };
+        proxy_queue_.retry(std::move(item));
+    }
+
     ImageListResponse query(
         const Path& dir_path,
         const std::string& query_text,
@@ -2973,6 +3078,7 @@ public:
                                                 fromstr(file.physical_path_)
                                             )
                                           : file.logical_path_;
+            proxy_queue_.forget(fromstr(logical_path));
             tag_analyses_.erase(logical_path);
             if (!erase_tag_analysis(logical_path)) {
                 std::println(
@@ -3016,6 +3122,9 @@ private:
     std::unordered_map<std::string, CachedTagAnalysis> tag_analyses_;
     std::unordered_map<std::string, bool> analysis_local_;
     std::string current_analyzer_fingerprint_;
+    detail::ProxyQueue proxy_queue_;
+    nlohmann::json proxy_config_signature_;
+    std::vector<std::pair<Path, ServerConfigs::AvifOptions>> proxy_roots_;
     gallery_cache::SnapshotStore snapshots_;
     std::shared_ptr<const ServerConfigs> snapshot_configs_;
     mutable std::mutex refresh_mutex_;
@@ -3158,6 +3267,16 @@ namespace sung {
     }
 
     uint64_t ImageIndex::generation() const { return impl_->generation(); }
+
+    std::vector<ProxyWorkItem> ImageIndex::take_proxy_work(
+        const ServerConfigs& configs, size_t limit
+    ) {
+        return impl_->take_proxy_work(configs, limit);
+    }
+
+    void ImageIndex::retry_proxy_work(ProxyWorkItem item) {
+        impl_->retry_proxy_work(std::move(item));
+    }
 
     void ImageIndex::start_auto_refresh(
         std::function<std::shared_ptr<const ServerConfigs>()> configs_provider
