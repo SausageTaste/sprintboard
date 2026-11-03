@@ -83,8 +83,8 @@ Open it with any text editor.
   "tagger_port": 8790,
   "tagger_batch_size": 4,
   "tagger_poll_interval_seconds": 30.0,
-  "image_index_full_refresh_interval_seconds": 30.0,
-  "image_index_date_refresh_interval_seconds": 5.0,
+  "image_index_folder_discovery_interval_seconds": 300.0,
+  "image_index_visit_refresh_interval_seconds": 60.0,
   "dir_bindings": {
     "example": {
       "local_dir": "./fixtures/images"
@@ -270,31 +270,46 @@ reloads the current folder, filters, and sort order after each startup phase.
 Tagging and AVIF generation wait until the full reconciliation completes.
 Cached results can briefly include deleted images or omit new ones.
 
-After the startup scans, subsequent full scans use
-`image_index_full_refresh_interval_seconds` (default: 30). A second schedule scans
-the most recent five days of `YYYY-MM-DD` folders every
-`image_index_date_refresh_interval_seconds`
-(default: 5; set to 0 to disable recurring fast scans; startup still scans recent
-folders first). Both intervals are measured after scan completion;
-positive values must be at least one second. Settings reload without a restart.
-For large dated collections, restart with the rebuilt server and add these settings
-to your local `server_configs.json` to run full scans every five minutes:
+After the startup scans, indexing uses two separate tasks:
+
+- **Folder discovery** walks the directory tree every five minutes. It updates
+  the folder list without reading image contents, hashing files, or reconciling
+  image and tag deletions. Unchanged discoveries do not rewrite the saved gallery.
+- **Visited-folder scanning** checks the immediate contents of the opened folder
+  and the parent folders of images in each requested page. Recursive browsing
+  therefore refreshes folders as their images are loaded, without scanning the
+  entire subtree. Duplicate requests share one queued scan, and each folder has
+  a minimum interval between scans. Content probing uses at most four concurrent
+  tasks on the index worker.
+
+Newly discovered folders have no images in the cached list yet. A recursive visit
+also queues up to four of these folders. Further pages or the **Check more
+folders** button request additional batches; background result polling never
+queues more scans. Opening a folder directly always requests its contents.
+
+The gallery shows cached results immediately and refreshes the loaded page range
+when background work publishes an update. Refresh waits while a lightbox is open
+or the browser tab is hidden. Unvisited contents remain cached: global search
+and counts can omit new images or retain externally deleted images until their
+folders are scanned. Manual refresh still reconciles the complete library.
+A startup full reconciliation also remains necessary before tagging and encoding
+begin; this scheduling change reduces recurring work, not initial indexing.
+
+Both settings reload without a restart and must be finite and at least one second:
 
 ```json
-"image_index_full_refresh_interval_seconds": 300,
-"image_index_date_refresh_interval_seconds": 5
+"image_index_folder_discovery_interval_seconds": 300,
+"image_index_visit_refresh_interval_seconds": 60
 ```
 
-Date scans cover today and the previous four calendar days using the server's
-local date, recalculated on each pass. They walk undated container folders to find
-date folders, skip older and future dated subtrees, and recursively scan the
-selected subtrees (including when the binding itself is named for a selected
-date). The first `YYYY-MM-DD` folder from the binding root determines the
-subtree's date. New date folders are discovered without waiting for a full scan.
-Cached images and folders outside the five-day window remain unchanged until a
-full scan; additions and deletions inside the window are reconciled immediately.
-All scans run serially on the dedicated index worker, so a long full scan can delay
-a date scan. Manual refresh still scans the complete library.
+The discovery interval is measured after discovery completes. The visit interval
+is a minimum delay after a folder scan attempt; it does not schedule scans while
+nobody is visiting. The former `image_index_full_refresh_interval_seconds` and
+`image_index_date_refresh_interval_seconds` fields remain readable for config
+compatibility but no longer schedule recurring full or date scans. Startup still
+scans today and the previous four local calendar days first, then the full library.
+All discovery and content scans run serially on the dedicated index worker, so a
+large individual folder or slow discovery can delay other queued visits.
 
 Tagging and AVIF generation wait for the first full pass.
 Unavailable roots retain their cached browsing entries, and
@@ -308,8 +323,12 @@ Keep `cache_dir` on a fast local disk to avoid slow snapshot reads.
 `recent_ready`, `ready`, or `failed` for initial reconciliation. Once ready, it
 stays ready through later periodic scans. `recent_ready` means the five-day startup
 results are available while the full reconciliation is still pending or running.
-The gallery polls every two seconds until ready (five seconds after failures);
-the existing manual refresh API remains available.
+The gallery polls every two seconds until ready (five seconds after failures).
+The status response also includes an index `generation`; the gallery checks it
+while open to pick up completed discovery and content scans. List requests use
+`visit=0` for passive result refreshes and otherwise queue visited folders.
+Responses include `indexGeneration` and `unscannedFolderCount` for incremental
+recursive discovery. The existing manual refresh API remains available.
 
 Image metadata stores file size, modification time as Unix nanoseconds, and
 SHA-256. Unchanged size and time reuse metadata without reading image contents.

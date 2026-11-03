@@ -31,6 +31,8 @@ type FolderInfo = {
 };
 
 interface ImageListResponse {
+    indexGeneration: number;
+    unscannedFolderCount: number;
     folders: FolderInfo[];
     imageFiles: ImageFileInfo[];
     totalImageCount: number;
@@ -519,6 +521,7 @@ async function fetchImageList(
     sortOrder: ImageSortOrder,
     avifOnly: boolean,
     signal?: AbortSignal,
+    visit = true,
 ): Promise<ImageListResponse> {
     const url = new URL("/api/images/list", window.location.origin);
     url.searchParams.set("dir", dir);
@@ -527,6 +530,8 @@ async function fetchImageList(
         url.searchParams.set("cursor", cursor);
     url.searchParams.set("limit", String(PAGE_SIZE));
     url.searchParams.set("recursive", recursive ? "1" : "0");
+    if (!visit)
+        url.searchParams.set("visit", "0");
     url.searchParams.set("sort", sortOrder);
     if (avifOnly)
         url.searchParams.set("avif_only", "1");
@@ -563,6 +568,8 @@ export default function Gallery({ settings, onChangeSettings }: GalleryProps) {
     const [imgItems, setImgItems] = React.useState<ImageFileInfo[]>([]);
     const [folders, setFolders] = React.useState<FolderInfo[]>([]);
     const [totalImgCount, setTotalImgCount] = React.useState<number>(0);
+    const [unscannedFolderCount, setUnscannedFolderCount] = React.useState(0);
+    const [discoveringContents, setDiscoveringContents] = React.useState(false);
     const [thumbnailWidth, setThumbnailWidth] = React.useState<number>(3);
     const [thumbnailHeight, setThumbnailHeight] = React.useState<number>(4);
 
@@ -585,6 +592,7 @@ export default function Gallery({ settings, onChangeSettings }: GalleryProps) {
     const pathnameRef = React.useRef("");
     const nextCursorRef = React.useRef<string | null | undefined>(undefined);
     const requestGenerationRef = React.useRef(0);
+    const indexGenerationRef = React.useRef(-1);
     const activeRequestRef = React.useRef<AbortController | null>(null);
     const loadMoreRef = React.useRef<() => Promise<void>>(async () => { });
     const safeAreaProbeRef = React.useRef<HTMLDivElement | null>(null);
@@ -708,6 +716,7 @@ export default function Gallery({ settings, onChangeSettings }: GalleryProps) {
 
             nextCursorRef.current = data.nextCursor;
             setTotalImgCount(data.totalImageCount);
+            setUnscannedFolderCount(data.unscannedFolderCount ?? 0);
 
             setImgItems(prev => {
                 const seen = new Set(prev.map(x => x.src));
@@ -813,6 +822,7 @@ export default function Gallery({ settings, onChangeSettings }: GalleryProps) {
         setFolders([]);
         setImgItems([]);
         setTotalImgCount(0);
+        setUnscannedFolderCount(0);
         imgItemsRef.current = [];
         loadingRef.current = true;
 
@@ -829,6 +839,9 @@ export default function Gallery({ settings, onChangeSettings }: GalleryProps) {
                 );
                 if (generation !== requestGenerationRef.current)
                     return;
+
+                indexGenerationRef.current = data.indexGeneration;
+                setUnscannedFolderCount(data.unscannedFolderCount ?? 0);
 
                 const targetSrc = new URLSearchParams(window.location.search).get("src");
                 const merged: ImageFileInfo[] = [];
@@ -890,6 +903,87 @@ export default function Gallery({ settings, onChangeSettings }: GalleryProps) {
         settings.searchText,
         settings.avifOnly,
     ]);
+
+    // Update the already-loaded range when background discovery or a visit
+    // completes. These reads never enqueue further scans or reset the gallery.
+    React.useEffect(() => {
+        const controller = new AbortController();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const poll = async () => {
+            try {
+                if (loadingRef.current || lightboxRef.current?.pswp || document.hidden)
+                    return;
+                const status = await fetch("/api/images/index/status", {
+                    signal: controller.signal, cache: "no-store",
+                });
+                if (!status.ok)
+                    return;
+                const { generation: indexGeneration } = await status.json() as { generation: number };
+                if (!Number.isSafeInteger(indexGeneration) || indexGeneration === indexGenerationRef.current
+                    || loadingRef.current)
+                    return;
+
+                const requestGeneration = requestGenerationRef.current;
+                const previousItems = imgItemsRef.current;
+                const desiredCount = Math.max(PAGE_SIZE, previousItems.length);
+                const files: ImageFileInfo[] = [];
+                const seen = new Set<string>();
+                let cursor: string | null = null;
+                let page: ImageListResponse;
+                do {
+                    page = await fetchImageList(curDir, settings.searchText, cursor,
+                        settings.filesRecursive, settings.imageSortOrder, settings.avifOnly,
+                        controller.signal, false);
+                    for (const file of page.imageFiles) {
+                        if (!seen.has(file.src)) {
+                            seen.add(file.src);
+                            files.push(file);
+                        }
+                    }
+                    cursor = page.nextCursor;
+                } while (cursor !== null && files.length < desiredCount);
+
+                // Navigation, pagination, deletion, or opening a lightbox may
+                // have happened while the replacement pages were in flight.
+                if (controller.signal.aborted || requestGeneration !== requestGenerationRef.current
+                    || loadingRef.current || imgItemsRef.current !== previousItems
+                    || lightboxRef.current?.pswp)
+                    return;
+                indexGenerationRef.current = indexGeneration;
+                nextCursorRef.current = page.nextCursor;
+                imgItemsRef.current = files;
+                setImgItems(files);
+                setFolders(page.folders);
+                setTotalImgCount(page.totalImageCount);
+                setUnscannedFolderCount(page.unscannedFolderCount ?? 0);
+                setThumbnailWidth(page.thumbnailWidth || 512);
+                setThumbnailHeight(page.thumbnailHeight || 512);
+            } catch (error) {
+                if (!controller.signal.aborted)
+                    console.error("Failed to refresh visited folders:", error);
+            } finally {
+                if (!controller.signal.aborted)
+                    timer = setTimeout(() => { void poll(); }, 2000);
+            }
+        };
+        timer = setTimeout(() => { void poll(); }, 2000);
+        return () => { controller.abort(); clearTimeout(timer); };
+    }, [curDir, settings.searchText, settings.filesRecursive, settings.imageSortOrder, settings.avifOnly]);
+
+    const discoverMoreContents = async () => {
+        const generation = requestGenerationRef.current;
+        setDiscoveringContents(true);
+        try {
+            const page = await fetchImageList(curDir, settings.searchText, null,
+                settings.filesRecursive, settings.imageSortOrder, settings.avifOnly);
+            if (generation === requestGenerationRef.current)
+                setUnscannedFolderCount(page.unscannedFolderCount ?? 0);
+        } catch (error) {
+            console.error("Failed to request folder contents:", error);
+        } finally {
+            setDiscoveringContents(false);
+        }
+    };
 
     React.useEffect(() => {
         if (!lightboxRef.current) {
@@ -1638,6 +1732,13 @@ export default function Gallery({ settings, onChangeSettings }: GalleryProps) {
                         )}
                     />
                 </>
+            )}
+
+            {settings.filesRecursive && unscannedFolderCount > 0 && (
+                <button type="button" disabled={discoveringContents}
+                    onClick={() => { void discoverMoreContents(); }}>
+                    {discoveringContents ? "Checking folders…" : `Check more folders (${unscannedFolderCount} remaining)`}
+                </button>
             )}
 
             <style>{`
