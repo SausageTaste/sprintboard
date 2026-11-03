@@ -174,6 +174,14 @@ namespace {
                 index.current_tag_analysis(image).has_value(),
                 "synced tags remain valid after timestamp changes"
             );
+            require(
+                scalar(
+                    destination,
+                    "SELECT input_modified_time FROM image_tag_analysis;"
+                ) == "1700000123000000000",
+                "tag validation persists timestamp-only changes for the next "
+                "fast path"
+            );
         }
         require(
             scalar(destination, "SELECT modified_time FROM image_metadata;") ==
@@ -619,6 +627,26 @@ namespace {
                     moved_proxy, "materialized"
                 ),
                 "proxy tracking survives relocation"
+            );
+            set_modified_seconds(moved_proxy, 1'700'000'456);
+            require(
+                index.proxy_materialization_current(
+                    moved_proxy, "materialized"
+                ),
+                "timestamp-only proxy changes retain a matching materialization"
+            );
+            require(
+                scalar(
+                    moved, "SELECT proxy_modified_time FROM image_tag_analysis;"
+                ) == "1700000456000000000",
+                "proxy validation persists the new timestamp instead of "
+                "repeatedly hashing"
+            );
+            require(
+                index.proxy_materialization_current(
+                    moved_proxy, "materialized"
+                ),
+                "subsequent proxy validation uses the saved fingerprint"
             );
         }
         const auto backup = temp / "valid.sqlite3";

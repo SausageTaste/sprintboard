@@ -116,6 +116,8 @@ When only the timestamp changes (including sync-related precision changes), a
 matching content hash reuses metadata and saves the new timestamp. New or changed
 files are inspected and hashed. Relative paths and these portable fingerprints
 allow Windows and macOS to reuse the same collection database.
+Tag and proxy validation also saves timestamp-only changes after a matching hash,
+so subsequent checks can reuse the size-and-time fast path.
 
 For a Dropbox-synced collection, update Sprintboard on both computers before
 opening a schema-eight database. Keep images and the hidden `.sprintboard` folder

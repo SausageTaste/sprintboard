@@ -2756,7 +2756,7 @@ public:
 
     std::optional<TagAnalysisRecord> current_tag_analysis(
         const Path& source_path, const bool require_current_analyzer
-    ) const {
+    ) {
         std::lock_guard refresh_lock{ refresh_mutex_ };
         const auto logical_path = sung::detail::logical_image_key(source_path);
         if (require_current_analyzer && !tag_ready(logical_path))
@@ -2791,12 +2791,19 @@ public:
         auto output = found->second;
         output.input_size_ = fingerprint->size_;
         output.input_modified_time_ = fingerprint->modified_time_;
+        if (output.input_modified_time_ != found->second.input_modified_time_) {
+            // Never replace an inference result that is waiting for storage
+            // recovery with the older committed analysis being validated.
+            auto* store = owner(logical_path);
+            if (store && !store->pending_tags_.contains(logical_path))
+                persist_tag_analysis(output);
+        }
         return output;
     }
 
     bool proxy_materialization_current(
         const Path& proxy_path, const std::string_view materialization_id
-    ) const {
+    ) {
         std::lock_guard refresh_lock{ refresh_mutex_ };
         const auto logical_path = sung::detail::logical_image_key(proxy_path);
         const auto found = tag_analyses_.find(logical_path);
@@ -2807,13 +2814,23 @@ public:
             ) != make_path_key(canonical_path(proxy_path))) {
             return false;
         }
-        return ::validate_fingerprint(
-                   proxy_path,
-                   found->second.proxy_size_,
-                   found->second.proxy_modified_time_,
-                   found->second.proxy_sha256_
-        )
-            .has_value();
+        const auto fingerprint = ::validate_fingerprint(
+            proxy_path,
+            found->second.proxy_size_,
+            found->second.proxy_modified_time_,
+            found->second.proxy_sha256_
+        );
+        if (!fingerprint)
+            return false;
+        if (fingerprint->modified_time_ != found->second.proxy_modified_time_) {
+            auto* store = owner(logical_path);
+            if (store && !store->pending_tags_.contains(logical_path)) {
+                auto updated = found->second;
+                updated.proxy_modified_time_ = fingerprint->modified_time_;
+                persist_tag_analysis(updated);
+            }
+        }
+        return true;
     }
 
     void mark_proxy_materialized(
