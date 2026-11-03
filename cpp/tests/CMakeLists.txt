@@ -194,6 +194,11 @@ add_test(NAME ${PROJECT_NAME}_test_gallery_snapshot COMMAND ${PROJECT_NAME}_test
 target_include_directories(${PROJECT_NAME}_test_gallery_snapshot PRIVATE ../src/server/src)
 target_link_libraries(${PROJECT_NAME}_test_gallery_snapshot sprintboard_img)
 
+add_executable(${PROJECT_NAME}_test_proxy_queue proxy_queue.cpp)
+add_test(NAME ${PROJECT_NAME}_test_proxy_queue COMMAND ${PROJECT_NAME}_test_proxy_queue)
+target_include_directories(${PROJECT_NAME}_test_proxy_queue PRIVATE ../src/server/src)
+target_link_libraries(${PROJECT_NAME}_test_proxy_queue sprintboard_aux)
+
 add_executable(
     ${PROJECT_NAME}_test_image_index_startup
     image_index_startup.cpp
