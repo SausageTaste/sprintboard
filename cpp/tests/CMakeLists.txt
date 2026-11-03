@@ -199,6 +199,11 @@ add_test(NAME ${PROJECT_NAME}_test_proxy_queue COMMAND ${PROJECT_NAME}_test_prox
 target_include_directories(${PROJECT_NAME}_test_proxy_queue PRIVATE ../src/server/src)
 target_link_libraries(${PROJECT_NAME}_test_proxy_queue sprintboard_aux)
 
+add_executable(${PROJECT_NAME}_test_tag_queue tag_queue.cpp)
+add_test(NAME ${PROJECT_NAME}_test_tag_queue COMMAND ${PROJECT_NAME}_test_tag_queue)
+target_include_directories(${PROJECT_NAME}_test_tag_queue PRIVATE ../src/server/src)
+target_link_libraries(${PROJECT_NAME}_test_tag_queue sprintboard_aux)
+
 add_executable(
     ${PROJECT_NAME}_test_image_index_startup
     image_index_startup.cpp
