@@ -23,21 +23,29 @@ int main() {
         defaults.fill_default();
         if (!check(
                 defaults.image_index_full_refresh_interval_seconds_ == 30 &&
-                    defaults.image_index_date_refresh_interval_seconds_ == 5,
-                "default scan intervals retain full scanning and enable quick "
-                "scans"
+                    defaults.image_index_date_refresh_interval_seconds_ == 5 &&
+                    defaults.image_index_folder_discovery_interval_seconds_ ==
+                        300 &&
+                    defaults.image_index_visit_refresh_interval_seconds_ == 60,
+                "default intervals separate folder discovery from visited "
+                "contents"
             ))
             return 1;
         defaults.import_json({ { "avif_pix_format", "yuv444" } });
         if (!check(
                 defaults.image_index_full_refresh_interval_seconds_ == 30 &&
-                    defaults.image_index_date_refresh_interval_seconds_ == 5,
+                    defaults.image_index_date_refresh_interval_seconds_ == 5 &&
+                    defaults.image_index_folder_discovery_interval_seconds_ ==
+                        300 &&
+                    defaults.image_index_visit_refresh_interval_seconds_ == 60,
                 "old config files receive default scan intervals"
             ))
             return 1;
         for (const auto* key :
              { "image_index_full_refresh_interval_seconds",
-               "image_index_date_refresh_interval_seconds" }) {
+               "image_index_date_refresh_interval_seconds",
+               "image_index_folder_discovery_interval_seconds",
+               "image_index_visit_refresh_interval_seconds" }) {
             for (const double value : { -1.0, 0.5 }) {
                 bool rejected = false;
                 try {
@@ -54,7 +62,7 @@ int main() {
         );
         if (!check(
                 defaults.image_index_date_refresh_interval_seconds_ == 0,
-                "date scans can be disabled"
+                "legacy date interval remains readable"
             ))
             return 1;
     }
@@ -80,7 +88,9 @@ int main() {
         "tagger_batch_size": 8,
         "tagger_poll_interval_seconds": 12.5,
         "image_index_full_refresh_interval_seconds": 300,
-        "image_index_date_refresh_interval_seconds": 7.5
+        "image_index_date_refresh_interval_seconds": 7.5,
+        "image_index_folder_discovery_interval_seconds": 120,
+        "image_index_visit_refresh_interval_seconds": 15
     })");
 
     sung::ServerConfigs configs;
@@ -143,7 +153,13 @@ int main() {
                 configs.image_index_date_refresh_interval_seconds_ == 7.5 &&
                 exported.at("image_index_full_refresh_interval_seconds") ==
                     300 &&
-                exported.at("image_index_date_refresh_interval_seconds") == 7.5,
+                exported.at("image_index_date_refresh_interval_seconds") ==
+                    7.5 &&
+                configs.image_index_folder_discovery_interval_seconds_ == 120 &&
+                configs.image_index_visit_refresh_interval_seconds_ == 15 &&
+                exported.at("image_index_folder_discovery_interval_seconds") ==
+                    120 &&
+                exported.at("image_index_visit_refresh_interval_seconds") == 15,
             "imports and exports independent scan intervals"
         ))
         return 1;

@@ -72,13 +72,27 @@ namespace sung {
             std::shared_ptr<const ServerConfigs> configs, std::string_view date
         );
 
+        // Discover directory structure without inspecting image contents.
+        void discover_folders(std::shared_ptr<const ServerConfigs> configs);
+        ImageIndexRefreshStats refresh_folder(
+            std::shared_ptr<const ServerConfigs> configs, const Path& directory
+        );
+        // Queue the opened folder and parents represented on this page.
+        // Recursive visits also explore up to four newly discovered folders.
+        void visit_page(
+            const Path& directory,
+            const nlohmann::json& page,
+            bool recursive = false
+        );
+        size_t unscanned_folders(const Path& directory) const;
+        uint64_t generation() const;
+
         std::string_view initial_refresh_state() const;
         bool ready_for_background_work() const;
 
         // Publish the recent five days first, then reconcile the full library.
-        // Repeat full and recent scans at their configured completion
-        // intervals. The dedicated worker serializes scans separately from
-        // other tasks.
+        // Afterwards, discover folders periodically and reconcile visited
+        // folders on the dedicated worker. Full refresh remains explicit.
         void start_auto_refresh(
             std::function<std::shared_ptr<const ServerConfigs>()>
                 configs_provider

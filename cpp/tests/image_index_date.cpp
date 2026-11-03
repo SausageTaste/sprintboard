@@ -332,60 +332,135 @@ int main() {
         }
         {
             const auto scheduled_root = temp / "scheduled";
-            const auto current = today_name();
-            add(scheduled_root / "2000-01-01" / "old.avif");
+            add(scheduled_root / "visited" / "old.avif");
+            add(scheduled_root / "archive" / "old.avif");
             auto scheduled = std::make_shared<sung::ServerConfigs>(*configs);
             scheduled->dir_bindings_["test"].local_dir_ = scheduled_root;
             scheduled->cache_dir_ = sung::tostr(temp / "scheduled-cache");
-            scheduled->image_index_full_refresh_interval_seconds_ = 60;
-            scheduled->image_index_date_refresh_interval_seconds_ = 1;
+            scheduled->image_index_folder_discovery_interval_seconds_ = 1;
+            scheduled->image_index_visit_refresh_interval_seconds_ = 60;
             sung::ServerConfigsHolder holder;
             holder.store(scheduled);
             sung::ImageIndex index;
             index.start_auto_refresh([&] { return holder.get(); });
             require(
                 eventually([&] { return index.ready_for_background_work(); }),
-                "scheduled full scan runs immediately"
+                "startup reconciliation completes before visit processing"
             );
-            fs::remove(scheduled_root / "2000-01-01" / "old.avif");
-            add(scheduled_root / current / "first.avif");
-            add(scheduled_root / today_name(4) / "recent.avif");
-            add(scheduled_root / today_name(5) / "excluded.avif");
-            const auto date_path = "test/" + current;
-            const auto oldest_path = "test/" + today_name(4);
-            const auto excluded_path = "test/" + today_name(5);
+            fs::remove(scheduled_root / "archive" / "old.avif");
+            add(scheduled_root / "archive" / "unvisited.avif");
+            add(scheduled_root / "visited" / "new.avif");
+            add(scheduled_root / "visited" / "child" / "deep.avif");
+            add(scheduled_root / "discovered" / "new.avif");
             require(
                 eventually([&] {
-                    return count(index, date_path.c_str()) == 1 &&
-                           count(index, oldest_path.c_str()) == 1;
+                    const auto page =
+                        index.query(sung::fromstr("test"), "", false)
+                            .make_json(0, 100);
+                    for (const auto& folder : page["folders"])
+                        if (folder["path"] == "test/discovered")
+                            return true;
+                    return false;
                 }),
-                "automatic scan discovers folders from today and four days ago"
+                "periodic discovery publishes new folders"
             );
             require(
-                count(index, "test/2000-01-01") == 1 &&
-                    count(index, excluded_path.c_str()) == 0,
-                "quick schedule does not run a full reconciliation"
+                count(index) == 2 && count(index, "test/discovered") == 0,
+                "discovery does not inspect new files or reconcile existing "
+                "contents"
             );
-            auto disabled = std::make_shared<sung::ServerConfigs>(*scheduled);
-            disabled->image_index_date_refresh_interval_seconds_ = 0;
-            holder.store(disabled);
-            add(scheduled_root / current / "second.avif");
-            std::this_thread::sleep_for(std::chrono::milliseconds(1300));
+
+            // Simulate a recursive page containing only one descendant folder.
+            const auto page =
+                index.query(sung::fromstr("test/visited"), "", true)
+                    .make_json(0, 100);
+            for (int i = 0; i < 20; ++i)
+                index.visit_page(sung::fromstr("test"), page);
             require(
-                count(index, date_path.c_str()) == 1,
-                "reloaded settings disable date scanning"
+                eventually([&] { return count(index, "test/visited") == 2; }),
+                "a recursive page queues its represented parent folder"
             );
-            auto full = std::make_shared<sung::ServerConfigs>(*disabled);
-            full->image_index_full_refresh_interval_seconds_ = 1;
-            holder.store(full);
             require(
-                eventually([&] {
-                    return count(index, date_path.c_str()) == 2 &&
-                           count(index, "test/2000-01-01") == 0;
-                }),
-                "full scans continue with date scans disabled and honor "
-                "changed intervals"
+                count(index, "test/visited/child") == 0 &&
+                    count(index, "test/archive") == 1,
+                "visits stay shallow and preserve unvisited descendants and "
+                "siblings"
             );
+            add(scheduled_root / "visited" / "later.avif");
+            index.visit_page(sung::fromstr("test/visited"), page);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+            require(
+                count(index, "test/visited") == 2,
+                "repeated visits respect the freshness interval"
+            );
+            auto faster = std::make_shared<sung::ServerConfigs>(*scheduled);
+            faster->image_index_visit_refresh_interval_seconds_ = 1;
+            holder.store(faster);
+            index.visit_page(sung::fromstr("test/visited"), page);
+            require(
+                eventually([&] { return count(index, "test/visited") == 3; }),
+                "visit interval changes reload without restart"
+            );
+            fs::remove(scheduled_root / "visited" / "old.avif");
+            const auto shallow = index.refresh_folder(
+                faster, sung::fromstr("test/visited")
+            );
+            require(
+                shallow.files_scanned_ == 2 && shallow.metadata_removed_ == 1,
+                "shallow reconciliation removes only direct deleted files"
+            );
+            index.refresh_folder(faster, sung::fromstr("test/discovered"));
+            require(
+                count(index, "test/discovered") == 1,
+                "opening a newly discovered folder inspects its contents"
+            );
+            fs::remove_all(scheduled_root / "discovered");
+            index.refresh_folder(faster, sung::fromstr("test/discovered"));
+            require(
+                count(index, "test/discovered") == 0,
+                "visiting a removed directory clears its direct cached contents"
+            );
+            for (int i = 0; i < 6; ++i)
+                add(scheduled_root / "batch" / std::to_string(i) / "new.avif");
+            index.discover_folders(faster);
+            const auto batch = sung::fromstr("test/batch");
+            const auto empty_page =
+                index.query(batch, "", true).make_json(0, 100);
+            index.visit_page(batch, empty_page, true);
+            require(
+                eventually([&] { return count(index, "test/batch") == 4; }),
+                "recursive visits discover a bounded batch of new folder "
+                "contents"
+            );
+            std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+            require(
+                count(index, "test/batch") == 4 &&
+                    index.unscanned_folders(batch) == 2,
+                "periodic discovery does not drain unvisited folder contents"
+            );
+            index.visit_page(batch, empty_page, true);
+            require(
+                eventually([&] { return count(index, "test/batch") == 6; }),
+                "a later recursive visit continues discovering contents"
+            );
+            const auto generation = index.generation();
+            fs::rename(scheduled_root, temp / "offline-scheduled");
+            index.discover_folders(faster);
+            index.refresh_folder(faster, sung::fromstr("test/visited"));
+            require(
+                count(index, "test/visited") == 2 &&
+                    index.generation() > generation,
+                "unavailable roots retain their cached contents during "
+                "discovery and visits"
+            );
+            fs::rename(temp / "offline-scheduled", scheduled_root);
+            bool rejected = false;
+            try {
+                index.refresh_folder(faster, sung::fromstr("../outside"));
+            } catch (const std::invalid_argument&) {
+                rejected = true;
+            }
+            require(rejected, "visit paths cannot escape a configured root");
         }
         fs::remove_all(temp);
         return 0;

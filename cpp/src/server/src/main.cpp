@@ -323,6 +323,7 @@ int main() {
         if (it_param_avif_only != req.params.end())
             avif_only = it_param_avif_only->second == "1";
 
+        const auto index_generation = image_index.generation();
         sung::ImageListResponse response = image_index.query(
             sung::fromstr(param_dir), query, recursive, sort_order, avif_only
         );
@@ -339,6 +340,17 @@ int main() {
             }
             json_data = *cursor_response;
         }
+        // Visits refresh represented folders and a bounded discovery batch.
+        // Polls use visit=0 so refreshing cached results cannot perpetually
+        // schedule more filesystem work.
+        if (!req.has_param("visit") || req.get_param_value("visit") != "0")
+            image_index.visit_page(
+                sung::fromstr(param_dir), json_data, recursive
+            );
+        json_data["unscannedFolderCount"] =
+            recursive ? image_index.unscanned_folders(sung::fromstr(param_dir))
+                      : 0;
+        json_data["indexGeneration"] = index_generation;
         const auto json_str = json_data.dump();
         res.status = 200;
         res.set_content(json_str, "application/json");
@@ -348,7 +360,8 @@ int main() {
     svr.Get("/api/images/index/status", [&](const HttpReq&, HttpRes& res) {
         res.set_header("Cache-Control", "no-store");
         res.set_content(
-            nlohmann::json{ { "state", image_index.initial_refresh_state() } }
+            nlohmann::json{ { "state", image_index.initial_refresh_state() },
+                            { "generation", image_index.generation() } }
                 .dump(),
             "application/json"
         );

@@ -137,6 +137,8 @@ namespace sung {
         tls_certfile_ = "";
         image_index_full_refresh_interval_seconds_ = 30;
         image_index_date_refresh_interval_seconds_ = 5;
+        image_index_folder_discovery_interval_seconds_ = 300;
+        image_index_visit_refresh_interval_seconds_ = 60;
 
         avif_pix_format_ = ServerConfigs::AvifPixelFormat::yuv444;
         avif_quality_ = 70.0;
@@ -268,6 +270,21 @@ namespace sung {
         image_index_full_refresh_interval_seconds_ = try_get(
             json_data, "image_index_full_refresh_interval_seconds", 30.0
         );
+        image_index_folder_discovery_interval_seconds_ = try_get(
+            json_data, "image_index_folder_discovery_interval_seconds", 300.0
+        );
+        image_index_visit_refresh_interval_seconds_ = try_get(
+            json_data, "image_index_visit_refresh_interval_seconds", 60.0
+        );
+        for (const auto interval :
+             { image_index_folder_discovery_interval_seconds_,
+               image_index_visit_refresh_interval_seconds_ }) {
+            if (!std::isfinite(interval) || interval < 1)
+                throw std::runtime_error(
+                    "Folder discovery and visit refresh intervals must be "
+                    "finite and at least 1"
+                );
+        }
         image_index_date_refresh_interval_seconds_ = try_get(
             json_data, "image_index_date_refresh_interval_seconds", 5.0
         );
@@ -360,6 +377,10 @@ namespace sung {
             image_index_full_refresh_interval_seconds_;
         output["image_index_date_refresh_interval_seconds"] =
             image_index_date_refresh_interval_seconds_;
+        output["image_index_folder_discovery_interval_seconds"] =
+            image_index_folder_discovery_interval_seconds_;
+        output["image_index_visit_refresh_interval_seconds"] =
+            image_index_visit_refresh_interval_seconds_;
 
         output["avif_pix_format"] = ::tostr(avif_pix_format_);
         output["avif_quality"] = avif_quality_;

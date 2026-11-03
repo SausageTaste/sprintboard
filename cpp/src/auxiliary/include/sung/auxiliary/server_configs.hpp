@@ -77,9 +77,12 @@ namespace sung {
         std::string server_host_;
         int server_port_;
 
-        // Image discovery intervals; zero disables date-only scans.
+        // Legacy intervals remain readable for configuration compatibility.
         double image_index_full_refresh_interval_seconds_ = 30;
         double image_index_date_refresh_interval_seconds_ = 5;
+        // Folder discovery cadence and minimum delay between content visits.
+        double image_index_folder_discovery_interval_seconds_ = 300;
+        double image_index_visit_refresh_interval_seconds_ = 60;
 
         // AVIF encoding settings
         AvifPixelFormat avif_pix_format_;
