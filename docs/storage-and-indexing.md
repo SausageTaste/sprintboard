@@ -57,17 +57,21 @@ After the startup scans, indexing uses three tasks:
 - **Folder discovery** walks the directory tree every five minutes. It updates
   the folder list without reading image contents, hashing files, or reconciling
   image and tag deletions. Unchanged discoveries do not rewrite the saved gallery.
-- **Visited-folder scanning** checks the immediate contents of the opened folder
-  and the parent folders of images in each requested page. Recursive browsing
-  therefore refreshes folders as their images are loaded, without scanning the
-  entire subtree. Duplicate requests share one queued scan, and each folder has
-  a minimum interval between scans. Content probing uses at most four concurrent
-  tasks on the index worker.
+- **Visited-folder scanning** checks the immediate contents of the opened folder.
+  With recursive browsing enabled, it checks the entire selected subtree,
+  including newly created folders and the first image in a previously empty
+  folder. A recursive visit to the top-level gallery queues every configured root.
+  Duplicate requests share one queued scan; recursive requests expand a pending
+  shallow scan. Requests inside the minimum interval remain queued until due,
+  while other eligible folders can proceed. Content probing uses at most four
+  concurrent tasks on the index worker.
 
-Newly discovered folders have no images in the cached list yet. A recursive visit
-also queues up to four of these folders. Further pages or the **Check more
-folders** button request additional batches; background result polling never
-queues more scans. Opening a folder directly always requests its contents.
+The open gallery requests a visit every 15 seconds, even when the index has not
+changed. These requests do not replace the loaded pages. Index updates trigger
+separate passive reads of the loaded page range. Visits and result updates pause
+while a lightbox is open or the browser tab is hidden; already queued server work
+can finish. Recursive visits inspect all descendant contents automatically, so
+there is no additional folder-batch button.
 
 The gallery shows cached results immediately and refreshes the loaded page range
 when background work publishes an update. Refresh waits while a lightbox is open
@@ -90,8 +94,9 @@ second. The date-scan interval also accepts `0` to disable recurring date scans:
 ```
 
 The date-scan and discovery intervals are measured after each pass completes.
-The visit interval is a minimum delay after a folder scan attempt; it does not
-schedule scans while nobody is visiting. The former
+The visit interval is a minimum delay after a folder scan attempt. A queued
+request runs when that delay expires, even if the browser has since left; it does
+not schedule further scans without another visit request. The former
 `image_index_full_refresh_interval_seconds` field
 remains readable for compatibility but no longer schedules recurring full scans.
 Disabling periodic date scans does not change startup: it still scans today and
@@ -115,8 +120,10 @@ The gallery polls every two seconds until ready (five seconds after failures).
 The status response also includes an index `generation`; the gallery checks it
 while open to pick up completed discovery and content scans. List requests use
 `visit=0` for passive result refreshes and otherwise queue visited folders.
-Responses include `indexGeneration` and `unscannedFolderCount` for incremental
-recursive discovery. The existing manual refresh API remains available.
+Responses retain `indexGeneration` and `unscannedFolderCount` for compatibility.
+The latter counts discovered folders whose contents have not yet been scanned;
+successful recursive scans clear their entire scope. The existing manual refresh
+API remains available.
 
 ## Portable files and cloud sync
 

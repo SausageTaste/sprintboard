@@ -72,7 +72,10 @@ copy; see [deletion behavior](docs/storage-and-indexing.md#deleting-images).
 At startup, recent date folders appear first, followed by a full library scan.
 After that, today's date folders and the previous four days are checked every
 **5 seconds**. Other folders are discovered every **5 minutes** and their contents
-checked as you browse, with a **60-second** minimum between visit scans.
+checked while their gallery is open, with a **60-second** minimum between visit
+scans. Enabling recursive browsing checks the selected folder's entire subtree,
+including new and previously empty folders. The gallery requests a visit every
+**15 seconds** while visible and the image viewer is closed.
 Other unvisited contents can stay out of date; manual refresh scans the whole library.
 
 See [indexing and storage](docs/storage-and-indexing.md) for scan settings,
