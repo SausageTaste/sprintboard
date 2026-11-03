@@ -3334,6 +3334,7 @@ namespace sung {
             using Clock = std::chrono::steady_clock;
             std::optional<Clock::time_point> last_full;
             std::optional<Clock::time_point> last_discovery;
+            std::optional<Clock::time_point> last_recent;
             bool startup_recent_attempted = false;
             while (!auto_refresh_stop_) {
                 if (!last_full)
@@ -3360,15 +3361,25 @@ namespace sung {
                         full_attempted = true;
                         this->refresh(configs);
                         last_discovery = Clock::now();
-                    } else if (
-                        due(
-                            last_discovery,
-                            configs
-                                ->image_index_folder_discovery_interval_seconds_
-                        )
-                    ) {
-                        this->discover_folders(configs);
-                        last_discovery = Clock::now();
+                        last_recent = Clock::now();
+                    } else {
+                        if (due(
+                                last_discovery,
+                                configs
+                                    ->image_index_folder_discovery_interval_seconds_
+                            )) {
+                            this->discover_folders(configs);
+                            last_discovery = Clock::now();
+                        }
+                        // Refresh recent date-named folders even without a
+                        // visit. Measure from completion to avoid catch-up
+                        // loops, and recompute the local date for rollover.
+                        const auto interval =
+                            configs->image_index_date_refresh_interval_seconds_;
+                        if (interval > 0 && due(last_recent, interval)) {
+                            this->refresh_recent(configs, local_date_folder());
+                            last_recent = Clock::now();
+                        }
                     }
                     if (ready_for_background_work())
                         impl_->refresh_next_visit(configs);

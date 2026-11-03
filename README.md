@@ -70,9 +70,10 @@ copy; see [deletion behavior](docs/storage-and-indexing.md#deleting-images).
 ## When images update
 
 At startup, recent date folders appear first, followed by a full library scan.
-After that, Sprintboard discovers folders every **5 minutes** and checks contents
-as you browse, with a **60-second** minimum between scans of the same folder.
-Unvisited folders can stay out of date; manual refresh scans the whole library.
+After that, today's date folders and the previous four days are checked every
+**5 seconds**. Other folders are discovered every **5 minutes** and their contents
+checked as you browse, with a **60-second** minimum between visit scans.
+Other unvisited contents can stay out of date; manual refresh scans the whole library.
 
 See [indexing and storage](docs/storage-and-indexing.md) for scan settings,
 backups, cloud sync, and migrations. Back up each collection's hidden

@@ -65,8 +65,10 @@ These settings reload automatically.
 |`dir_bindings` |Add folder entries here. Each key will appear as a folder in the root directory, and all contents in `local_dir` will be placed inside it. You can use both absolute and relative paths for `local_dir`. Each binding maps to exactly one local directory. |
 |`image_index_folder_discovery_interval_seconds` |Seconds between folder discovery passes (default: `300`). |
 |`image_index_visit_refresh_interval_seconds` |Minimum seconds between scans of a visited folder (default: `60`). |
+|`image_index_date_refresh_interval_seconds` |Seconds between scans of today's date folders and the previous four days (default: `5`). Set `0` to disable periodic date scans. |
 
-Both scan intervals must be finite and at least one second. See
+Scan intervals must be finite and at least one second, except that the date-scan
+interval also accepts `0`. They reload without restarting. See
 [indexing behavior](storage-and-indexing.md#indexing-and-refresh) for how they work.
 
 ## Older configurations
@@ -74,9 +76,8 @@ Both scan intervals must be finite and at least one second. See
 Replace `"local_dirs": ["path"]` with `"local_dir": "path"`. Split bindings with
 multiple directories into separate entries; `local_dirs` is no longer supported.
 
-`image_index_full_refresh_interval_seconds` and
-`image_index_date_refresh_interval_seconds` remain readable for compatibility but
-no longer schedule recurring scans. Use the discovery and visit settings above.
+`image_index_full_refresh_interval_seconds` remains readable for compatibility
+but no longer schedules recurring full scans.
 
 ## Troubleshooting
 

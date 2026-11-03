@@ -46,8 +46,14 @@ reloads the current folder, filters, and sort order after each startup phase.
 Tagging and AVIF generation wait until the full reconciliation completes.
 Cached results can briefly include deleted images or omit new ones.
 
-After the startup scans, indexing uses two separate tasks:
+After the startup scans, indexing uses three tasks:
 
+- **Recent date-folder scanning** checks today's `YYYY-MM-DD` folders and the
+  previous four local calendar days every five seconds by default, even without
+  visits. It includes nested contents and newly created date folders, discovers
+  new images, and reconciles deletions in that window. Archived date folders and
+  undated image contents remain cached. Each pass recomputes the local date, so
+  the window advances at midnight. New images enter the tagging and AVIF queues.
 - **Folder discovery** walks the directory tree every five minutes. It updates
   the folder list without reading image contents, hashing files, or reconciling
   image and tag deletions. Unchanged discoveries do not rewrite the saved gallery.
@@ -65,27 +71,31 @@ queues more scans. Opening a folder directly always requests its contents.
 
 The gallery shows cached results immediately and refreshes the loaded page range
 when background work publishes an update. Refresh waits while a lightbox is open
-or the browser tab is hidden. Unvisited contents remain cached: global search
-and counts can omit new images or retain externally deleted images until their
+or the browser tab is hidden. Unvisited contents outside the recent date window
+remain cached: global search and counts can omit new images or retain externally
+deleted images until their
 folders are scanned. Manual refresh still reconciles the complete library.
 A startup full reconciliation also remains necessary before tagging and encoding
 begin; this scheduling change reduces recurring work, not initial indexing.
 
-Both settings reload without a restart and must be finite and at least one second:
+These settings reload without a restart and must be finite and at least one
+second. The date-scan interval also accepts `0` to disable recurring date scans:
 
 ```json
 {
+  "image_index_date_refresh_interval_seconds": 5,
   "image_index_folder_discovery_interval_seconds": 300,
   "image_index_visit_refresh_interval_seconds": 60
 }
 ```
 
-The discovery interval is measured after discovery completes. The visit interval
-is a minimum delay after a folder scan attempt; it does not schedule scans while
-nobody is visiting. The former `image_index_full_refresh_interval_seconds` and
-`image_index_date_refresh_interval_seconds` fields remain readable for config
-compatibility but no longer schedule recurring full or date scans. Startup still
-scans today and the previous four local calendar days first, then the full library.
+The date-scan and discovery intervals are measured after each pass completes.
+The visit interval is a minimum delay after a folder scan attempt; it does not
+schedule scans while nobody is visiting. The former
+`image_index_full_refresh_interval_seconds` field
+remains readable for compatibility but no longer schedules recurring full scans.
+Disabling periodic date scans does not change startup: it still scans today and
+the previous four local calendar days first, then the full library.
 All discovery and content scans run serially on the dedicated index worker, so a
 large individual folder or slow discovery can delay other queued visits.
 

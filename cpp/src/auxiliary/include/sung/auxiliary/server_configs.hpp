@@ -77,8 +77,9 @@ namespace sung {
         std::string server_host_;
         int server_port_;
 
-        // Legacy intervals remain readable for configuration compatibility.
+        // Legacy full-scan interval remains readable for compatibility.
         double image_index_full_refresh_interval_seconds_ = 30;
+        // Periodic five-day date-folder scans; zero disables recurring scans.
         double image_index_date_refresh_interval_seconds_ = 5;
         // Folder discovery cadence and minimum delay between content visits.
         double image_index_folder_discovery_interval_seconds_ = 300;

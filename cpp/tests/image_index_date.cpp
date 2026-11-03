@@ -331,6 +331,91 @@ int main() {
             );
         }
         {
+            const auto periodic_root = temp / "periodic";
+            const auto today = today_name();
+            const auto oldest = today_name(4);
+            const auto archive = today_name(5);
+            add(periodic_root / today / "old.avif");
+            add(periodic_root / archive / "old.avif");
+            fs::create_directories(periodic_root / "nested" / oldest);
+            auto periodic = std::make_shared<sung::ServerConfigs>(*configs);
+            periodic->dir_bindings_["test"].local_dir_ = periodic_root;
+            periodic->cache_dir_ = sung::tostr(temp / "periodic-cache");
+            periodic->image_index_date_refresh_interval_seconds_ = 1;
+            periodic->image_index_folder_discovery_interval_seconds_ = 1;
+            // This legacy value must not restore periodic full scans.
+            periodic->image_index_full_refresh_interval_seconds_ = 1;
+            sung::ServerConfigsHolder holder;
+            holder.store(periodic);
+            std::atomic<bool> disabled_seen{ false };
+            sung::ImageIndex index;
+            index.start_auto_refresh([&] {
+                const auto current = holder.get();
+                if (current->image_index_date_refresh_interval_seconds_ == 0)
+                    disabled_seen = true;
+                return current;
+            });
+            require(
+                eventually([&] { return index.ready_for_background_work(); }),
+                "periodic test completes startup reconciliation"
+            );
+
+            fs::remove(periodic_root / today / "old.avif");
+            fs::remove(periodic_root / archive / "old.avif");
+            add(periodic_root / today / "new.avif");
+            add(periodic_root / today / "child" / "deep.avif");
+            add(periodic_root / "nested" / oldest / "first.avif");
+            add(periodic_root / today_name(1) / "new-folder.avif");
+            add(periodic_root / archive / "unvisited.avif");
+            add(periodic_root / "loose.avif");
+            const auto indexed = [&](const std::string& dir) {
+                return count(index, ("test/" + dir).c_str());
+            };
+            require(
+                eventually([&] {
+                    return indexed(today) == 2 &&
+                           indexed("nested/" + oldest) == 1 &&
+                           indexed(today_name(1)) == 1;
+                }),
+                "periodic scans discover new images, new date folders, and "
+                "previously empty nested date folders without visits"
+            );
+            const auto page =
+                index.query(sung::fromstr("test"), "", true).make_json(0, 100);
+            bool old_today = false, old_archive = false, new_archive = false;
+            for (const auto& file : page["imageFiles"]) {
+                const auto path = file["src"].get<std::string>();
+                old_today |= path == "/img/test/" + today + "/old.avif";
+                old_archive |= path == "/img/test/" + archive + "/old.avif";
+                new_archive |= path ==
+                               "/img/test/" + archive + "/unvisited.avif";
+            }
+            require(
+                !old_today && old_archive && !new_archive && count(index) == 5,
+                "periodic scans reconcile recent deletions while preserving "
+                "archive and undated contents"
+            );
+
+            auto disabled = std::make_shared<sung::ServerConfigs>(*periodic);
+            disabled->image_index_date_refresh_interval_seconds_ = 0;
+            holder.store(disabled);
+            require(
+                eventually([&] { return disabled_seen.load(); }),
+                "worker observes disabled interval after prior scans finish"
+            );
+            add(periodic_root / today / "disabled.avif");
+            std::this_thread::sleep_for(std::chrono::milliseconds(1300));
+            require(
+                indexed(today) == 2,
+                "zero disables recurring date scans after config reload"
+            );
+            holder.store(periodic);
+            require(
+                eventually([&] { return indexed(today) == 3; }),
+                "re-enabling periodic date scans reloads without restart"
+            );
+        }
+        {
             const auto scheduled_root = temp / "scheduled";
             add(scheduled_root / "visited" / "old.avif");
             add(scheduled_root / "archive" / "old.avif");
