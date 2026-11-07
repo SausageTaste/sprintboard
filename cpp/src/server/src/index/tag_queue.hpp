@@ -65,6 +65,11 @@ namespace sung::detail {
             return std::move(entry.mapped());
         }
 
+        bool current(const TagInput& input) const {
+            const auto found = inputs_.find(input.logical_path_);
+            return found != inputs_.end() && found->second == input;
+        }
+
         void retry(
             const TagInput& input,
             Clock::duration delay,

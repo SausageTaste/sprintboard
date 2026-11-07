@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <ctime>
 #include <deque>
@@ -521,16 +522,21 @@ namespace {
 
 }  // namespace
 
-class sung::ImageIndex::Impl {
+namespace sung {
+
+    class IndexStorage;
+
+}
+
+// SQLite connections and all storage state are confined to the storage worker.
+class sung::IndexStorage {
 public:
-    void set_scan_observer(std::function<void(std::string_view)> observer) {
-        scan_observer_ = std::move(observer);
+    IndexStorage(
+        std::atomic_bool& loading,
+        const std::function<void(std::string_view)>& observer
+    )
+        : cache_loading_(loading), scan_observer_(observer) {
     }
-
-    bool loading_cache() const {
-        return cache_loading_.load();
-    }
-
     struct Store {
         Path root_;
         Path path_;
@@ -655,9 +661,8 @@ public:
     ) {
         const auto& input = item.input_path_.empty() ? item.attempt_input_path_
                                                      : item.input_path_;
-        const auto physical = sung::fromstr(
-            input.empty() ? item.logical_path_ : input
-        );
+        const auto physical =
+            sung::fromstr(input.empty() ? item.logical_path_ : input);
         return relative_path(
                    store,
                    sung::tostr(
@@ -678,7 +683,7 @@ public:
         const auto result = sqlite3_step(stmt);
         const auto version =
             result == SQLITE_ROW
-                ? std::optional<int>{ sqlite3_column_int(stmt, 0) }
+                ? std::optional<int>{sqlite3_column_int(stmt, 0)}
                 : std::nullopt;
         sqlite3_finalize(stmt);
         return version;
@@ -729,8 +734,10 @@ public:
         if (!valid) {
             store.blocked_ = true;
             std::println(
-                "ImageIndex: Preserving incompatible or corrupt database {}; "
-                "tagging is disabled for {} until it is repaired or opened by "
+                "ImageIndex: Preserving incompatible or corrupt database "
+                "{}; "
+                "tagging is disabled for {} until it is repaired or opened "
+                "by "
                 "a compatible application.",
                 sung::tostr(path),
                 sung::tostr(store.root_)
@@ -773,12 +780,11 @@ public:
                 continue;
             auto store = std::make_unique<Store>();
             store->root_ = root_paths.at(key);
-            store->path_ = store->root_ / ".sprintboard" /
-                           "image-index.sqlite3";
-            store->fallback_ = canonical_path(
-                                   sung::fromstr(configs.cache_dir_)
-                               ) /
-                               root_hash(key) / "image-index.sqlite3";
+            store->path_ =
+                store->root_ / ".sprintboard" / "image-index.sqlite3";
+            store->fallback_ =
+                canonical_path(sung::fromstr(configs.cache_dir_)) /
+                root_hash(key) / "image-index.sqlite3";
             stores_.emplace(key, std::move(store));
         }
         for (auto& [key, store] : stores_) {
@@ -811,7 +817,8 @@ public:
                 if (!inspect_database(*store, primary))
                     continue;
                 if (!inspect_database(*store, store->fallback_)) {
-                    // A broken fallback must not hide readable primary tags.
+                    // A broken fallback must not hide readable primary
+                    // tags.
                     load_readonly_tags(*store, primary, &resolved);
                     continue;
                 }
@@ -835,8 +842,9 @@ public:
             );
             if (initial_load && store->database_)
                 load_metadata(*store, &resolved);
-            // Merge primary then fallback exactly once. Readable tags remain
-            // available even when neither database can be opened for writing.
+            // Merge primary then fallback exactly once. Readable tags
+            // remain available even when neither database can be opened for
+            // writing.
             for (const auto& path : {primary, store->fallback_}) {
                 if (path == store->path_ && store->database_) {
                     load_tag_analyses(
@@ -851,7 +859,8 @@ public:
                 }
             }
             std::println(
-                "ImageIndex: Loaded cached metadata and tags for {} in {:.3f} "
+                "ImageIndex: Loaded cached metadata and tags for {} in "
+                "{:.3f} "
                 "seconds.",
                 tostr(store->root_),
                 load_timer.elapsed()
@@ -859,8 +868,8 @@ public:
             if (store->database_) {
                 store->loaded_ = true;
                 store->dirty_ = true;
-                // Reconcile readable local/fallback records into the selected
-                // store.
+                // Reconcile readable local/fallback records into the
+                // selected store.
                 for (const auto& [path, item] : tag_analyses_)
                     if (owner(path, &resolved) == store.get())
                         store->pending_tags_.try_emplace(path, item);
@@ -921,7 +930,8 @@ public:
             fs::create_directories(parent, ec);
         if (ec) {
             std::println(
-                "ImageIndex: Cannot create cache directory: {}. Using memory "
+                "ImageIndex: Cannot create cache directory: {}. Using "
+                "memory "
                 "only.",
                 ec.message()
             );
@@ -1005,51 +1015,63 @@ public:
                     database_,
                     "INSERT INTO image_tag_analysis "
                     "(logical_path,input_kind,input_path,input_size,input_"
-                    "modified_time,input_sha256,analyzer_fingerprint,model_id,"
+                    "modified_time,input_sha256,analyzer_fingerprint,model_"
+                    "id,"
                     "general_threshold,character_threshold,analysis_json,"
-                    "analyzed_at,attempt_input_path,attempt_input_size,attempt_"
+                    "analyzed_at,attempt_input_path,attempt_input_size,"
+                    "attempt_"
                     "input_modified_time,attempt_analyzer_fingerprint,last_"
                     "attempt_at,failure_count,last_error,analysis_id,proxy_"
-                    "path,proxy_size,proxy_modified_time,proxy_sha256,proxy_"
+                    "path,proxy_size,proxy_modified_time,proxy_sha256,"
+                    "proxy_"
                     "materialization_id) SELECT "
                     "logical_path,input_kind,input_path,input_size,input_"
-                    "modified_time,input_sha256,analyzer_fingerprint,model_id,"
+                    "modified_time,input_sha256,analyzer_fingerprint,model_"
+                    "id,"
                     "general_threshold,character_threshold,analysis_json,"
-                    "analyzed_at,attempt_input_path,attempt_input_size,attempt_"
+                    "analyzed_at,attempt_input_path,attempt_input_size,"
+                    "attempt_"
                     "input_modified_time,attempt_analyzer_fingerprint,last_"
                     "attempt_at,failure_count,last_error,analysis_id,proxy_"
-                    "path,proxy_size,proxy_modified_time,proxy_sha256,proxy_"
+                    "path,proxy_size,proxy_modified_time,proxy_sha256,"
+                    "proxy_"
                     "materialization_id FROM image_tag_analysis_v6;"
                 ) &&
                 execute_sql(database_, "DROP TABLE image_tag_analysis_v6;");
         }
         if (success && (schema_version == 6 || schema_version == 7)) {
-            // Legacy metadata used platform-specific file_clock ticks. There is
-            // no recorded source platform, so rebuild only this disposable
-            // table.
+            // Legacy metadata used platform-specific file_clock ticks.
+            // There is no recorded source platform, so rebuild only this
+            // disposable table.
             success = execute_sql(
                 database_, "DROP TABLE IF EXISTS image_metadata;"
             );
             if (success)
                 std::println(
-                    "ImageIndex: Upgrading to portable metadata fingerprints; "
-                    "rebuilding image metadata once (saved tags are preserved)."
+                    "ImageIndex: Upgrading to portable metadata "
+                    "fingerprints; "
+                    "rebuilding image metadata once (saved tags are "
+                    "preserved)."
                 );
         }
         if (success)
-            success =
-                execute_sql(
-                    database_,
-                    "CREATE TABLE IF NOT EXISTS image_metadata (physical_path "
-                    "TEXT PRIMARY KEY,file_size INTEGER NOT NULL,modified_time "
-                    "INTEGER NOT NULL,sort_time_ns INTEGER NOT NULL,eligible "
-                    "INTEGER NOT NULL,width INTEGER NOT NULL,height INTEGER "
-                    "NOT NULL,model TEXT NOT NULL,prompts_json TEXT NOT NULL,"
-                    "sha256 TEXT NOT NULL DEFAULT '');"
-                ) &&
-                execute_sql(database_, create_tag_table) &&
-                execute_sql(database_, "PRAGMA user_version=8;") &&
-                execute_sql(database_, "COMMIT;");
+            success = execute_sql(
+                          database_,
+                          "CREATE TABLE IF NOT EXISTS image_metadata "
+                          "(physical_path "
+                          "TEXT PRIMARY KEY,file_size INTEGER NOT "
+                          "NULL,modified_time "
+                          "INTEGER NOT NULL,sort_time_ns INTEGER NOT "
+                          "NULL,eligible "
+                          "INTEGER NOT NULL,width INTEGER NOT NULL,height "
+                          "INTEGER "
+                          "NOT NULL,model TEXT NOT NULL,prompts_json TEXT "
+                          "NOT NULL,"
+                          "sha256 TEXT NOT NULL DEFAULT '');"
+                      ) &&
+                      execute_sql(database_, create_tag_table) &&
+                      execute_sql(database_, "PRAGMA user_version=8;") &&
+                      execute_sql(database_, "COMMIT;");
         if (!success) {
             execute_sql(database_, "ROLLBACK;");
             sqlite3_close(database_);
@@ -1065,7 +1087,8 @@ public:
         sqlite3_stmt* statement = nullptr;
         if (sqlite3_prepare_v2(
                 database_,
-                "SELECT physical_path, file_size, modified_time, sort_time_ns, "
+                "SELECT physical_path, file_size, modified_time, "
+                "sort_time_ns, "
                 "eligible, width, height, model, prompts_json, sha256 FROM "
                 "image_metadata;",
                 -1,
@@ -1127,10 +1150,10 @@ public:
                  (incoming.analyzed_at_ == previous.analyzed_at_ && local &&
                   !analysis_local_[key]));
             auto chosen = incoming_wins ? incoming : previous;
-            const auto& retry = incoming.last_attempt_at_ >
-                                        previous.last_attempt_at_
-                                    ? incoming
-                                    : previous;
+            const auto& retry =
+                incoming.last_attempt_at_ > previous.last_attempt_at_
+                    ? incoming
+                    : previous;
             chosen.attempt_input_path_ = retry.attempt_input_path_;
             chosen.attempt_input_size_ = retry.attempt_input_size_;
             chosen.attempt_input_modified_time_ =
@@ -1252,7 +1275,8 @@ public:
                         sung::searchable_tags_from_analysis(analysis.analysis_);
                 } catch (const std::exception&) {
                     std::println(
-                        "ImageIndex: Preserving an unreadable tag record in "
+                        "ImageIndex: Preserving an unreadable tag record "
+                        "in "
                         "{}.",
                         sung::tostr(store.path_)
                     );
@@ -1264,9 +1288,8 @@ public:
                 sqlite3_column_text(statement, 12)
             );
             analysis.attempt_input_size_ = sqlite3_column_int64(statement, 13);
-            analysis.attempt_input_modified_time_ = sqlite3_column_int64(
-                statement, 14
-            );
+            analysis.attempt_input_modified_time_ =
+                sqlite3_column_int64(statement, 14);
             analysis.attempt_analyzer_fingerprint_ =
                 reinterpret_cast<const char*>(
                     sqlite3_column_text(statement, 15)
@@ -1294,13 +1317,15 @@ public:
             if (analysis.logical_path_.empty())
                 continue;
             bool valid = true;
-            for (auto* path : { &analysis.logical_path_,
-                                &analysis.input_path_,
-                                &analysis.attempt_input_path_,
-                                &analysis.proxy_path_ })
+            for (auto* path :
+                 {&analysis.logical_path_,
+                  &analysis.input_path_,
+                  &analysis.attempt_input_path_,
+                  &analysis.proxy_path_})
                 valid = restore_path(store, *path, resolved) && valid;
             if (valid) {
-                // restore_path already canonicalized and checked containment.
+                // restore_path already canonicalized and checked
+                // containment.
                 const auto physical = fromstr(analysis.logical_path_);
                 analysis.logical_path_ = make_path_key(
                     sprintboard_proxy_source_path(physical).value_or(physical)
@@ -1317,7 +1342,8 @@ public:
                 merge_analysis(analysis, local);
             } else {
                 std::println(
-                    "ImageIndex: Ignoring invalid relative tag paths in {}; "
+                    "ImageIndex: Ignoring invalid relative tag paths in "
+                    "{}; "
                     "preserving the stored row.",
                     sung::tostr(store.path_)
                 );
@@ -1353,8 +1379,10 @@ public:
         sqlite3_stmt* erase = nullptr;
         const auto upsert_sql =
             "INSERT INTO image_metadata "
-            "(physical_path, file_size, modified_time, sort_time_ns, eligible, "
-            "width, height, model, prompts_json, sha256) VALUES (?, ?, ?, ?, "
+            "(physical_path, file_size, modified_time, sort_time_ns, "
+            "eligible, "
+            "width, height, model, prompts_json, sha256) VALUES (?, ?, ?, "
+            "?, "
             "?, ?, ?, "
             "?, ?, ?) "
             "ON CONFLICT(physical_path) DO UPDATE SET "
@@ -1365,16 +1393,16 @@ public:
             "height=excluded.height, model=excluded.model, "
             "prompts_json=excluded.prompts_json, sha256=excluded.sha256;";
 
-        bool success = sqlite3_prepare_v2(
-                           database_, upsert_sql, -1, &upsert, nullptr
-                       ) == SQLITE_OK &&
-                       sqlite3_prepare_v2(
-                           database_,
-                           "DELETE FROM image_metadata WHERE physical_path=?;",
-                           -1,
-                           &erase,
-                           nullptr
-                       ) == SQLITE_OK;
+        bool success =
+            sqlite3_prepare_v2(database_, upsert_sql, -1, &upsert, nullptr) ==
+                SQLITE_OK &&
+            sqlite3_prepare_v2(
+                database_,
+                "DELETE FROM image_metadata WHERE physical_path=?;",
+                -1,
+                &erase,
+                nullptr
+            ) == SQLITE_OK;
 
         for (const auto& item : changed) {
             if (!success)
@@ -1439,9 +1467,9 @@ public:
         if (!database_)
             return false;
         auto item = original;
-        // Logical keys are case-folded on Windows. Persist the source spelling
-        // from a physical input so a moved cache also works on case-sensitive
-        // filesystems.
+        // Logical keys are case-folded on Windows. Persist the source
+        // spelling from a physical input so a moved cache also works on
+        // case-sensitive filesystems.
         const auto& input = original.input_path_.empty()
                                 ? original.attempt_input_path_
                                 : original.input_path_;
@@ -1451,10 +1479,11 @@ public:
                 sung::sprintboard_proxy_source_path(physical).value_or(physical)
             );
         }
-        for (auto* path : { &item.logical_path_,
-                            &item.input_path_,
-                            &item.attempt_input_path_,
-                            &item.proxy_path_ }) {
+        for (auto* path :
+             {&item.logical_path_,
+              &item.input_path_,
+              &item.attempt_input_path_,
+              &item.proxy_path_}) {
             const auto relative = relative_path(store, *path);
             if (!relative)
                 return false;
@@ -1477,7 +1506,8 @@ public:
             ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
             "?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(logical_path) DO UPDATE SET "
-            "input_kind=excluded.input_kind, input_path=excluded.input_path, "
+            "input_kind=excluded.input_kind, "
+            "input_path=excluded.input_path, "
             "input_size=excluded.input_size, "
             "input_modified_time=excluded.input_modified_time, "
             "input_sha256=excluded.input_sha256, "
@@ -1497,7 +1527,8 @@ public:
             "failure_count=excluded.failure_count, "
             "last_error=excluded.last_error, "
             "analysis_id=excluded.analysis_id, "
-            "proxy_path=excluded.proxy_path, proxy_size=excluded.proxy_size, "
+            "proxy_path=excluded.proxy_path, "
+            "proxy_size=excluded.proxy_size, "
             "proxy_modified_time=excluded.proxy_modified_time, "
             "proxy_sha256=excluded.proxy_sha256, "
             "proxy_materialization_id=excluded.proxy_materialization_id;";
@@ -1613,16 +1644,8 @@ public:
         for (const auto& [path, item] : store.pending_tags_) {
             store.persisted_tags_[path] = stored_logical_path(store, item);
             if (owner(path) == &store) {
-                const auto previous = tag_analyses_.find(path);
-                const bool changed = previous == tag_analyses_.end() ||
-                                     previous->second.analysis_id_ !=
-                                         item.analysis_id_ ||
-                                     previous->second.input_modified_time_ !=
-                                         item.input_modified_time_;
                 tag_analyses_.insert_or_assign(path, item);
                 analysis_local_[path] = store.path_ != store.fallback_;
-                if (changed && !item.analysis_.is_null())
-                    proxy_queue_.enqueue(fromstr(path), false, true);
             }
         }
         for (const auto& [path, relative] : store.deleted_tags_)
@@ -1634,14 +1657,15 @@ public:
 
     bool persist_tag_analysis(const CachedTagAnalysis& item) {
         auto* store = owner(item.logical_path_);
-        if (!store || store->blocked_)
+        if (!store)
             return false;
         store->deleted_tags_.erase(item.logical_path_);
         store->pending_tags_.insert_or_assign(item.logical_path_, item);
-        return flush_tag_store(*store);
+        return true;
     }
 
     bool erase_tag_analysis(const std::string& logical_path) {
+        tag_analyses_.erase(logical_path);
         for (auto& [key, store] : stores_) {
             store->pending_tags_.erase(logical_path);
             if (const auto it = store->persisted_tags_.find(logical_path);
@@ -1681,16 +1705,16 @@ public:
                     if (owner(path) == store.get())
                         erased.push_back(path);
             }
-            const bool metadata_ok = persist_changes(
-                *store, items, erased, store->dirty_
-            );
+            const bool metadata_ok =
+                persist_changes(*store, items, erased, store->dirty_);
             store->dirty_ = !metadata_ok;
             const bool tags_ok = flush_tag_store(*store);
             store->healthy_ = metadata_ok && tags_ok;
             if (!store->healthy_)
                 record_failure(*store);
         }
-        // A previous owner is pruned only after the new owner has committed.
+        // A previous owner is pruned only after the new owner has
+        // committed.
         for (auto& [key, store] : stores_) {
             for (const auto& [path, relative] : store->persisted_tags_) {
                 if (!reconcile_ownership)
@@ -1730,13 +1754,389 @@ public:
         });
     }
 
+    std::map<std::string, std::unique_ptr<Store>> stores_;
+    std::set<std::string> root_keys_;
+    std::map<std::string, std::string> binding_roots_;
+    std::unordered_map<std::string, CachedMetadata> metadata_;
+    std::unordered_map<std::string, CachedTagAnalysis> tag_analyses_;
+    std::unordered_map<std::string, bool> analysis_local_;
+    std::atomic_bool& cache_loading_;
+    const std::function<void(std::string_view)>& scan_observer_;
+};
+
+class sung::ImageIndex::Impl {
+public:
+    void set_scan_observer(std::function<void(std::string_view)> observer) {
+        scan_observer_ = std::move(observer);
+        storage_thread_ = std::thread([this] { storage_loop(); });
+    }
+
+    ~Impl() {
+        {
+            std::lock_guard lock{storage_mutex_};
+            storage_stopping_ = true;
+        }
+        storage_cv_.notify_all();
+        if (storage_thread_.joinable())
+            storage_thread_.join();
+    }
+
+    bool loading_cache() const {
+        return cache_loading_.load();
+    }
+
+    static Path canonical_path(const Path& path) {
+        return IndexStorage::canonical_path(path);
+    }
+
+    struct RootStatus {
+        Path root_;
+        bool healthy_ = false;
+        bool blocked_ = false;
+        bool ready_ = false;
+    };
+
+    struct TagWrite {
+        uint64_t version_ = 0;
+        std::optional<CachedTagAnalysis> value_;
+    };
+
+    struct StorageBatch {
+        std::shared_ptr<const ServerConfigs> configs_;
+        std::string signature_;
+        uint64_t epoch_ = 0;
+        uint64_t sequence_ = 0;
+        bool hydrate_ = false;
+        bool reconcile_ = false;
+        std::unordered_map<std::string, std::optional<CachedMetadata>>
+            metadata_;
+        std::unordered_map<std::string, TagWrite> tags_;
+    };
+
+    // Called with refresh_mutex_. Queue locks never cover I/O or callbacks.
+    uint64_t enqueue_storage(StorageBatch batch) {
+        batch.configs_ = snapshot_configs_;
+        batch.signature_ = storage_signature_;
+        batch.epoch_ = storage_epoch_;
+        batch.sequence_ = ++storage_sequence_;
+        const auto sequence = batch.sequence_;
+        for (auto& [path, write] : batch.tags_) {
+            write.version_ = sequence;
+            tag_versions_[path] = sequence;
+            pending_tags_[path] = write;
+        }
+        for (const auto& [path, value] : batch.metadata_)
+            metadata_versions_[path] = sequence;
+        {
+            std::lock_guard lock{storage_mutex_};
+            if (!storage_batches_.empty() &&
+                storage_batches_.back().epoch_ == batch.epoch_) {
+                auto& pending = storage_batches_.back();
+                pending.sequence_ = sequence;
+                pending.hydrate_ |= batch.hydrate_;
+                pending.reconcile_ |= batch.reconcile_;
+                for (auto& [path, item] : batch.metadata_)
+                    pending.metadata_.insert_or_assign(path, std::move(item));
+                for (auto& [path, item] : batch.tags_)
+                    pending.tags_.insert_or_assign(path, std::move(item));
+            } else {
+                storage_batches_.push_back(std::move(batch));
+            }
+        }
+        storage_cv_.notify_one();
+        return sequence;
+    }
+
+    void wait_storage(uint64_t sequence) {
+        std::unique_lock lock{storage_mutex_};
+        storage_cv_.wait(lock, [&] { return storage_completed_ >= sequence; });
+    }
+
+    const RootStatus* owner(const std::string& path) const {
+        const auto normalized = fromstr(make_path_key(fromstr(path)));
+        const RootStatus* result = nullptr;
+        size_t depth = 0;
+        for (const auto& [key, status] : root_status_) {
+            const auto relative = normalized.lexically_relative(fromstr(key));
+            if (!relative.empty() && *relative.begin() != ".." &&
+                key.size() > depth) {
+                result = &status;
+                depth = key.size();
+            }
+        }
+        return result;
+    }
+
+    bool tag_ready(const std::string& path) const {
+        const auto* root = owner(path);
+        if (!root || !root->ready_)
+            return false;
+        for (const auto& [pending, write] : pending_tags_)
+            if (owner(pending) == root)
+                return false;
+        return true;
+    }
+
+    bool persist_tag_analysis(const CachedTagAnalysis& item) {
+        const auto* root = owner(item.logical_path_);
+        if (!root || root->blocked_)
+            return false;
+        StorageBatch batch;
+        batch.tags_[item.logical_path_].value_ = item;
+        enqueue_storage(std::move(batch));
+        return true;
+    }
+
+    bool erase_tag_analysis(const std::string& path) {
+        StorageBatch batch;
+        batch.tags_[path] = {};
+        enqueue_storage(std::move(batch));
+        return true;
+    }
+
+    uint64_t flush_stores(
+        const std::vector<CachedMetadata>& changed,
+        const std::vector<std::string>& removed,
+        bool reconcile = true
+    ) {
+        StorageBatch batch;
+        batch.reconcile_ = reconcile;
+        for (const auto& item : changed)
+            batch.metadata_[item.physical_path_] = item;
+        for (const auto& path : removed) batch.metadata_[path] = std::nullopt;
+        return enqueue_storage(std::move(batch));
+    }
+
+    // Resolve bindings before acquiring refresh_mutex_.
+    static std::map<std::string, Path> resolved_roots(
+        const ServerConfigs& configs
+    ) {
+        std::map<std::string, Path> roots;
+        for (const auto& [name, binding] : configs.dir_bindings_)
+            roots[name] = canonical_path(binding.local_dir_);
+        return roots;
+    }
+
+    void configure_storage(
+        const std::shared_ptr<const ServerConfigs>& configs,
+        const std::map<std::string, Path>& roots
+    ) {
+        snapshot_configs_ = configs;
+        const auto signature = scan_bindings(*configs);
+        if (signature == storage_signature_)
+            return;
+        storage_signature_ = signature;
+        ++storage_epoch_;
+        hydration_sequence_ = 0;
+        binding_roots_ = roots;
+        root_status_.clear();
+        for (const auto& [name, root] : roots)
+            root_status_[make_path_key(root)].root_ = root;
+        std::erase_if(tag_analyses_, [&](const auto& entry) {
+            return !owner(entry.first);
+        });
+    }
+
+    void storage_loop() {
+        IndexStorage storage{cache_loading_, scan_observer_};
+        std::unordered_map<std::string, uint64_t> versions, metadata_versions;
+        std::optional<StorageBatch> retry;
+        auto retry_at = std::chrono::steady_clock::time_point::max();
+        int failures = 0;
+        for (;;) {
+            StorageBatch batch;
+            bool stopping = false;
+            {
+                std::unique_lock lock{storage_mutex_};
+                storage_cv_.wait_until(lock, retry_at, [&] {
+                    return storage_stopping_ || !storage_batches_.empty();
+                });
+                stopping = storage_stopping_;
+                if (retry &&
+                    (!retry->metadata_.empty() || !retry->tags_.empty())) {
+                    batch = std::move(*retry);
+                    retry.reset();
+                } else if (!storage_batches_.empty()) {
+                    batch = std::move(storage_batches_.front());
+                    storage_batches_.pop_front();
+                } else if (retry) {
+                    batch = *retry;
+                } else if (stopping) {
+                    break;
+                } else {
+                    continue;
+                }
+            }
+            bool failed = false;
+            bool staged = false;
+            try {
+                sung::MonotonicRealtimeTimer timer;
+                storage.reconcile_stores(*batch.configs_);
+                std::vector<CachedMetadata> changed;
+                std::vector<std::string> removed;
+                for (const auto& [path, value] : batch.metadata_) {
+                    if (metadata_versions[path] > batch.sequence_)
+                        continue;
+                    metadata_versions[path] = batch.sequence_;
+                    if (value) {
+                        storage.metadata_[path] = *value;
+                        changed.push_back(*value);
+                    } else {
+                        storage.metadata_.erase(path);
+                        removed.push_back(path);
+                    }
+                }
+                for (const auto& [path, write] : batch.tags_) {
+                    if (versions[path] > write.version_)
+                        continue;
+                    versions[path] = write.version_;
+                    if (write.value_)
+                        storage.persist_tag_analysis(*write.value_);
+                    else
+                        storage.erase_tag_analysis(path);
+                }
+                staged = true;
+                if (scan_observer_)
+                    scan_observer_("storage-write");
+                storage.flush_stores(changed, removed, batch.reconcile_);
+                std::map<std::string, RootStatus> statuses;
+                std::unordered_set<std::string> uncommitted;
+                for (const auto& [key, store] : storage.stores_) {
+                    for (const auto& [path, value] : store->pending_tags_)
+                        uncommitted.insert(path);
+                    for (const auto& [path, value] : store->deleted_tags_)
+                        uncommitted.insert(path);
+                    if (!store->active_)
+                        continue;
+                    statuses[key] = {
+                        store->root_,
+                        store->healthy_,
+                        store->blocked_,
+                        store->database_ && store->healthy_ &&
+                            !store->blocked_ && store->pending_tags_.empty() &&
+                            store->deleted_tags_.empty()
+                    };
+                    failed |= !statuses[key].ready_;
+                }
+                {
+                    std::lock_guard lock{refresh_mutex_};
+                    // Drain UI tombstones before considering commit
+                    // completions.
+                    flush_pending_removals_locked();
+                    if (storage_epoch_ == batch.epoch_) {
+                        root_status_ = std::move(statuses);
+                        if (batch.hydrate_)
+                            for (const auto& [path, item] : storage.metadata_)
+                                if (!metadata_versions_.contains(path) &&
+                                    owner(path))
+                                    metadata_.try_emplace(path, item);
+                        bool changed_tags = false;
+                        for (const auto& [path, item] : storage.tag_analyses_) {
+                            const auto version =
+                                versions.contains(path) ? versions.at(path) : 0;
+                            if (!owner(path) ||
+                                (version != 0 && uncommitted.contains(path)) ||
+                                tag_versions_[path] != version)
+                                continue;
+                            const auto previous = tag_analyses_.find(path);
+                            const bool changed =
+                                previous == tag_analyses_.end() ||
+                                previous->second.analysis_id_ !=
+                                    item.analysis_id_ ||
+                                previous->second.input_modified_time_ !=
+                                    item.input_modified_time_;
+                            tag_analyses_[path] = item;
+                            if (changed && !item.analysis_.is_null())
+                                proxy_queue_.enqueue(
+                                    fromstr(path), false, true
+                                );
+                            changed_tags |= changed;
+                        }
+                        for (auto it = pending_tags_.begin();
+                             it != pending_tags_.end();) {
+                            if (versions[it->first] == it->second.version_ &&
+                                !uncommitted.contains(it->first))
+                                it = pending_tags_.erase(it);
+                            else
+                                ++it;
+                        }
+                        if (changed_tags) {
+                            auto next = std::make_shared<IndexSnapshot>(
+                                *load_snapshot()
+                            );
+                            next->tag_analyses_ = tag_analyses_;
+                            for (auto& file : next->files_) {
+                                const auto found =
+                                    tag_analyses_.find(file.logical_path_);
+                                file.tags_ =
+                                    found == tag_analyses_.end()
+                                        ? std::vector<std::string>{}
+                                        : found->second.searchable_tags_;
+                            }
+                            store_snapshot(std::move(next));
+                        }
+                    }
+                }
+                if (timer.elapsed() >= 1)
+                    std::println(
+                        "ImageIndex: Storage batch {} took {:.3f} seconds.",
+                        batch.sequence_,
+                        timer.elapsed()
+                    );
+            } catch (const std::exception& error) {
+                failed = true;
+                std::println(
+                    "ImageIndex: Storage batch failed: {}", error.what()
+                );
+            }
+            {
+                std::lock_guard lock{storage_mutex_};
+                storage_completed_ =
+                    std::max(storage_completed_, batch.sequence_);
+            }
+            storage_cv_.notify_all();
+            if (failed) {
+                // Storage retains dirty metadata and uncommitted tag
+                // operations. Replaying a metadata delta is unnecessary after a
+                // failed flush.
+                if (staged) {
+                    batch.metadata_.clear();
+                    batch.tags_.clear();
+                }
+                retry = std::move(batch);
+                retry_at = std::chrono::steady_clock::now() +
+                           std::chrono::seconds{
+                               std::min(1 << std::min(failures++, 5), 30)
+                           };
+            } else {
+                retry.reset();
+                retry_at = std::chrono::steady_clock::time_point::max();
+                if (failures)
+                    std::println("ImageIndex: Storage recovered.");
+                failures = 0;
+            }
+            if (stopping) {
+                std::lock_guard lock{storage_mutex_};
+                if (storage_batches_.empty()) {
+                    if (failed)
+                        std::println(
+                            stderr,
+                            "ImageIndex: Pending storage work could not be "
+                            "saved at shutdown."
+                        );
+                    break;
+                }
+            }
+        }
+    }
+
     ImageIndexRefreshStats initialize(
         const std::shared_ptr<const ServerConfigs>& configs
     ) {
-        std::lock_guard refresh_lock{refresh_mutex_};
-        snapshot_configs_ = configs;
         sung::MonotonicRealtimeTimer timer;
         auto cached = gallery_cache::load(*configs);
+        std::lock_guard refresh_lock{refresh_mutex_};
+        snapshot_configs_ = configs;
         // Namespaces are available immediately even without a saved snapshot,
         // so a cold-start visit can queue its root before discovery finishes.
         for (const auto& [name, binding] : configs->dir_bindings_)
@@ -1778,9 +2178,10 @@ public:
     }
 
     void poll_folders(const std::shared_ptr<const ServerConfigs>& configs) {
+        const auto resolved = resolved_roots(*configs);
         const auto input = load_snapshot();
         for (const auto& [name, binding] : configs->dir_bindings_) {
-            const auto root = canonical_path(binding.local_dir_);
+            const auto root = resolved.at(name);
             const auto key = make_root_key(name, root);
             std::set<std::string> parents{name};
             const auto is_container = [&](const Path& relative) {
@@ -1801,6 +2202,7 @@ public:
                 detail::ScanJournal::Transaction transaction{
                     scan_journal_, refresh_mutex_, scan_bindings(*configs)
                 };
+                configure_storage(configs, resolved);
                 transaction.begin_observations();
                 const auto physical =
                     root / fromstr(parent).lexically_relative(fromstr(name));
@@ -1899,7 +2301,7 @@ public:
             priority_folders_.pop_front();
         }
         try {
-            refresh_folder(configs, fromstr(folder), false);
+            refresh_folder(configs, fromstr(folder), false, false);
         } catch (...) {
             std::lock_guard lock{refresh_mutex_};
             if (priority_bindings_ == signature)
@@ -1926,16 +2328,19 @@ public:
         if (priority_bindings_ != signature)
             return;
         priority_pending_.erase(folder);
+        std::lock_guard visits_lock{visits_mutex_};
         for (const auto& child : children)
-            if (priority_pending_.insert(child).second)
+            if (unscanned_folders_.contains(child) &&
+                priority_pending_.insert(child).second)
                 priority_folders_.push_back(child);
     }
 
     void discover_folders(const std::shared_ptr<const ServerConfigs>& configs) {
+        const auto resolved = resolved_roots(*configs);
         detail::ScanJournal::Transaction transaction{
             scan_journal_, refresh_mutex_, scan_bindings(*configs)
         };
-        snapshot_configs_ = configs;
+        configure_storage(configs, resolved);
         flush_pending_removals_locked();
         transaction.begin_observations();
 
@@ -2084,7 +2489,8 @@ public:
     ImageIndexRefreshStats refresh_folder(
         const std::shared_ptr<const ServerConfigs>& configs,
         const Path& directory,
-        bool recursive = false
+        bool recursive = false,
+        bool synchronous = true
     ) {
         const auto normalized = directory.lexically_normal();
         for (const auto& part : normalized)
@@ -2098,7 +2504,9 @@ public:
             const auto physical = concat_path_safely(root, relative);
             if (!physical)
                 throw std::invalid_argument("Visited directory outside root");
-            return refresh(configs, {}, canonical_path(*physical), recursive);
+            return refresh(
+                configs, {}, canonical_path(*physical), recursive, synchronous
+            );
         }
         throw std::invalid_argument("Unknown visited directory");
     }
@@ -2168,7 +2576,7 @@ public:
                 return;
         }
         try {
-            refresh_folder(configs, fromstr(directory), recursive);
+            refresh_folder(configs, fromstr(directory), recursive, false);
         } catch (const std::exception& error) {
             std::println(
                 "ImageIndex: Visit refresh failed for {}: {}",
@@ -2191,7 +2599,8 @@ public:
         const std::shared_ptr<const ServerConfigs>& configs,
         const DateRange& date = {},
         const Path& folder = {},
-        bool recursive = false
+        bool recursive = false,
+        bool synchronous = true
     ) {
         sung::MonotonicRealtimeTimer timer;
         ImageIndexRefreshStats stats;
@@ -2223,12 +2632,25 @@ public:
             return date.empty() ||
                    date_scope(path, root, date) != DateScope::excluded;
         };
+        const auto roots = resolved_roots(*configs);
         detail::ScanJournal::Transaction transaction{
             scan_journal_, refresh_mutex_, scan_bindings(*configs)
         };
-        snapshot_configs_ = configs;
+        configure_storage(configs, roots);
+        if (!hydration_sequence_) {
+            StorageBatch batch;
+            batch.hydrate_ = true;
+            hydration_sequence_ = enqueue_storage(std::move(batch));
+        }
+        const auto hydration = hydration_sequence_;
+        transaction.unlock();
+        wait_storage(hydration);
+        transaction.lock();
+        if (!transaction.current()) {
+            stats.superseded_ = true;
+            return stats;
+        }
         flush_pending_removals_locked();
-        reconcile_stores(*configs);
 
         struct RootScan {
             Path root_;
@@ -2244,7 +2666,7 @@ public:
 
         std::map<std::string, RootScan> results;
         for (const auto& [name, binding] : configs->dir_bindings_)
-            results[name].root_ = stores_.at(binding_roots_.at(name))->root_;
+            results[name].root_ = roots.at(name);
         std::unordered_map<std::string, CachedMetadata> input_metadata;
         for (const auto& [path, item] : metadata_) {
             const auto directory = fromstr(path).parent_path();
@@ -2801,7 +3223,23 @@ public:
             }
         }
 
-        flush_stores(changed, removed, date.empty() && folder.empty());
+        // Content already reconciled by another scan needs no priority rescan.
+        std::erase_if(priority_folders_, [&](const auto& queued) {
+            for (const auto& [name, result] : results) {
+                const auto relative =
+                    fromstr(queued).lexically_relative(fromstr(name));
+                if (result.available_ && !relative.empty() &&
+                    *relative.begin() != ".." &&
+                    contents_scanned(result.root_ / relative, result.root_)) {
+                    priority_pending_.erase(queued);
+                    return true;
+                }
+            }
+            return false;
+        });
+
+        const auto persistence =
+            flush_stores(changed, removed, date.empty() && folder.empty());
         stats.persistent_ = persistent();
 
         next->tag_analyses_ = tag_analyses_;
@@ -2868,6 +3306,12 @@ public:
         });
         store_snapshot(std::move(next));
         gallery_cache::save(*configs, *load_snapshot());
+        transaction.unlock();
+        if (synchronous)
+            wait_storage(persistence);
+        transaction.lock();
+        stats.persistent_ = persistent();
+        transaction.unlock();
 
         std::println(
             "ImageIndex ({}): {} images, {} folders ({} reused, {} indexed, "
@@ -2941,105 +3385,99 @@ public:
         )
                              .count();
         std::vector<Candidate> candidates;
-        {
-            std::lock_guard refresh_lock{ refresh_mutex_ };
-            // Bound cache validation as well as inference so a startup/model
-            // change backlog releases the index mutex between small batches.
-            for (size_t checked = 0;
-                 checked < 128 && candidates.size() < batch_size;
-                 ++checked) {
-                const auto queued = tag_queue_.take();
-                if (!queued)
-                    break;
-                const auto& file = *queued;
-                if (!tag_ready(file.logical_path_)) {
-                    tag_queue_.retry(file, interval);
-                    continue;
-                }
-
-                const auto existing = tag_analyses_.find(file.logical_path_);
-                if (existing != tag_analyses_.end() &&
-                    !existing->second.analysis_.is_null() &&
-                    existing->second.input_path_ !=
-                        sung::tostr(file.input_path_) &&
-                    sung::is_sprintboard_proxy_path(file.input_path_)) {
-                    std::error_code old_input_error;
-                    if (!sung::fs::is_regular_file(
-                            sung::fromstr(existing->second.input_path_),
-                            old_input_error
-                        )) {
-                        continue;
-                    }
-                }
-                const auto input_kind = sung::is_sprintboard_proxy_path(
-                                            file.input_path_
-                                        )
-                                            ? "proxy"
-                                            : "source";
-                bool current_analysis =
-                    existing != tag_analyses_.end() &&
-                    !existing->second.analysis_.is_null() &&
-                    existing->second.input_kind_ == input_kind &&
-                    existing->second.input_path_ ==
-                        sung::tostr(file.input_path_) &&
-                    existing->second.analyzer_fingerprint_ ==
-                        info->fingerprint_;
-                if (current_analysis) {
-                    const auto validated = ::validate_fingerprint(
-                        file.input_path_,
-                        existing->second.input_size_,
-                        existing->second.input_modified_time_,
-                        existing->second.input_sha256_
-                    );
-                    current_analysis = validated.has_value();
-                    if (validated &&
-                        validated->modified_time_ !=
-                            existing->second.input_modified_time_) {
-                        auto updated = existing->second;
-                        updated.input_size_ = validated->size_;
-                        updated.input_modified_time_ =
-                            validated->modified_time_;
-                        persist_tag_analysis(updated);
-                    }
-                }
-                if (current_analysis)
-                    continue;
-
-                if (existing != tag_analyses_.end()) {
-                    const auto& attempt = existing->second;
-                    const bool same_failed_attempt =
-                        !attempt.last_error_.empty() &&
-                        attempt.attempt_input_path_ ==
-                            sung::tostr(file.input_path_) &&
-                        attempt.attempt_input_size_ == file.input_size_ &&
-                        attempt.attempt_input_modified_time_ ==
-                            file.input_modified_time_ &&
-                        attempt.attempt_analyzer_fingerprint_ ==
-                            info->fingerprint_;
-                    const auto remaining = retry_delay(attempt.failure_count_) -
-                                           (now - attempt.last_attempt_at_);
-                    if (same_failed_attempt && remaining > 0) {
-                        tag_queue_.retry(
-                            file, std::chrono::seconds{ remaining }
-                        );
-                        continue;
-                    }
-                }
-
-                candidates.push_back(file);
+        for (size_t checked = 0;
+             checked < 128 && candidates.size() < batch_size;
+             ++checked) {
+            std::unique_lock lock{refresh_mutex_};
+            const auto queued = tag_queue_.take();
+            if (!queued)
+                break;
+            const auto file = *queued;
+            if (!tag_ready(file.logical_path_)) {
+                tag_queue_.retry(file, interval);
+                continue;
             }
+            const auto found = tag_analyses_.find(file.logical_path_);
+            const auto existing = found == tag_analyses_.end()
+                                      ? std::optional<CachedTagAnalysis>{}
+                                      : found->second;
+            const auto version = tag_versions_[file.logical_path_];
+            lock.unlock();
+            bool source_missing = false;
+            if (existing && !existing->analysis_.is_null() &&
+                existing->input_path_ != tostr(file.input_path_) &&
+                is_sprintboard_proxy_path(file.input_path_)) {
+                std::error_code error;
+                source_missing =
+                    !fs::is_regular_file(fromstr(existing->input_path_), error);
+            }
+            const auto kind = is_sprintboard_proxy_path(file.input_path_)
+                                  ? "proxy"
+                                  : "source";
+            const bool matches =
+                existing && !existing->analysis_.is_null() &&
+                existing->input_kind_ == kind &&
+                existing->input_path_ == tostr(file.input_path_) &&
+                existing->analyzer_fingerprint_ == info->fingerprint_;
+            const auto validated = matches ? ::validate_fingerprint(
+                                                 file.input_path_,
+                                                 existing->input_size_,
+                                                 existing->input_modified_time_,
+                                                 existing->input_sha256_
+                                             )
+                                           : std::nullopt;
+            lock.lock();
+            flush_pending_removals_locked();
+            if (tag_versions_[file.logical_path_] != version ||
+                !tag_queue_.current(file) || !tag_ready(file.logical_path_)) {
+                tag_queue_.retry(file, interval);
+                continue;
+            }
+            if (source_missing)
+                continue;
+            if (validated) {
+                if (validated->modified_time_ !=
+                    existing->input_modified_time_) {
+                    auto updated = *existing;
+                    updated.input_size_ = validated->size_;
+                    updated.input_modified_time_ = validated->modified_time_;
+                    persist_tag_analysis(updated);
+                }
+                continue;
+            }
+            if (existing) {
+                const auto& attempt = *existing;
+                const bool same =
+                    !attempt.last_error_.empty() &&
+                    attempt.attempt_input_path_ == tostr(file.input_path_) &&
+                    attempt.attempt_input_size_ == file.input_size_ &&
+                    attempt.attempt_input_modified_time_ ==
+                        file.input_modified_time_ &&
+                    attempt.attempt_analyzer_fingerprint_ == info->fingerprint_;
+                const auto remaining = retry_delay(attempt.failure_count_) -
+                                       (now - attempt.last_attempt_at_);
+                if (same && remaining > 0) {
+                    tag_queue_.retry(file, std::chrono::seconds{remaining});
+                    continue;
+                }
+            }
+            candidates.push_back(file);
         }
 
         for (size_t offset = 0; offset < candidates.size();
              offset += batch_size) {
             const auto end = std::min(offset + batch_size, candidates.size());
             std::vector<Candidate> batch;
+            std::vector<uint64_t> batch_versions;
             std::vector<Path> paths;
             {
                 std::lock_guard refresh_lock{ refresh_mutex_ };
                 for (size_t i = offset; i < end; ++i)
                     if (tag_ready(candidates[i].logical_path_)) {
                         batch.push_back(candidates[i]);
+                        batch_versions.push_back(
+                            tag_versions_[candidates[i].logical_path_]
+                        );
                         paths.push_back(candidates[i].input_path_);
                     } else {
                         tag_queue_.retry(candidates[i], interval);
@@ -3063,28 +3501,9 @@ public:
                 return;
             }
 
-            std::lock_guard refresh_lock{ refresh_mutex_ };
-            const auto latest_snapshot = load_snapshot();
-            bool snapshot_changed = false;
             for (size_t i = 0; i < count; ++i) {
                 const auto& candidate = batch[i];
                 const auto& result = results->at(i);
-
-                const auto current_file = std::find_if(
-                    latest_snapshot->files_.begin(),
-                    latest_snapshot->files_.end(),
-                    [&](const auto& file) {
-                        return file.logical_path_ == candidate.logical_path_ &&
-                               file.tag_input_path_ ==
-                                   sung::tostr(candidate.input_path_) &&
-                               file.tag_input_size_ == candidate.input_size_ &&
-                               file.tag_input_modified_time_ ==
-                                   candidate.input_modified_time_;
-                    }
-                );
-                if (current_file == latest_snapshot->files_.end())
-                    continue;
-
                 const auto current = sung::fingerprint_file(
                     candidate.input_path_
                 );
@@ -3111,6 +3530,11 @@ public:
                     content_fingerprint = *hashed;
                 }
 
+                std::lock_guard lock{refresh_mutex_};
+                flush_pending_removals_locked();
+                if (!tag_queue_.current(candidate) ||
+                    tag_versions_[candidate.logical_path_] != batch_versions[i])
+                    continue;
                 const auto previous = tag_analyses_.find(
                     candidate.logical_path_
                 );
@@ -3186,27 +3610,12 @@ public:
                         candidate.logical_path_
                     );
                 } else if (result.error_.empty()) {
-                    snapshot_changed = true;
                     std::println(
-                        "ImageTagger: Cached {} tags for {}",
+                        "ImageTagger: Queued {} tags for storage: {}",
                         analysis.searchable_tags_.size(),
                         candidate.logical_path_
                     );
                 }
-            }
-
-            if (snapshot_changed) {
-                auto next = std::make_shared<IndexSnapshot>(*latest_snapshot);
-                for (auto& file : next->files_) {
-                    const auto found = tag_analyses_.find(file.logical_path_);
-                    if (found != tag_analyses_.end() &&
-                        !found->second.analysis_.is_null()) {
-                        file.tags_ = found->second.searchable_tags_;
-                    }
-                }
-                next->tag_analyses_ = tag_analyses_;
-                ++next->generation_;
-                store_snapshot(std::move(next));
             }
         }
     }
@@ -3246,46 +3655,50 @@ public:
     std::optional<TagAnalysisRecord> current_tag_analysis(
         const Path& source_path, const bool require_current_analyzer
     ) {
-        std::lock_guard refresh_lock{ refresh_mutex_ };
-        const auto logical_path = sung::detail::logical_image_key(source_path);
+        const auto logical_path = detail::logical_image_key(source_path);
+        std::unique_lock lock{refresh_mutex_};
         if (require_current_analyzer && !tag_ready(logical_path))
             return std::nullopt;
         const auto found = tag_analyses_.find(logical_path);
         if (found == tag_analyses_.end() || found->second.analysis_.is_null())
             return std::nullopt;
-
-        const auto input_kind = sung::is_sprintboard_proxy_path(source_path)
-                                    ? "proxy"
-                                    : "source";
-        if (found->second.input_kind_ != input_kind ||
-            make_path_key(
-                canonical_path(sung::fromstr(found->second.input_path_))
-            ) != make_path_key(canonical_path(source_path))) {
+        auto output = found->second;
+        const auto version = tag_versions_[logical_path];
+        lock.unlock();
+        if (scan_observer_)
+            scan_observer_("tag-validation");
+        const auto kind =
+            is_sprintboard_proxy_path(source_path) ? "proxy" : "source";
+        if (output.input_kind_ != kind ||
+            make_path_key(canonical_path(fromstr(output.input_path_))) !=
+                make_path_key(canonical_path(source_path)))
             return std::nullopt;
-        }
         const auto fingerprint = ::validate_fingerprint(
             source_path,
-            found->second.input_size_,
-            found->second.input_modified_time_,
-            found->second.input_sha256_
+            output.input_size_,
+            output.input_modified_time_,
+            output.input_sha256_
         );
         if (!fingerprint)
             return std::nullopt;
-        if (require_current_analyzer &&
-            !current_analyzer_fingerprint_.empty() &&
-            found->second.analyzer_fingerprint_ !=
-                current_analyzer_fingerprint_) {
+        lock.lock();
+        flush_pending_removals_locked();
+        if (tag_versions_[logical_path] != version ||
+            !tag_analyses_.contains(logical_path) ||
+            (require_current_analyzer &&
+             (!tag_ready(logical_path) ||
+              (!current_analyzer_fingerprint_.empty() &&
+               output.analyzer_fingerprint_ != current_analyzer_fingerprint_))))
             return std::nullopt;
-        }
-        auto output = found->second;
-        output.input_size_ = fingerprint->size_;
-        output.input_modified_time_ = fingerprint->modified_time_;
-        if (output.input_modified_time_ != found->second.input_modified_time_) {
-            // Never replace an inference result that is waiting for storage
-            // recovery with the older committed analysis being validated.
-            auto* store = owner(logical_path);
-            if (store && !store->pending_tags_.contains(logical_path))
+        if (fingerprint->modified_time_ != output.input_modified_time_) {
+            output.input_size_ = fingerprint->size_;
+            output.input_modified_time_ = fingerprint->modified_time_;
+            if (!pending_tags_.contains(logical_path)) {
                 persist_tag_analysis(output);
+                const auto sequence = storage_sequence_;
+                lock.unlock();
+                wait_storage(sequence);
+            }
         }
         return output;
     }
@@ -3293,31 +3706,40 @@ public:
     bool proxy_materialization_current(
         const Path& proxy_path, const std::string_view materialization_id
     ) {
-        std::lock_guard refresh_lock{ refresh_mutex_ };
-        const auto logical_path = sung::detail::logical_image_key(proxy_path);
+        const auto logical_path = detail::logical_image_key(proxy_path);
+        std::unique_lock lock{refresh_mutex_};
         const auto found = tag_analyses_.find(logical_path);
         if (found == tag_analyses_.end() ||
-            found->second.proxy_materialization_id_ != materialization_id ||
-            make_path_key(
-                canonical_path(sung::fromstr(found->second.proxy_path_))
-            ) != make_path_key(canonical_path(proxy_path))) {
+            found->second.proxy_materialization_id_ != materialization_id)
             return false;
-        }
+        auto output = found->second;
+        const auto version = tag_versions_[logical_path];
+        lock.unlock();
+        if (scan_observer_)
+            scan_observer_("proxy-validation");
+        if (make_path_key(canonical_path(fromstr(output.proxy_path_))) !=
+            make_path_key(canonical_path(proxy_path)))
+            return false;
         const auto fingerprint = ::validate_fingerprint(
             proxy_path,
-            found->second.proxy_size_,
-            found->second.proxy_modified_time_,
-            found->second.proxy_sha256_
+            output.proxy_size_,
+            output.proxy_modified_time_,
+            output.proxy_sha256_
         );
         if (!fingerprint)
             return false;
-        if (fingerprint->modified_time_ != found->second.proxy_modified_time_) {
-            auto* store = owner(logical_path);
-            if (store && !store->pending_tags_.contains(logical_path)) {
-                auto updated = found->second;
-                updated.proxy_modified_time_ = fingerprint->modified_time_;
-                persist_tag_analysis(updated);
-            }
+        lock.lock();
+        flush_pending_removals_locked();
+        if (tag_versions_[logical_path] != version ||
+            !tag_analyses_.contains(logical_path))
+            return false;
+        if (fingerprint->modified_time_ != output.proxy_modified_time_ &&
+            !pending_tags_.contains(logical_path)) {
+            output.proxy_modified_time_ = fingerprint->modified_time_;
+            persist_tag_analysis(output);
+            const auto sequence = storage_sequence_;
+            lock.unlock();
+            wait_storage(sequence);
         }
         return true;
     }
@@ -3327,43 +3749,47 @@ public:
         const Path& proxy_path,
         std::string materialization_id
     ) {
-        std::lock_guard refresh_lock{ refresh_mutex_ };
-        const auto logical_path = sung::detail::logical_image_key(source_path);
+        const auto logical_path = detail::logical_image_key(source_path);
+        std::unique_lock lock{refresh_mutex_};
         const auto found = tag_analyses_.find(logical_path);
         if (found == tag_analyses_.end() || found->second.analysis_.is_null())
             return;
-        const auto fingerprint = sung::fingerprint_file_with_sha256(proxy_path);
+        auto analysis = found->second;
+        const auto version = tag_versions_[logical_path];
+        if (const auto pending = pending_tags_.find(logical_path);
+            pending != pending_tags_.end()) {
+            if (!pending->second.value_ ||
+                pending->second.value_->analysis_id_ != analysis.analysis_id_)
+                return;
+            analysis = *pending->second.value_;
+        }
+        lock.unlock();
+        if (scan_observer_)
+            scan_observer_("proxy-hash");
+        const auto fingerprint = fingerprint_file_with_sha256(proxy_path);
         if (!fingerprint)
             return;
-
-        auto analysis = found->second;
-        if (const auto* store = owner(logical_path)) {
-            const auto pending = store->pending_tags_.find(logical_path);
-            if (pending != store->pending_tags_.end()) {
-                // An encoder may finish after a newer inference result fails
-                // to commit. Never replace that pending analysis with the
-                // older analysis used to encode this proxy.
-                if (pending->second.analysis_id_ != analysis.analysis_id_)
-                    return;
-                analysis = pending->second;
-            }
-        }
-        analysis.proxy_path_ = sung::tostr(canonical_path(proxy_path));
+        analysis.proxy_path_ = tostr(canonical_path(proxy_path));
         analysis.proxy_size_ = fingerprint->size_;
         analysis.proxy_modified_time_ = fingerprint->modified_time_;
         analysis.proxy_sha256_ = fingerprint->sha256_;
         analysis.proxy_materialization_id_ = std::move(materialization_id);
-        if (!persist_tag_analysis(analysis)) {
-            std::println(
-                "ImgWalker: Failed to cache proxy materialization for {}",
-                logical_path
-            );
+        lock.lock();
+        flush_pending_removals_locked();
+        if (tag_versions_[logical_path] != version ||
+            !tag_analyses_.contains(logical_path))
+            return;
+        if (persist_tag_analysis(analysis)) {
+            const auto sequence = storage_sequence_;
+            lock.unlock();
+            wait_storage(sequence);
         }
     }
 
     std::vector<ProxyWorkItem> take_proxy_work(
         const ServerConfigs& configs, size_t limit
     ) {
+        const auto roots = resolved_roots(configs);
         std::lock_guard lock{ refresh_mutex_ };
         auto signature = nlohmann::json::array({ configs.tagger_enabled_ });
         for (const auto& [name, binding] : configs.dir_bindings_) {
@@ -3393,11 +3819,7 @@ public:
             proxy_roots_.clear();
             for (const auto& [name, binding] : configs.dir_bindings_) {
                 proxy_roots_.emplace_back(
-                    fromstr(
-                        detail::ProxyQueue::key(
-                            canonical_path(binding.local_dir_)
-                        )
-                    ),
+                    fromstr(detail::ProxyQueue::key(roots.at(name))),
                     configs.effective_avif_options(binding)
                 );
             }
@@ -3530,8 +3952,6 @@ public:
         const auto pending = snapshots_.take_removals();
         if (pending.empty())
             return;
-        if (stores_.empty() && snapshot_configs_)
-            reconcile_stores(*snapshot_configs_);
         std::set<std::string> deleted_directories;
         for (const auto& [api_path, file] : pending) {
             if (!file.physical_path_.empty()) {
@@ -3545,10 +3965,9 @@ public:
                     const auto relative =
                         browser.lexically_relative(fromstr(name));
                     if (!relative.empty() && *relative.begin() != "..")
-                        deleted_directories.insert(make_path_key(
-                            (stores_.at(root_key)->root_ / relative)
-                                .parent_path()
-                        ));
+                        deleted_directories.insert(
+                            make_path_key((root_key / relative).parent_path())
+                        );
                 }
             }
         }
@@ -3564,11 +3983,10 @@ public:
                 continue;
             removed_physical_paths.push_back(file.physical_path_);
             metadata_.erase(file.physical_path_);
-            const auto logical_path = file.logical_path_.empty()
-                                          ? detail::logical_image_key(
-                                                fromstr(file.physical_path_)
-                                            )
-                                          : file.logical_path_;
+            const auto logical_path =
+                file.logical_path_.empty()
+                    ? make_path_key(fromstr(file.physical_path_))
+                    : file.logical_path_;
             proxy_queue_.forget(fromstr(logical_path));
             tag_queue_.forget(logical_path);
             tag_analyses_.erase(logical_path);
@@ -3587,15 +4005,14 @@ public:
     }
 
     bool persistent() const {
-        return !root_keys_.empty() &&
-               std::all_of(
-                   stores_.begin(), stores_.end(), [](const auto& entry) {
-                       return !entry.second->active_ ||
-                              (entry.second->database_ &&
-                               entry.second->healthy_ &&
-                               !entry.second->blocked_);
-                   }
-               );
+        return !root_status_.empty() && std::all_of(
+                                            root_status_.begin(),
+                                            root_status_.end(),
+                                            [](const auto& item) {
+                                                return item.second.healthy_ &&
+                                                       !item.second.blocked_;
+                                            }
+                                        );
     }
 
 private:
@@ -3607,12 +4024,20 @@ private:
         snapshots_.store(std::move(snapshot));
     }
 
-    std::map<std::string, std::unique_ptr<Store>> stores_;
-    std::set<std::string> root_keys_;
-    std::map<std::string, std::string> binding_roots_;
+    std::map<std::string, RootStatus> root_status_;
+    std::map<std::string, Path> binding_roots_;
     std::unordered_map<std::string, CachedMetadata> metadata_;
     std::unordered_map<std::string, CachedTagAnalysis> tag_analyses_;
-    std::unordered_map<std::string, bool> analysis_local_;
+    std::unordered_map<std::string, uint64_t> metadata_versions_, tag_versions_;
+    std::unordered_map<std::string, TagWrite> pending_tags_;
+    std::string storage_signature_;
+    uint64_t storage_sequence_ = 0, hydration_sequence_ = 0, storage_epoch_ = 0;
+    std::mutex storage_mutex_;
+    std::condition_variable storage_cv_;
+    std::deque<StorageBatch> storage_batches_;
+    uint64_t storage_completed_ = 0;
+    bool storage_stopping_ = false;
+    std::thread storage_thread_;
     std::string current_analyzer_fingerprint_;
     detail::TagQueue tag_queue_;
     // Accessed only by the tagging worker; queue/analyses use refresh_mutex_.
@@ -3646,7 +4071,6 @@ private:
     std::unordered_map<std::string, std::chrono::steady_clock::time_point>
         visited_at_;
 };
-
 
 namespace sung {
 
@@ -3845,7 +4269,17 @@ namespace sung {
             });
         };
         auto_refresh_thread_ = launch("full", [this, configs_provider] {
-            return !this->refresh(configs_provider()).superseded_;
+            set_initial_refresh_state(InitialRefreshState::running);
+            try {
+                const auto stats =
+                    impl_->refresh(configs_provider(), {}, {}, false, false);
+                if (!stats.superseded_)
+                    set_initial_refresh_state(InitialRefreshState::ready);
+                return !stats.superseded_;
+            } catch (...) {
+                set_initial_refresh_state(InitialRefreshState::failed);
+                throw;
+            }
         });
         auto_recent_thread_ = launch(
             "recent",
@@ -3859,8 +4293,13 @@ namespace sung {
                     (interval > 0 &&
                      std::chrono::duration<double>(Clock::now() - *last)
                              .count() >= interval)) {
-                    const auto stats =
-                        this->refresh_recent(configs, local_date_folder());
+                    const auto stats = impl_->refresh(
+                        configs,
+                        date_range(local_date_folder(), 5),
+                        {},
+                        false,
+                        false
+                    );
                     if (!stats.superseded_) {
                         if (!last)
                             set_initial_refresh_state(
