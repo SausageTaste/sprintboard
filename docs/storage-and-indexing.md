@@ -123,6 +123,14 @@ current. Explicit refresh calls wait outside the index lock for their persistenc
 attempt. All workers still share disk and CPU capacity. A large visit can delay other queued visits,
 but a full scan, date scan, or discovery no longer occupies the visit worker.
 
+Gallery snapshot encoding and atomic file replacement run on another worker,
+with one save in flight and only the newest pending generation retained. Failed
+saves retry with capped backoff; an older generation cannot overwrite a newer
+one. Explicit refresh waits outside the publication lock for a save attempt.
+Neither SQLite writes nor snapshot-file writes hold the index lock. Logs include
+slow storage/snapshot timings and publication lock waits of at least 250 ms or
+aggregate hold times of at least 100 ms.
+
 Overlapping scans merge into the latest snapshot. An older scan preserves scopes
 already published by a newer scan, including empty or deleted folders. UI
 deletions remain protected after storage cleanup, and results from obsolete root

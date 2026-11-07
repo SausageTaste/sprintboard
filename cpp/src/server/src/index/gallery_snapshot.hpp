@@ -208,7 +208,7 @@ namespace sung::gallery_cache {
         return empty;
     }
 
-    inline void save(
+    inline bool save(
         const ServerConfigs& configs, const IndexSnapshot& snapshot
     ) {
         try {
@@ -218,10 +218,12 @@ namespace sung::gallery_cache {
             std::error_code error;
             if (!write_file_atomically(path, contents, error))
                 throw std::system_error(error);
+            return true;
         } catch (const std::exception& error) {
             std::println(
                 "ImageIndex: Cannot save gallery snapshot: {}", error.what()
             );
+            return false;
         }
     }
 

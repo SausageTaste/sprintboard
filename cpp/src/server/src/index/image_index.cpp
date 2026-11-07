@@ -30,6 +30,7 @@
 #include "image_query.hpp"
 #include "scan_journal.hpp"
 #include "snapshot_store.hpp"
+#include "snapshot_writer.hpp"
 #include "tag_analysis.hpp"
 #include "tag_queue.hpp"
 #include "tagger_client.hpp"
@@ -1768,6 +1769,8 @@ class sung::ImageIndex::Impl {
 public:
     void set_scan_observer(std::function<void(std::string_view)> observer) {
         scan_observer_ = std::move(observer);
+        snapshot_writer_ =
+            std::make_unique<gallery_cache::SnapshotWriter>(scan_observer_);
         storage_thread_ = std::thread([this] { storage_loop(); });
     }
 
@@ -1779,6 +1782,7 @@ public:
         storage_cv_.notify_all();
         if (storage_thread_.joinable())
             storage_thread_.join();
+        snapshot_writer_.reset();
     }
 
     bool loading_cache() const {
@@ -1899,6 +1903,8 @@ public:
         const std::vector<std::string>& removed,
         bool reconcile = true
     ) {
+        if (!snapshot_configs_)
+            return 0;
         StorageBatch batch;
         batch.reconcile_ = reconcile;
         for (const auto& item : changed)
@@ -2145,7 +2151,7 @@ public:
         stats.images_available_ = cached->files_.size();
         stats.folders_available_ = cached->folders_.size();
         stats.elapsed_seconds_ = timer.elapsed();
-        store_snapshot(std::move(cached));
+        snapshots_.store(std::move(cached));
         std::println(
             "ImageIndex: Restored {} images and {} folders in {:.3f} seconds; "
             "reconciliation pending.",
@@ -2335,7 +2341,10 @@ public:
                 priority_folders_.push_back(child);
     }
 
-    void discover_folders(const std::shared_ptr<const ServerConfigs>& configs) {
+    void discover_folders(
+        const std::shared_ptr<const ServerConfigs>& configs,
+        bool synchronous = true
+    ) {
         const auto resolved = resolved_roots(*configs);
         detail::ScanJournal::Transaction transaction{
             scan_journal_, refresh_mutex_, scan_bindings(*configs)
@@ -2483,7 +2492,10 @@ public:
         queue_new_dates(*configs, *previous, *next);
         ++next->generation_;
         store_snapshot(std::move(next));
-        gallery_cache::save(*configs, *load_snapshot());
+        const auto ticket = snapshot_ticket_;
+        transaction.unlock();
+        if (synchronous)
+            snapshot_writer_->wait(ticket);
     }
 
     ImageIndexRefreshStats refresh_folder(
@@ -3305,13 +3317,15 @@ public:
             return false;
         });
         store_snapshot(std::move(next));
-        gallery_cache::save(*configs, *load_snapshot());
         transaction.unlock();
         if (synchronous)
             wait_storage(persistence);
         transaction.lock();
         stats.persistent_ = persistent();
+        const auto snapshot_ticket = snapshot_ticket_;
         transaction.unlock();
+        if (synchronous)
+            snapshot_writer_->wait(snapshot_ticket);
 
         std::println(
             "ImageIndex ({}): {} images, {} folders ({} reused, {} indexed, "
@@ -3698,6 +3712,11 @@ public:
                 const auto sequence = storage_sequence_;
                 lock.unlock();
                 wait_storage(sequence);
+                lock.lock();
+                flush_pending_removals_locked();
+                if (!tag_analyses_.contains(logical_path) ||
+                    tag_versions_[logical_path] != sequence)
+                    return std::nullopt;
             }
         }
         return output;
@@ -3740,6 +3759,11 @@ public:
             const auto sequence = storage_sequence_;
             lock.unlock();
             wait_storage(sequence);
+            lock.lock();
+            flush_pending_removals_locked();
+            if (!tag_analyses_.contains(logical_path) ||
+                tag_versions_[logical_path] != sequence)
+                return false;
         }
         return true;
     }
@@ -4000,8 +4024,7 @@ public:
         // Ownership reconciliation touches every persisted tag's filesystem
         // path. It belongs to full scans, not individual deletions.
         flush_stores({}, removed_physical_paths, false);
-        if (snapshot_configs_)
-            gallery_cache::save(*snapshot_configs_, *load_snapshot());
+        schedule_snapshot();
     }
 
     bool persistent() const {
@@ -4020,8 +4043,16 @@ private:
         return snapshots_.load();
     }
 
+    // Caller holds refresh_mutex_; submit only captures immutable pointers.
+    void schedule_snapshot() {
+        if (snapshot_configs_)
+            snapshot_ticket_ =
+                snapshot_writer_->submit(snapshot_configs_, load_snapshot());
+    }
+
     void store_snapshot(std::shared_ptr<IndexSnapshot> snapshot) {
         snapshots_.store(std::move(snapshot));
+        schedule_snapshot();
     }
 
     std::map<std::string, RootStatus> root_status_;
@@ -4038,6 +4069,8 @@ private:
     uint64_t storage_completed_ = 0;
     bool storage_stopping_ = false;
     std::thread storage_thread_;
+    std::unique_ptr<gallery_cache::SnapshotWriter> snapshot_writer_;
+    uint64_t snapshot_ticket_ = 0;
     std::string current_analyzer_fingerprint_;
     detail::TagQueue tag_queue_;
     // Accessed only by the tagging worker; queue/analyses use refresh_mutex_.
@@ -4322,7 +4355,7 @@ namespace sung {
                             .count() >=
                         configs
                             ->image_index_folder_discovery_interval_seconds_) {
-                    this->discover_folders(configs);
+                    impl_->discover_folders(configs, false);
                     last = Clock::now();
                 }
                 return false;

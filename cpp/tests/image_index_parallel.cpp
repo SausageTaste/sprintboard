@@ -314,6 +314,59 @@ int main() {
             );
             paused.finish();
         }
+        {
+            const auto root = temp / "snapshot-contention";
+            fs::create_directories(root);
+            auto configs = std::make_shared<sung::ServerConfigs>();
+            configs->fill_default();
+            configs->dir_bindings_.clear();
+            configs->dir_bindings_["test"].local_dir_ = root;
+            configs->cache_dir_ =
+                sung::tostr(temp / "snapshot-contention-cache");
+            std::unique_ptr<sung::ImageIndex> index;
+            PausedScan paused{"snapshot-write"};
+            index = sung::ImageIndexTestAccess::make([&](auto kind) {
+                paused.observe(kind);
+            });
+            paused.shutdown_ = [&] { index.reset(); };
+            index->refresh(configs);
+            fs::copy_file(fixture, root / "first.avif");
+            paused.start([&] { index->refresh(configs); });
+            fs::create_directories(root / "2001-01-01");
+            independently(paused, [&] { index->poll_folders(configs); });
+            require(
+                folder_exists(*index, "test", "2001-01-01"),
+                "snapshot writes do not block folder publication"
+            );
+            fs::copy_file(fixture, root / "second.avif");
+            // An explicit refresh may wait for saving, but publishes first.
+            auto content = std::async(std::launch::async, [&] {
+                index->refresh_folder(configs, sung::fromstr("test"));
+            });
+            const auto deadline = std::chrono::steady_clock::now() + 5s;
+            while (!contains(*index, "second.avif") &&
+                   std::chrono::steady_clock::now() < deadline)
+                std::this_thread::sleep_for(10ms);
+            const bool published = contains(*index, "second.avif");
+            paused.finish();
+            content.get();
+            require(
+                published,
+                "content publication proceeds while snapshot saving is paused"
+            );
+            const auto saved = sung::gallery_cache::load(*configs);
+            require(
+                saved->files_.size() == 2 &&
+                    std::any_of(
+                        saved->files_.begin(),
+                        saved->files_.end(),
+                        [](const auto& file) {
+                            return file.browser_path_ == "test/second.avif";
+                        }
+                    ),
+                "latest snapshot contents win after concurrent publications"
+            );
+        }
         for (const auto* phase :
              {"cache-tags", "storage-write", "tag-validation", "proxy-hash"}) {
             const auto root = temp / phase;
