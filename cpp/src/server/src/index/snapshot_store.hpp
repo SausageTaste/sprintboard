@@ -30,6 +30,10 @@ namespace sung::gallery_cache {
             });
             for (const auto& [api_path, file] : removals_)
                 next->tag_analyses_.erase(file.logical_path_);
+            // UI removals can advance the generation while a publisher builds
+            // its replacement. Every publication must remain observable.
+            next->generation_ =
+                std::max(next->generation_, snapshot_->generation_ + 1);
             snapshot_ = std::move(next);
         }
 

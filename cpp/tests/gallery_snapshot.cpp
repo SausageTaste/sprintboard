@@ -41,9 +41,14 @@ namespace {
         store.remove_api_path(sung::tostr(file.info_.path_));
         const bool hidden_immediately = store.load()->files_.empty() &&
                                         store.load()->tag_analyses_.empty();
+        const auto deletion_generation = store.load()->generation_;
         // Release the worker even when an assertion would fail.
         resume.set_value();
         scanner.join();
+        require(
+            store.load()->generation_ > deletion_generation,
+            "publication after a concurrent deletion advances the generation"
+        );
         require(
             hidden_immediately,
             "deletion hides image and tags while the scanner is paused"

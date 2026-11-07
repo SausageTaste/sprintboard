@@ -27,6 +27,7 @@
 
 #include "gallery_snapshot.hpp"
 #include "image_query.hpp"
+#include "scan_journal.hpp"
 #include "snapshot_store.hpp"
 #include "tag_analysis.hpp"
 #include "tag_queue.hpp"
@@ -520,10 +521,12 @@ namespace {
 
 }  // namespace
 
-
 class sung::ImageIndex::Impl {
-
 public:
+    void set_scan_observer(std::function<void(std::string_view)> observer) {
+        scan_observer_ = std::move(observer);
+    }
+
     struct Store {
         Path root_;
         Path path_;
@@ -1659,19 +1662,29 @@ public:
     }
 
     void discover_folders(const std::shared_ptr<const ServerConfigs>& configs) {
-        std::lock_guard lock{ refresh_mutex_ };
+        detail::ScanJournal::Transaction transaction{
+            scan_journal_, refresh_mutex_, scan_bindings(*configs)
+        };
         snapshot_configs_ = configs;
         flush_pending_removals_locked();
-        const auto previous = load_snapshot();
-        auto next = std::make_shared<IndexSnapshot>(*previous);
-        next->namespaces_.clear();
-        std::set<std::string> roots;
+        transaction.begin_observations();
+
+        struct Discovery {
+            Path root_;
+            std::string key_;
+            std::vector<IndexedFolder> folders_;
+            int64_t sort_time_ = 0;
+            bool available_ = false;
+        };
+
+        std::map<std::string, Discovery> results;
         for (const auto& [name, binding] : configs->dir_bindings_) {
+            auto& result = results[name];
             const auto root = canonical_path(binding.local_dir_);
             const auto key = make_root_key(name, root);
-            roots.insert(key);
-            next->namespaces_.insert(name);
-            std::vector<IndexedFolder> discovered;
+            result.root_ = root;
+            result.key_ = key;
+            auto& discovered = result.folders_;
             std::error_code error;
             fs::recursive_directory_iterator it{ root, error }, end;
             while (!error && it != end) {
@@ -1702,15 +1715,55 @@ public:
                 );
                 continue;
             }
-            // Do not infer image or tag deletions from directory discovery.
-            std::erase_if(next->folders_, [&](const auto& item) {
-                return item.root_key_ == key;
-            });
-            next->folders_.insert(
-                next->folders_.end(), discovered.begin(), discovered.end()
-            );
-            next->namespace_sort_times_[name] = get_image_sort_time(root);
+            result.sort_time_ = get_image_sort_time(root);
+            result.available_ = true;
         }
+        if (scan_observer_)
+            scan_observer_("discovery");
+        transaction.lock();
+        if (!transaction.current())
+            return;
+        flush_pending_removals_locked();
+        const auto previous = load_snapshot();
+        auto next = std::make_shared<IndexSnapshot>(*previous);
+        next->namespaces_.clear();
+        std::set<std::string> roots;
+        std::vector<std::string> scanned_roots;
+        for (const auto& [name, result] : results) {
+            const auto& key = result.key_;
+            roots.insert(key);
+            next->namespaces_.insert(name);
+            if (!result.available_)
+                continue;
+            const auto physical = [&](const auto& item) {
+                return result.root_ /
+                       fromstr(item.path_).lexically_relative(fromstr(name));
+            };
+            std::erase_if(next->folders_, [&](const auto& item) {
+                return item.root_key_ == key &&
+                       !transaction.superseded(physical(item), true);
+            });
+            for (const auto& item : result.folders_)
+                if (!transaction.superseded(physical(item), true))
+                    next->folders_.push_back(item);
+            if (!transaction.superseded(result.root_, true))
+                next->namespace_sort_times_[name] = result.sort_time_;
+            scanned_roots.push_back(make_path_key(result.root_));
+        }
+        transaction.publish([scanned_roots = std::move(scanned_roots)](
+                                const Path& path, bool folders
+                            ) {
+            if (!folders)
+                return false;
+            const auto normalized = fromstr(make_path_key(path));
+            for (const auto& root : scanned_roots) {
+                const auto relative =
+                    normalized.lexically_relative(fromstr(root));
+                if (!relative.empty() && *relative.begin() != "..")
+                    return true;
+            }
+            return false;
+        });
         std::erase_if(next->folders_, [&](const auto& item) {
             return !roots.contains(item.root_key_);
         });
@@ -1869,15 +1922,72 @@ public:
         const Path& folder = {},
         bool recursive = false
     ) {
-        std::lock_guard refresh_lock{ refresh_mutex_ };
-        snapshot_configs_ = configs;
-        flush_pending_removals_locked();
         sung::MonotonicRealtimeTimer timer;
         ImageIndexRefreshStats stats;
+        const auto within = [](const Path& path, const Path& parent) {
+            const auto relative =
+                fromstr(make_path_key(path))
+                    .lexically_relative(fromstr(make_path_key(parent)));
+            return !relative.empty() && *relative.begin() != "..";
+        };
+        const auto folder_selected = [&](const Path& directory) {
+            return recursive
+                       ? within(directory, folder)
+                       : make_path_key(directory) == make_path_key(folder);
+        };
+        const auto scope_contents = [&](const Path& directory,
+                                        const Path& root) {
+            if (!folder.empty())
+                return folder_selected(directory);
+            return date.empty() ||
+                   date_scope(directory, root, date) == DateScope::selected;
+        };
+        const auto scope_folders = [&](const Path& path, const Path& root) {
+            if (!folder.empty())
+                return recursive
+                           ? within(path, folder)
+                           : make_path_key(path) == make_path_key(folder) ||
+                                 make_path_key(path.parent_path()) ==
+                                     make_path_key(folder);
+            return date.empty() ||
+                   date_scope(path, root, date) != DateScope::excluded;
+        };
+        detail::ScanJournal::Transaction transaction{
+            scan_journal_, refresh_mutex_, scan_bindings(*configs)
+        };
+        snapshot_configs_ = configs;
+        flush_pending_removals_locked();
         reconcile_stores(*configs);
 
-        const auto old_snapshot = load_snapshot();
-        const auto initial_refresh = old_snapshot->generation_ == 0;
+        struct RootScan {
+            Path root_;
+            bool selected_ = false;
+            bool available_ = false;
+            int64_t sort_time_ = 0;
+            std::vector<Path> physical_files_;
+            std::vector<IndexedFolder> folders_;
+            std::unordered_map<std::string, Path> proxy_sources_;
+            std::vector<FileProbe> probes_;
+            std::vector<std::optional<IndexedFile>> entries_;
+        };
+
+        std::map<std::string, RootScan> results;
+        for (const auto& [name, binding] : configs->dir_bindings_)
+            results[name].root_ = stores_.at(binding_roots_.at(name))->root_;
+        std::unordered_map<std::string, CachedMetadata> input_metadata;
+        for (const auto& [path, item] : metadata_) {
+            const auto directory = fromstr(path).parent_path();
+            for (const auto& [name, result] : results)
+                if (within(directory, result.root_) &&
+                    scope_contents(directory, result.root_)) {
+                    input_metadata.emplace(path, item);
+                    break;
+                }
+        }
+        std::vector<std::string> tag_paths;
+        for (const auto& [path, item] : tag_analyses_)
+            tag_paths.push_back(path);
+        transaction.begin_observations();
         if (!folder.empty()) {
             std::println(
                 "ImageIndex: Scanning visited {} {}...",
@@ -1895,6 +2005,304 @@ public:
                 "ImageIndex: Reconciling the library in the background..."
             );
         }
+        // Separate arenas bound each kind of scan without sharing its budget.
+        tbb::task_arena arena{
+            !folder.empty() || !date.empty() ? 4 : SCAN_CONCURRENCY
+        };
+        for (auto& [namespace_name, result] : results) {
+            const auto& root = result.root_;
+            const auto root_key = make_root_key(namespace_name, root);
+            if (!folder.empty() && !within(folder, root) &&
+                !(recursive && within(root, folder)))
+                continue;
+            if (!date.empty() &&
+                date_scope(root, root, date) == DateScope::excluded)
+                continue;
+            result.selected_ = true;
+            std::error_code ec;
+            if (!fs::is_directory(root, ec) || ec) {
+                std::println(
+                    "ImageIndex: Root unavailable, preserving previous "
+                    "snapshot: {} ({})",
+                    tostr(root),
+                    ec ? ec.message() : "not a directory"
+                );
+                continue;
+            }
+            result.sort_time_ = get_image_sort_time(root);
+            auto& physical_files = result.physical_files_;
+            auto& root_folders = result.folders_;
+            const auto scan_root =
+                folder.empty() || within(root, folder) ? root : folder;
+            fs::recursive_directory_iterator iterator{
+                scan_root,
+                date.empty() && folder.empty()
+                    ? fs::directory_options::skip_permission_denied
+                    : fs::directory_options::none,
+                ec
+            };
+            const bool directory_opened = !ec;
+            // A removed visited directory has no remaining contents in scope.
+            // Unavailable roots were handled above and must retain their cache.
+            if (!folder.empty() && ec == std::errc::no_such_file_or_directory)
+                ec.clear();
+            bool scan_failed = static_cast<bool>(ec);
+            Path scan_path = root;
+            const char* scan_operation = "open directory";
+            const fs::recursive_directory_iterator end;
+            while (!scan_failed && iterator != end) {
+                const auto entry = *iterator;
+                if (!folder.empty() && !recursive)
+                    iterator.disable_recursion_pending();
+                scan_path = entry.path();
+                scan_operation = "read entry metadata";
+                // Exclude reserved names before any status call. In particular,
+                // inaccessible legacy artifacts must not abort image discovery.
+                if (entry.path().filename() == ".sprintboard" ||
+                    sung::is_sprintboard_temporary_path(entry.path()) ||
+                    sung::is_sprintboard_tag_sidecar_path(entry.path()) ||
+                    (!date.empty() && date_scope(entry.path(), root, date) ==
+                                          DateScope::excluded)) {
+                    iterator.disable_recursion_pending();
+                    scan_operation = "advance directory iterator";
+                    iterator.increment(ec);
+                    if (ec)
+                        scan_failed = true;
+                    continue;
+                }
+                if (entry.is_directory(ec) && !ec) {
+                    const auto relative = entry.path().lexically_relative(root);
+                    const auto namespace_path = sung::fromstr(namespace_name);
+                    const auto browser_path =
+                        sung::tostr(namespace_path / relative);
+                    root_folders.push_back({
+                        root_key,
+                        sung::tostr(entry.path().filename()),
+                        browser_path,
+                        sung::tostr((namespace_path / relative).parent_path()),
+                        get_image_sort_time(entry.path()),
+                    });
+                } else if (
+                    !ec &&
+                    (date.empty() ||
+                     date_scope(entry.path().parent_path(), root, date) ==
+                         DateScope::selected) &&
+                    entry.is_regular_file(ec) && !ec
+                ) {
+                    auto path =
+                        fs::absolute(entry.path(), ec).lexically_normal();
+                    if (!ec)
+                        physical_files.push_back(std::move(path));
+                }
+
+                if (ec) {
+                    scan_failed = true;
+                    break;
+                }
+                scan_operation = "advance directory iterator";
+                iterator.increment(ec);
+                scan_failed = static_cast<bool>(ec);
+            }
+
+            if (scan_failed) {
+                std::println(
+                    "ImageIndex: Scan failed, preserving previous snapshot "
+                    "for: {} ({} at {}: {} [{}:{}])",
+                    sung::tostr(root),
+                    scan_operation,
+                    sung::tostr(scan_path),
+                    ec.message(),
+                    ec.category().name(),
+                    ec.value()
+                );
+                continue;
+            }
+
+            // Recursive preservation drops the selected folder as well as its
+            // descendants. Add it back only when the directory still exists.
+            if (!folder.empty() && directory_opened && scan_root != root) {
+                const auto path = fromstr(namespace_name) /
+                                  scan_root.lexically_relative(root);
+                root_folders.push_back(
+                    {root_key,
+                     tostr(scan_root.filename()),
+                     tostr(path),
+                     tostr(path.parent_path()),
+                     get_image_sort_time(scan_root)}
+                );
+            }
+            // A Sprintboard AVIF proxy is the browser-facing derivative
+            // of its source. Keep the relationship explicit so date
+            // sorting uses the source timestamp even when the encoder
+            // could not copy all filesystem timestamps to the proxy.
+            std::unordered_map<std::string, Path> sources_by_path;
+            for (const auto& path : physical_files) {
+                if (sung::is_sprintboard_proxy_path(path))
+                    continue;
+                sources_by_path.insert_or_assign(make_path_key(path), path);
+            }
+
+            auto& proxy_sources = result.proxy_sources_;
+            std::unordered_set<std::string> paired_sources;
+            std::unordered_set<std::string> stale_proxies;
+            for (const auto& path : physical_files) {
+                const auto source_path =
+                    sung::sprintboard_proxy_source_path(path);
+                if (!source_path)
+                    continue;
+                const auto source =
+                    sources_by_path.find(make_path_key(*source_path));
+                if (source == sources_by_path.end())
+                    continue;
+
+                std::error_code source_time_error;
+                std::error_code proxy_time_error;
+                const auto source_time =
+                    fs::last_write_time(source->second, source_time_error);
+                const auto proxy_time =
+                    fs::last_write_time(path, proxy_time_error);
+                if (source_time_error || proxy_time_error ||
+                    source_time != proxy_time) {
+                    stale_proxies.insert(make_path_key(path));
+                    continue;
+                }
+                proxy_sources.insert_or_assign(
+                    make_path_key(path), source->second
+                );
+                paired_sources.insert(make_path_key(source->second));
+            }
+
+            // Each worker probes an immutable metadata copy.
+            // so concurrent lookups across files are safe; each file's
+            // filesystem work (stat, and full decode for new/changed
+            // files) can therefore overlap instead of running one at a
+            // time, which matters a lot when the scan root is behind
+            // something with high per-call latency (e.g. an encrypted
+            // vault driver).
+            auto& probes = result.probes_;
+            probes.resize(physical_files.size());
+            arena.execute([&] {
+                tbb::parallel_for(
+                    tbb::blocked_range<size_t>(0, physical_files.size()),
+                    [&](const tbb::blocked_range<size_t>& range) {
+                        for (auto i = range.begin(); i != range.end(); ++i) {
+                            const auto path_str =
+                                sung::tostr(physical_files[i]);
+                            const auto it = input_metadata.find(path_str);
+                            const CachedMetadata* existing =
+                                it != input_metadata.end() ? &it->second
+                                                           : nullptr;
+                            const auto path_key =
+                                make_path_key(physical_files[i]);
+                            const Path* sort_time_source = nullptr;
+                            if (sung::is_sprintboard_proxy_path(
+                                    physical_files[i]
+                                )) {
+                                const auto source =
+                                    proxy_sources.find(path_key);
+                                if (source != proxy_sources.end())
+                                    sort_time_source = &source->second;
+                            }
+                            probes[i] = probe_file(
+                                physical_files[i],
+                                paired_sources.contains(path_key) ||
+                                    stale_proxies.contains(path_key),
+                                sort_time_source,
+                                existing
+                            );
+                        }
+                    }
+                );
+            });
+
+            result.entries_.resize(physical_files.size());
+            for (size_t i = 0; i < physical_files.size(); ++i) {
+                const auto& physical_path = physical_files[i];
+                const auto& probe = probes[i];
+                const auto& metadata = probe.metadata_;
+                if (probe.shadowed_ || probe.stat_failed_ ||
+                    !metadata.eligible_)
+                    continue;
+                const auto path_str = tostr(physical_path);
+                const auto relative = physical_path.lexically_relative(root);
+                if (relative.empty() || sung::tostr(relative).starts_with(".."))
+                    continue;
+
+                const auto namespace_path = sung::fromstr(namespace_name);
+                const auto browser_path =
+                    sung::tostr(namespace_path / relative);
+                const auto api_path =
+                    sung::tostr(Path{"/img"} / namespace_path / relative);
+
+                IndexedFile entry;
+                entry.root_key_ = root_key;
+                entry.physical_path_ = path_str;
+                entry.browser_path_ = browser_path;
+                entry.parent_browser_path_ =
+                    sung::tostr((namespace_path / relative).parent_path());
+                const auto proxy_source =
+                    proxy_sources.find(make_path_key(physical_path));
+                const auto display_name =
+                    proxy_source != proxy_sources.end()
+                        ? sung::tostr(proxy_source->second.filename())
+                        : sung::tostr(physical_path.filename());
+                entry.info_.name_ = display_name;
+                entry.info_.path_ = sung::fromstr(api_path);
+                entry.info_.width_ = metadata.width_;
+                entry.info_.height_ = metadata.height_;
+                entry.info_.sort_time_ns_ = metadata.sort_time_ns_;
+                entry.model_ = metadata.model_;
+                entry.prompts_ = metadata.prompts_;
+                entry.logical_path_ =
+                    sung::detail::logical_image_key(physical_path);
+                const auto tag_input = proxy_source != proxy_sources.end()
+                                           ? proxy_source->second
+                                           : physical_path;
+                entry.tag_input_path_ = sung::tostr(tag_input);
+                const auto tag_fingerprint = sung::fingerprint_file(tag_input);
+                if (tag_fingerprint) {
+                    entry.tag_input_size_ = tag_fingerprint->size_;
+                    entry.tag_input_modified_time_ =
+                        tag_fingerprint->modified_time_;
+                } else {
+                    entry.tag_input_size_ = 0;
+                    entry.tag_input_modified_time_ = 0;
+                }
+                result.entries_[i] = std::move(entry);
+            }
+            result.available_ = true;
+        }
+        std::unordered_set<std::string> absent_tags;
+        for (const auto& path : tag_paths) {
+            const auto source = fromstr(path);
+            const auto directory = source.parent_path();
+            bool selected = false;
+            for (const auto& [name, result] : results)
+                selected |= result.available_ &&
+                            within(directory, result.root_) &&
+                            scope_contents(directory, result.root_);
+            if (!selected)
+                continue;
+            std::error_code source_error, proxy_error;
+            const bool source_exists = fs::exists(source, source_error);
+            const bool proxy_exists =
+                fs::exists(make_sprintboard_proxy_path(source), proxy_error);
+            if (!source_error && !proxy_error && !source_exists &&
+                !proxy_exists)
+                absent_tags.insert(path);
+        }
+        if (scan_observer_)
+            scan_observer_(
+                folder.empty() ? (date.empty() ? "full" : "recent") : "visit"
+            );
+        transaction.lock();
+        if (!transaction.current()) {
+            stats.superseded_ = true;
+            return stats;
+        }
+        flush_pending_removals_locked();
+        const auto old_snapshot = load_snapshot();
+        const auto initial_refresh = old_snapshot->generation_ == 0;
         auto next = std::make_shared<IndexSnapshot>();
         next->generation_ = old_snapshot->generation_ + 1;
 
@@ -1903,25 +2311,12 @@ public:
         std::unordered_map<std::string, size_t> seen_folder_paths;
         std::vector<CachedMetadata> changed;
         bool all_roots_accessible = true;
-
-        const auto within = [](const Path& path, const Path& parent) {
-            const auto relative = fromstr(make_path_key(path))
-                                      .lexically_relative(
-                                          fromstr(make_path_key(parent))
-                                      );
-            return !relative.empty() && *relative.begin() != "..";
+        const auto contents_scanned = [&](const Path& path, const Path& root) {
+            return scope_contents(path, root) && !transaction.superseded(path);
         };
-        const auto folder_selected = [&](const Path& directory) {
-            return recursive
-                       ? within(directory, folder)
-                       : make_path_key(directory) == make_path_key(folder);
-        };
-        const auto contents_scanned = [&](const Path& directory,
-                                          const Path& root) {
-            if (!folder.empty())
-                return folder_selected(directory);
-            return date.empty() ||
-                   date_scope(directory, root, date) == DateScope::selected;
+        const auto folders_scanned = [&](const Path& path, const Path& root) {
+            return scope_folders(path, root) &&
+                   !transaction.superseded(path, true);
         };
         std::set<std::pair<std::string, std::string>> known_folders;
         for (const auto& item : old_snapshot->folders_)
@@ -1990,169 +2385,31 @@ public:
                         .lexically_relative(
                             fromstr(root_key.substr(0, root_key.find('\n')))
                         );
-                if ((folder.empty() || recursive) &&
-                    !preserve_directory(root / relative))
+                if (only_unscanned && folders_scanned(root / relative, root))
                     continue;
                 add_folder(cached_folder);
             }
         };
 
-        for (const auto& [namespace_name, binding] : configs->dir_bindings_) {
+        for (auto& [namespace_name, result] : results) {
             next->namespaces_.insert(namespace_name);
-
-            std::error_code ec;
-            const auto& root =
-                stores_.at(binding_roots_.at(namespace_name))->root_;
+            const auto& root = result.root_;
             const auto root_key = make_root_key(namespace_name, root);
-
-            if (!folder.empty() && !within(folder, root) &&
-                !(recursive && within(root, folder))) {
+            if (!result.available_) {
+                all_roots_accessible &= !result.selected_;
                 preserve_root(root_key);
                 continue;
             }
-
-            if (!date.empty() &&
-                date_scope(root, root, date) == DateScope::excluded) {
-                preserve_root(root_key);
-                continue;
-            }
-
-            if (!fs::is_directory(root, ec) || ec) {
-                all_roots_accessible = false;
-                const auto previous_time =
-                    old_snapshot->namespace_sort_times_.find(namespace_name);
-                if (previous_time !=
-                    old_snapshot->namespace_sort_times_.end()) {
-                    auto& sort_time =
-                        next->namespace_sort_times_[namespace_name];
-                    sort_time = std::max(sort_time, previous_time->second);
-                }
-                std::println(
-                    "ImageIndex: Root unavailable, preserving previous "
-                    "snapshot: {} ({})",
-                    sung::tostr(root),
-                    ec ? ec.message() : "not a directory"
-                );
-                preserve_root(root_key);
-                continue;
-            }
-
-            auto& namespace_sort_time =
-                next->namespace_sort_times_[namespace_name];
-            namespace_sort_time = std::max(
-                namespace_sort_time, get_image_sort_time(root)
-            );
-
-            std::vector<Path> physical_files;
-            std::vector<IndexedFolder> root_folders;
-            const auto scan_root = folder.empty() || within(root, folder)
-                                       ? root
-                                       : folder;
-            fs::recursive_directory_iterator iterator{
-                scan_root,
-                date.empty() && folder.empty()
-                    ? fs::directory_options::skip_permission_denied
-                    : fs::directory_options::none,
-                ec
-            };
-            const bool directory_opened = !ec;
-            // A removed visited directory has no remaining contents in scope.
-            // Unavailable roots were handled above and must retain their cache.
-            if (!folder.empty() && ec == std::errc::no_such_file_or_directory)
-                ec.clear();
-            bool scan_failed = static_cast<bool>(ec);
-            Path scan_path = root;
-            const char* scan_operation = "open directory";
-            const fs::recursive_directory_iterator end;
-            while (!scan_failed && iterator != end) {
-                const auto entry = *iterator;
-                if (!folder.empty() && !recursive)
-                    iterator.disable_recursion_pending();
-                scan_path = entry.path();
-                scan_operation = "read entry metadata";
-                // Exclude reserved names before any status call. In particular,
-                // inaccessible legacy artifacts must not abort image discovery.
-                if (entry.path().filename() == ".sprintboard" ||
-                    sung::is_sprintboard_temporary_path(entry.path()) ||
-                    sung::is_sprintboard_tag_sidecar_path(entry.path()) ||
-                    (!date.empty() && date_scope(entry.path(), root, date) ==
-                                          DateScope::excluded)) {
-                    iterator.disable_recursion_pending();
-                    scan_operation = "advance directory iterator";
-                    iterator.increment(ec);
-                    if (ec)
-                        scan_failed = true;
-                    continue;
-                }
-                if (entry.is_directory(ec) && !ec) {
-                    const auto relative = entry.path().lexically_relative(root);
-                    const auto namespace_path = sung::fromstr(namespace_name);
-                    const auto browser_path = sung::tostr(
-                        namespace_path / relative
-                    );
-                    root_folders.push_back(
-                        {
-                            root_key,
-                            sung::tostr(entry.path().filename()),
-                            browser_path,
-                            sung::tostr(
-                                (namespace_path / relative).parent_path()
-                            ),
-                            get_image_sort_time(entry.path()),
-                        }
-                    );
-                } else if (
-                    !ec &&
-                    (date.empty() ||
-                     date_scope(entry.path().parent_path(), root, date) ==
-                         DateScope::selected) &&
-                    entry.is_regular_file(ec) && !ec
-                ) {
-                    auto path =
-                        fs::absolute(entry.path(), ec).lexically_normal();
-                    if (!ec)
-                        physical_files.push_back(std::move(path));
-                }
-
-                if (ec) {
-                    scan_failed = true;
-                    break;
-                }
-                scan_operation = "advance directory iterator";
-                iterator.increment(ec);
-                scan_failed = static_cast<bool>(ec);
-            }
-
-            if (scan_failed) {
-                all_roots_accessible = false;
-                std::println(
-                    "ImageIndex: Scan failed, preserving previous snapshot "
-                    "for: {} ({} at {}: {} [{}:{}])",
-                    sung::tostr(root),
-                    scan_operation,
-                    sung::tostr(scan_path),
-                    ec.message(),
-                    ec.category().name(),
-                    ec.value()
-                );
-                preserve_root(root_key);
-                continue;
-            }
-
-            // Recursive preservation drops the selected folder as well as its
-            // descendants. Add it back only when the directory still exists.
-            if (!folder.empty() && recursive && directory_opened &&
-                scan_root != root) {
-                const auto path = fromstr(namespace_name) /
-                                  scan_root.lexically_relative(root);
-                root_folders.push_back(
-                    { root_key,
-                      tostr(scan_root.filename()),
-                      tostr(path),
-                      tostr(path.parent_path()),
-                      get_image_sort_time(scan_root) }
-                );
-            }
+            next->namespace_sort_times_[namespace_name] = result.sort_time_;
+            auto& root_folders = result.folders_;
+            std::erase_if(root_folders, [&](const auto& item) {
+                const auto physical =
+                    root / fromstr(item.path_)
+                               .lexically_relative(fromstr(namespace_name));
+                return !folders_scanned(physical, root);
+            });
+            const auto& physical_files = result.physical_files_;
+            auto& probes = result.probes_;
             {
                 std::lock_guard lock{ visits_mutex_ };
                 for (const auto& item : root_folders) {
@@ -2171,11 +2428,12 @@ public:
                 });
             }
 
-            if (!date.empty() || !folder.empty())
                 preserve_root(root_key, true);
-            for (auto& folder : root_folders) add_folder(std::move(folder));
+            for (const auto& item : root_folders) add_folder(item);
 
             for (const auto& path : physical_files) {
+                if (!contents_scanned(path.parent_path(), root))
+                    continue;
                 const auto path_str = sung::tostr(path);
                 seen_physical.insert(path_str);
                 auto extension = tostr(path.extension());
@@ -2184,97 +2442,10 @@ public:
                     proxy_queue_.discover(path);
             }
 
-            // A Sprintboard AVIF proxy is the browser-facing derivative
-            // of its source. Keep the relationship explicit so date
-            // sorting uses the source timestamp even when the encoder
-            // could not copy all filesystem timestamps to the proxy.
-            std::unordered_map<std::string, Path> sources_by_path;
-            for (const auto& path : physical_files) {
-                if (sung::is_sprintboard_proxy_path(path))
-                    continue;
-                sources_by_path.insert_or_assign(make_path_key(path), path);
-            }
-
-            std::unordered_map<std::string, Path> proxy_sources;
-            std::unordered_set<std::string> paired_sources;
-            std::unordered_set<std::string> stale_proxies;
-            for (const auto& path : physical_files) {
-                const auto source_path = sung::sprintboard_proxy_source_path(
-                    path
-                );
-                if (!source_path)
-                    continue;
-                const auto source = sources_by_path.find(
-                    make_path_key(*source_path)
-                );
-                if (source == sources_by_path.end())
-                    continue;
-
-                std::error_code source_time_error;
-                std::error_code proxy_time_error;
-                const auto source_time = fs::last_write_time(
-                    source->second, source_time_error
-                );
-                const auto proxy_time = fs::last_write_time(
-                    path, proxy_time_error
-                );
-                if (source_time_error || proxy_time_error ||
-                    source_time != proxy_time) {
-                    stale_proxies.insert(make_path_key(path));
-                    continue;
-                }
-                proxy_sources.insert_or_assign(
-                    make_path_key(path), source->second
-                );
-                paired_sources.insert(make_path_key(source->second));
-            }
-
-            // The probe phase only reads `metadata_` (never writes it),
-            // so concurrent lookups across files are safe; each file's
-            // filesystem work (stat, and full decode for new/changed
-            // files) can therefore overlap instead of running one at a
-            // time, which matters a lot when the scan root is behind
-            // something with high per-call latency (e.g. an encrypted
-            // vault driver).
-            std::vector<FileProbe> probes(physical_files.size());
-            (folder.empty() ? scan_arena_ : visit_arena_).execute([&] {
-                tbb::parallel_for(
-                    tbb::blocked_range<size_t>(0, physical_files.size()),
-                    [&](const tbb::blocked_range<size_t>& range) {
-                        for (auto i = range.begin(); i != range.end(); ++i) {
-                            const auto path_str = sung::tostr(
-                                physical_files[i]
-                            );
-                            const auto it = metadata_.find(path_str);
-                            const CachedMetadata* existing =
-                                it != metadata_.end() ? &it->second : nullptr;
-                            const auto path_key = make_path_key(
-                                physical_files[i]
-                            );
-                            const Path* sort_time_source = nullptr;
-                            if (sung::is_sprintboard_proxy_path(
-                                    physical_files[i]
-                                )) {
-                                const auto source = proxy_sources.find(
-                                    path_key
-                                );
-                                if (source != proxy_sources.end())
-                                    sort_time_source = &source->second;
-                            }
-                            probes[i] = probe_file(
-                                physical_files[i],
-                                paired_sources.contains(path_key) ||
-                                    stale_proxies.contains(path_key),
-                                sort_time_source,
-                                existing
-                            );
-                        }
-                    }
-                );
-            });
-
             for (size_t i = 0; i < physical_files.size(); ++i) {
                 const auto& physical_path = physical_files[i];
+                if (!contents_scanned(physical_path.parent_path(), root))
+                    continue;
                 auto& probe = probes[i];
                 ++stats.files_scanned_;
 
@@ -2307,63 +2478,11 @@ public:
                 if (!metadata.eligible_)
                     continue;
 
-                const auto relative = physical_path.lexically_relative(root);
-                if (relative.empty() || sung::tostr(relative).starts_with(".."))
-                    continue;
-
-                const auto namespace_path = sung::fromstr(namespace_name);
-                const auto browser_path = sung::tostr(
-                    namespace_path / relative
-                );
-                const auto api_path = sung::tostr(
-                    Path{ "/img" } / namespace_path / relative
-                );
-                if (!seen_api_paths.insert(api_path).second)
-                    continue;
-
-                IndexedFile entry;
-                entry.root_key_ = root_key;
-                entry.physical_path_ = path_str;
-                entry.browser_path_ = browser_path;
-                entry.parent_browser_path_ = sung::tostr(
-                    (namespace_path / relative).parent_path()
-                );
-                const auto proxy_source = proxy_sources.find(
-                    make_path_key(physical_path)
-                );
-                const auto display_name =
-                    proxy_source != proxy_sources.end()
-                        ? sung::tostr(proxy_source->second.filename())
-                        : sung::tostr(physical_path.filename());
-                entry.info_.name_ = display_name;
-                entry.info_.path_ = sung::fromstr(api_path);
-                entry.info_.width_ = metadata.width_;
-                entry.info_.height_ = metadata.height_;
-                entry.info_.sort_time_ns_ = metadata.sort_time_ns_;
-                entry.model_ = metadata.model_;
-                entry.prompts_ = metadata.prompts_;
-                entry.logical_path_ = sung::detail::logical_image_key(
-                    physical_path
-                );
-                const auto tag_input = proxy_source != proxy_sources.end()
-                                           ? proxy_source->second
-                                           : physical_path;
-                entry.tag_input_path_ = sung::tostr(tag_input);
-                const auto tag_fingerprint = sung::fingerprint_file(tag_input);
-                if (tag_fingerprint) {
-                    entry.tag_input_size_ = tag_fingerprint->size_;
-                    entry.tag_input_modified_time_ =
-                        tag_fingerprint->modified_time_;
-                } else {
-                    entry.tag_input_size_ = 0;
-                    entry.tag_input_modified_time_ = 0;
-                }
-                if (const auto tag_it = tag_analyses_.find(entry.logical_path_);
-                    tag_it != tag_analyses_.end() &&
-                    !tag_it->second.analysis_.is_null()) {
-                    entry.tags_ = tag_it->second.searchable_tags_;
-                }
-                next->files_.push_back(std::move(entry));
+                if (result.entries_[i] &&
+                    seen_api_paths
+                        .insert(tostr(result.entries_[i]->info_.path_))
+                        .second)
+                    next->files_.push_back(std::move(*result.entries_[i]));
             }
         }
 
@@ -2389,51 +2508,14 @@ public:
             for (const auto& file : next->files_)
                 visible_logical_paths.insert(file.logical_path_);
             for (auto it = tag_analyses_.begin(); it != tag_analyses_.end();) {
-                if (!folder.empty() &&
-                    !folder_selected(fromstr(it->first).parent_path())) {
+                if (!absent_tags.contains(it->first) ||
+                    transaction.superseded(fromstr(it->first).parent_path())) {
                     ++it;
                     continue;
-                }
-                if (!date.empty()) {
-                    const auto directory = fromstr(it->first).parent_path();
-                    const auto selected = std::any_of(
-                        binding_roots_.begin(),
-                        binding_roots_.end(),
-                        [&](const auto& binding) {
-                            return date_scope(
-                                       directory,
-                                       stores_.at(binding.second)->root_,
-                                       date
-                                   ) == DateScope::selected;
-                        }
-                    );
-                    if (!selected) {
-                        ++it;
-                        continue;
-                    }
                 }
                 if (visible_logical_paths.contains(it->first)) {
                     ++it;
                     continue;
-                }
-                const auto source_path = sung::fromstr(it->first);
-                {
-                    const auto proxy_path = sung::make_sprintboard_proxy_path(
-                        source_path
-                    );
-                    std::error_code source_error;
-                    std::error_code proxy_error;
-                    const bool source_exists = sung::fs::exists(
-                        source_path, source_error
-                    );
-                    const bool proxy_exists = sung::fs::exists(
-                        proxy_path, proxy_error
-                    );
-                    if (source_error || proxy_error || source_exists ||
-                        proxy_exists) {
-                        ++it;
-                        continue;
-                    }
                 }
                 if (!erase_tag_analysis(it->first)) {
                     std::println(
@@ -2487,6 +2569,32 @@ public:
         stats.images_available_ = next->files_.size();
         stats.folders_available_ = next->folders_.size();
         stats.elapsed_seconds_ = timer.elapsed();
+        std::vector<Path> scanned_roots;
+        for (const auto& [name, result] : results)
+            if (result.available_)
+                scanned_roots.push_back(result.root_);
+        transaction.publish([scanned_roots = std::move(scanned_roots),
+                             date,
+                             folder,
+                             recursive,
+                             within](const Path& path, bool folders) {
+            for (const auto& root : scanned_roots) {
+                if (!within(path, root))
+                    continue;
+                if (!folder.empty())
+                    return recursive
+                               ? within(path, folder)
+                               : make_path_key(path) == make_path_key(folder) ||
+                                     (folders &&
+                                      make_path_key(path.parent_path()) ==
+                                          make_path_key(folder));
+                const auto scope = date_scope(path, root, date);
+                if (date.empty() || (folders ? scope != DateScope::excluded
+                                             : scope == DateScope::selected))
+                    return true;
+            }
+            return false;
+        });
         store_snapshot(std::move(next));
         gallery_cache::save(*configs, *load_snapshot());
 
@@ -3153,6 +3261,32 @@ public:
             return;
         if (stores_.empty() && snapshot_configs_)
             reconcile_stores(*snapshot_configs_);
+        std::set<std::string> deleted_directories;
+        for (const auto& [api_path, file] : pending) {
+            if (!file.physical_path_.empty()) {
+                deleted_directories.insert(
+                    make_path_key(fromstr(file.physical_path_).parent_path())
+                );
+            } else if (api_path.starts_with("/img/")) {
+                // Cold-start deletions may precede the first indexed entry.
+                const auto browser = fromstr(api_path.substr(5));
+                for (const auto& [name, root_key] : binding_roots_) {
+                    const auto relative =
+                        browser.lexically_relative(fromstr(name));
+                    if (!relative.empty() && *relative.begin() != "..")
+                        deleted_directories.insert(make_path_key(
+                            (stores_.at(root_key)->root_ / relative)
+                                .parent_path()
+                        ));
+                }
+            }
+        }
+        scan_journal_.invalidate([deleted_directories = std::move(
+                                      deleted_directories
+                                  )](const Path& path, bool folders) {
+            return !folders &&
+                   deleted_directories.contains(make_path_key(path));
+        });
         std::vector<std::string> removed_physical_paths;
         for (const auto& [api_path, file] : pending) {
             if (file.physical_path_.empty())
@@ -3217,6 +3351,16 @@ private:
     detail::ProxyQueue proxy_queue_;
     nlohmann::json proxy_config_signature_;
     std::vector<std::pair<Path, ServerConfigs::AvifOptions>> proxy_roots_;
+
+    static std::string scan_bindings(const ServerConfigs& configs) {
+        return nlohmann::json{
+            gallery_cache::bindings(configs), configs.cache_dir_
+        }
+            .dump();
+    }
+
+    detail::ScanJournal scan_journal_;
+    std::function<void(std::string_view)> scan_observer_;
     gallery_cache::SnapshotStore snapshots_;
     std::shared_ptr<const ServerConfigs> snapshot_configs_;
     mutable std::mutex refresh_mutex_;
@@ -3226,10 +3370,6 @@ private:
     std::unordered_map<std::string, bool> pending_visits_;
     std::unordered_map<std::string, std::chrono::steady_clock::time_point>
         visited_at_;
-    // Isolated from the default TBB arena (used by CPU-bound AVIF encoding)
-    // since this one is deliberately oversubscribed for I/O latency-hiding.
-    tbb::task_arena scan_arena_{ SCAN_CONCURRENCY };
-    tbb::task_arena visit_arena_{ 4 };
 };
 
 
@@ -3248,7 +3388,14 @@ namespace sung {
         };
     }
 
-    ImageIndex::ImageIndex() : impl_(std::make_unique<Impl>()) {}
+    ImageIndex::ImageIndex()
+        : ImageIndex(std::function<void(std::string_view)>{}) {
+    }
+
+    ImageIndex::ImageIndex(std::function<void(std::string_view)> observer)
+        : impl_(std::make_unique<Impl>()) {
+        impl_->set_scan_observer(std::move(observer));
+    }
 
     ImageIndex::~ImageIndex() {
         auto_refresh_stop_ = true;
@@ -3314,6 +3461,7 @@ namespace sung {
         set_initial_refresh_state(InitialRefreshState::running);
         try {
             const auto stats = impl_->refresh(configs);
+            if (!stats.superseded_)
             set_initial_refresh_state(InitialRefreshState::ready);
             return stats;
         } catch (...) {

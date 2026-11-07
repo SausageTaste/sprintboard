@@ -4,6 +4,22 @@ set_target_properties(${PROJECT_NAME}_test_filesys PROPERTIES FOLDER "${PROJECT_
 target_link_libraries(${PROJECT_NAME}_test_filesys sprintboard_aux)
 
 add_executable(
+    ${PROJECT_NAME}_test_image_index_parallel
+    image_index_parallel.cpp
+    ../src/server/src/index/image_index.cpp
+    ../src/server/src/response/img_list.cpp
+    ../src/server/src/tag_analysis.cpp
+    ../src/server/src/tagger_client.cpp
+)
+add_test(NAME ${PROJECT_NAME}_test_image_index_parallel COMMAND ${PROJECT_NAME}_test_image_index_parallel)
+set_target_properties(${PROJECT_NAME}_test_image_index_parallel PROPERTIES FOLDER "${PROJECT_NAME}/test")
+target_include_directories(${PROJECT_NAME}_test_image_index_parallel PRIVATE ../src/server/src)
+target_link_libraries(
+    ${PROJECT_NAME}_test_image_index_parallel
+    httplib::httplib OpenSSL::Crypto sprintboard_img TBB::tbb unofficial::sqlite3::sqlite3
+)
+
+add_executable(
     ${PROJECT_NAME}_test_image_index_date
     image_index_date.cpp
     ../src/server/src/index/image_index.cpp

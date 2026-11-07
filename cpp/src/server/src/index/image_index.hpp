@@ -39,6 +39,8 @@ namespace sung {
         size_t folders_available_ = 0;
         double elapsed_seconds_ = 0;
         bool persistent_ = false;
+        // A newer root configuration invalidated this scan before publication.
+        bool superseded_ = false;
 
         nlohmann::json make_json() const;
     };
@@ -142,6 +144,11 @@ namespace sung {
         void retry_proxy_work(ProxyWorkItem item);
 
     private:
+        friend struct ImageIndexTestAccess;
+        explicit ImageIndex(
+            std::function<void(std::string_view)> scan_observer
+        );
+
         enum class InitialRefreshState {
             pending,
             running,
