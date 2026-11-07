@@ -6,9 +6,10 @@
 #include <stdexcept>
 #include <thread>
 
-#include "index/image_index.hpp"
+#include "image_index_test_utils.hpp"
 
 namespace {
+
     void require(bool condition, const char* message) {
         if (!condition)
             throw std::runtime_error(message);
@@ -35,11 +36,11 @@ namespace {
         );
 #endif
         const auto today = std::chrono::sys_days{
-            std::chrono::year{ local.tm_year + 1900 } /
-            std::chrono::month{ static_cast<unsigned>(local.tm_mon + 1) } /
-            std::chrono::day{ static_cast<unsigned>(local.tm_mday) }
+            std::chrono::year{local.tm_year + 1900} /
+            std::chrono::month{static_cast<unsigned>(local.tm_mon + 1)} /
+            std::chrono::day{static_cast<unsigned>(local.tm_mday)}
         };
-        return std::format("{:%F}", today - std::chrono::days{ days_ago });
+        return std::format("{:%F}", today - std::chrono::days{days_ago});
     }
 
     size_t count(const sung::ImageIndex& index, const char* path = "test") {
@@ -47,6 +48,7 @@ namespace {
             .make_json(0, 100)["totalImageCount"]
             .get<size_t>();
     }
+
 }  // namespace
 
 int main() {
@@ -163,9 +165,8 @@ int main() {
             );
         }
         {
-            auto dated_configs = std::make_shared<sung::ServerConfigs>(
-                *configs
-            );
+            auto dated_configs =
+                std::make_shared<sung::ServerConfigs>(*configs);
             dated_configs->dir_bindings_["test"].local_dir_ = nested;
             sung::ImageIndex index;
             require(
@@ -192,13 +193,14 @@ int main() {
             auto recent = std::make_shared<sung::ServerConfigs>(*configs);
             recent->dir_bindings_["test"].local_dir_ = recent_root;
             recent->cache_dir_ = sung::tostr(temp / "recent-cache");
-            for (const auto date : { "2025-12-27",
-                                     "2025-12-28",
-                                     "2025-12-29",
-                                     "2025-12-30",
-                                     "2025-12-31",
-                                     "2026-01-01",
-                                     "2026-01-02" })
+            for (const auto date :
+                 {"2025-12-27",
+                  "2025-12-28",
+                  "2025-12-29",
+                  "2025-12-30",
+                  "2025-12-31",
+                  "2026-01-01",
+                  "2026-01-02"})
                 add(recent_root / date / "one.avif");
             add(recent_root / "loose.avif");
             {
@@ -244,12 +246,13 @@ int main() {
                 );
             }
             recent->dir_bindings_["test"].local_dir_ = recent_root / "leap";
-            for (const auto date : { "2024-02-26",
-                                     "2024-02-27",
-                                     "2024-02-28",
-                                     "2024-02-29",
-                                     "2024-03-01",
-                                     "2024-03-02" })
+            for (const auto date :
+                 {"2024-02-26",
+                  "2024-02-27",
+                  "2024-02-28",
+                  "2024-02-29",
+                  "2024-03-01",
+                  "2024-03-02"})
                 add(recent_root / "leap" / date / "one.avif");
             sung::ImageIndex leap;
             require(
@@ -260,7 +263,7 @@ int main() {
                 "five-day window includes leap day and handles month boundaries"
             );
         }
-        for (const bool warm : { false, true }) {
+        for (const bool warm : {false, true}) {
             const auto startup_root = temp / (warm ? "warm" : "cold");
             auto startup = std::make_shared<sung::ServerConfigs>(*configs);
             startup->dir_bindings_["test"].local_dir_ = startup_root;
@@ -279,28 +282,26 @@ int main() {
                 add(startup_root / today_name() / "new.avif");
             }
 
-            sung::ImageIndex index;
-            index.initialize(startup);
-            // Stop at the next provider call to inspect the published fast
-            // scan before the full scan can hide incorrect startup ordering.
             std::promise<void> entered, release;
             auto started_full = entered.get_future();
             const auto released = release.get_future().share();
-            index.start_auto_refresh(
-                [&, calls = std::make_shared<std::atomic_int>(0)] {
-                    if (++*calls == 2) {
-                        entered.set_value();
-                        released.wait_for(std::chrono::seconds(5));
-                    }
-                    return startup;
+            auto instance = sung::ImageIndexTestAccess::make([&](auto kind) {
+                if (kind == "full") {
+                    entered.set_value();
+                    released.wait_for(std::chrono::seconds(5));
                 }
-            );
-            const bool reached_full = started_full.wait_for(
-                                          std::chrono::seconds(3)
-                                      ) == std::future_status::ready;
-            const bool recent_ready = index.initial_refresh_state() ==
-                                          "recent_ready" &&
-                                      !index.ready_for_background_work();
+            });
+            auto& index = *instance;
+            index.initialize(startup);
+            index.start_auto_refresh([startup] { return startup; });
+            const bool reached_full =
+                started_full.wait_for(std::chrono::seconds(3)) ==
+                std::future_status::ready;
+            const bool recent_ready =
+                eventually([&] {
+                    return index.initial_refresh_state() == "recent_ready";
+                }) &&
+                !index.ready_for_background_work();
             const auto fast_count = count(index);
             const auto oldest = "test/" + today_name(4);
             const auto archive = "test/" + today_name(5);
@@ -326,7 +327,7 @@ int main() {
             require(
                 eventually([&] { return index.ready_for_background_work(); }) &&
                     count(index) == (warm ? 6 : 7),
-                "full startup scan follows immediately despite a long interval "
+                "full startup scan runs independently despite a long interval "
                 "and reconciles archived and undated images"
             );
         }
@@ -347,7 +348,7 @@ int main() {
             periodic->image_index_full_refresh_interval_seconds_ = 1;
             sung::ServerConfigsHolder holder;
             holder.store(periodic);
-            std::atomic<bool> disabled_seen{ false };
+            std::atomic<bool> disabled_seen{false};
             sung::ImageIndex index;
             index.start_auto_refresh([&] {
                 const auto current = holder.get();
@@ -387,8 +388,8 @@ int main() {
                 const auto path = file["src"].get<std::string>();
                 old_today |= path == "/img/test/" + today + "/old.avif";
                 old_archive |= path == "/img/test/" + archive + "/old.avif";
-                new_archive |= path ==
-                               "/img/test/" + archive + "/unvisited.avif";
+                new_archive |=
+                    path == "/img/test/" + archive + "/unvisited.avif";
             }
             require(
                 !old_today && old_archive && !new_archive && count(index) == 5,
@@ -487,9 +488,8 @@ int main() {
                 "request"
             );
             fs::remove(scheduled_root / "visited" / "old.avif");
-            const auto shallow = index.refresh_folder(
-                faster, sung::fromstr("test/visited")
-            );
+            const auto shallow =
+                index.refresh_folder(faster, sung::fromstr("test/visited"));
             require(
                 shallow.files_scanned_ == 2 && shallow.metadata_removed_ == 1,
                 "shallow reconciliation removes only direct deleted files"
@@ -644,9 +644,8 @@ int main() {
                 "queue test finishes startup"
             );
             const auto active = sung::fromstr("test/active");
-            const auto empty_page = nlohmann::json{
-                { "imageFiles", nlohmann::json::array() }
-            };
+            const auto empty_page =
+                nlohmann::json{{"imageFiles", nlohmann::json::array()}};
             auto generation = index.generation();
             index.visit_page(active, empty_page);
             require(

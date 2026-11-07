@@ -5,22 +5,8 @@
 #include <stdexcept>
 #include <thread>
 
+#include "image_index_test_utils.hpp"
 #include "index/gallery_snapshot.hpp"
-#include "index/image_index.hpp"
-
-namespace sung {
-
-    struct ImageIndexTestAccess {
-        static std::unique_ptr<ImageIndex> make(
-            std::function<void(std::string_view)> observer
-        ) {
-            return std::unique_ptr<ImageIndex>{
-                new ImageIndex(std::move(observer))
-            };
-        }
-    };
-
-}  // namespace sung
 
 namespace {
 
@@ -42,12 +28,15 @@ namespace {
         std::shared_future<void> resumed_ = resume_.get_future().share();
         std::future<void> task_;
         bool released_ = false;
+        std::function<void()> shutdown_;
 
         explicit PausedScan(std::string kind) : kind_(std::move(kind)) {
         }
 
         ~PausedScan() {
             release();
+            if (shutdown_)
+                shutdown_();
         }
 
         void observe(std::string_view kind) {
@@ -196,6 +185,77 @@ int main() {
                 !folder_exists(*index, "test/2026-11-07", "deleted") &&
                     folder_exists(*index, "test/2026-11-07", "new-folder"),
                 "older scan cannot restore removed folders or lose new ones"
+            );
+        }
+        {
+            const auto root = temp / "workers";
+            const auto visited = root / "archive";
+            fs::create_directories(visited);
+            fs::copy_file(fixture, visited / "before.avif");
+            auto configs = std::make_shared<sung::ServerConfigs>();
+            configs->fill_default();
+            configs->dir_bindings_.clear();
+            configs->dir_bindings_["test"].local_dir_ = root;
+            configs->cache_dir_ = sung::tostr(temp / "workers-cache");
+            configs->tagger_enabled_ = false;
+            configs->image_index_folder_discovery_interval_seconds_ = 1;
+            configs->image_index_date_refresh_interval_seconds_ = 1;
+            configs->image_index_visit_refresh_interval_seconds_ = 1;
+            std::atomic_int recent_passes{0}, discoveries{0};
+            std::unique_ptr<sung::ImageIndex> index;
+            PausedScan paused{"full"};
+            index = sung::ImageIndexTestAccess::make([&](auto kind) {
+                if (kind == "recent")
+                    ++recent_passes;
+                if (kind == "discovery")
+                    ++discoveries;
+                paused.observe(kind);
+            });
+            index->initialize(configs);
+            paused.shutdown_ = [&] { index.reset(); };
+            paused.armed_ = true;
+            index->start_auto_refresh([configs] { return configs; });
+            require(
+                paused.entered_future_.wait_for(5s) ==
+                    std::future_status::ready,
+                "startup full scan reaches publication boundary"
+            );
+            fs::remove(visited / "before.avif");
+            fs::copy_file(fixture, visited / "visited.avif");
+            fs::create_directories(root / "discovered");
+            index->visit_page(
+                sung::fromstr("test/archive"), nlohmann::json::object()
+            );
+            const auto deadline = std::chrono::steady_clock::now() + 5s;
+            while (std::chrono::steady_clock::now() < deadline &&
+                   (!contains(*index, "visited.avif") || recent_passes < 2 ||
+                    discoveries < 2 ||
+                    !folder_exists(*index, "test", "discovered")))
+                std::this_thread::sleep_for(10ms);
+            require(
+                !index->ready_for_background_work(),
+                "tagging and encoding stay gated while full reconciliation is "
+                "paused"
+            );
+            require(
+                contains(*index, "visited.avif") &&
+                    !contains(*index, "before.avif") && recent_passes >= 2 &&
+                    discoveries >= 2 &&
+                    folder_exists(*index, "test", "discovered"),
+                "visits, discovery and recurring date scans run during startup "
+                "full scan"
+            );
+            paused.release();
+            const auto finish_deadline = std::chrono::steady_clock::now() + 5s;
+            while (!index->ready_for_background_work() &&
+                   std::chrono::steady_clock::now() < finish_deadline)
+                std::this_thread::sleep_for(10ms);
+            require(
+                index->ready_for_background_work() &&
+                    contains(*index, "visited.avif") &&
+                    !contains(*index, "before.avif"),
+                "startup completion preserves the independently refreshed "
+                "gallery"
             );
         }
         for (const bool change_binding : {false, true}) {

@@ -5,10 +5,11 @@
 #include <stdexcept>
 #include <thread>
 
+#include "image_index_test_utils.hpp"
 #include "index/gallery_snapshot.hpp"
-#include "index/image_index.hpp"
 
 namespace {
+
     void require(bool condition, const char* message) {
         if (!condition)
             throw std::runtime_error(message);
@@ -27,6 +28,7 @@ namespace {
     nlohmann::json listing(const sung::ImageIndex& index) {
         return index.query(sung::fromstr("test"), "", true).make_json(0, 100);
     }
+
 }  // namespace
 
 int main() {
@@ -58,7 +60,16 @@ int main() {
         configs->image_index_date_refresh_interval_seconds_ = 0;
         nlohmann::json expected;
         {
-            sung::ImageIndex index;
+            std::promise<void> entered, release;
+            auto started = entered.get_future();
+            const auto released = release.get_future().share();
+            auto instance = sung::ImageIndexTestAccess::make([&](auto kind) {
+                if (kind == "full") {
+                    entered.set_value();
+                    released.wait_for(std::chrono::seconds(5));
+                }
+            });
+            auto& index = *instance;
             const auto initial = index.initialize(configs);
             require(
                 initial.files_scanned_ == 0 && initial.images_available_ == 0,
@@ -69,25 +80,13 @@ int main() {
                     !index.ready_for_background_work(),
                 "workers are gated before reconciliation"
             );
-            // Hold the worker before its scan and exercise reads concurrently.
-            std::promise<void> entered, release;
-            const auto released = release.get_future().share();
-            auto started = entered.get_future();
-            index.start_auto_refresh(
-                [&, signaled = std::make_shared<std::atomic_bool>(false)] {
-                    if (!signaled->exchange(true)) {
-                        entered.set_value();
-                        released.wait_for(std::chrono::seconds(5));
-                    }
-                    return configs;
-                }
-            );
-            const bool started_immediately = started.wait_for(
-                                                 std::chrono::seconds(2)
-                                             ) == std::future_status::ready;
+            // Hold full publication while queries and other scan workers run.
+            index.start_auto_refresh([configs] { return configs; });
+            const bool started_immediately =
+                started.wait_for(std::chrono::seconds(2)) ==
+                std::future_status::ready;
             const auto during = listing(index);
-            const bool running = index.initial_refresh_state() == "running" &&
-                                 !index.ready_for_background_work();
+            const bool running = !index.ready_for_background_work();
             release.set_value();
             require(
                 started_immediately && running &&
@@ -147,17 +146,16 @@ int main() {
             );
         }
         {
-            sung::ImageIndex index;
-            index.initialize(configs);
-            configs->image_index_full_refresh_interval_seconds_ = 1;
-            index.start_auto_refresh(
-                [&, attempts = std::make_shared<std::atomic_int>(0)]()
-                    -> std::shared_ptr<const sung::ServerConfigs> {
-                    if (++*attempts == 1)
+            auto instance = sung::ImageIndexTestAccess::make(
+                [attempts = std::make_shared<std::atomic_int>(0)](auto kind) {
+                    if (kind == "full" && ++*attempts == 1)
                         throw std::runtime_error("injected startup failure");
-                    return configs;
                 }
             );
+            auto& index = *instance;
+            index.initialize(configs);
+            configs->image_index_full_refresh_interval_seconds_ = 1;
+            index.start_auto_refresh([configs] { return configs; });
             require(
                 eventually([&] {
                     return index.initial_refresh_state() == "failed";
@@ -184,7 +182,7 @@ int main() {
             );
             sung::write_file(
                 sung::gallery_cache::snapshot_path(*configs),
-                std::string{ "corrupt" }
+                std::string{"corrupt"}
             );
             sung::ImageIndex corrupt;
             require(

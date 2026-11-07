@@ -39,14 +39,15 @@ close its WAL. Writes use `synchronous=FULL`.
 Startup restores the last gallery view from `<cache_dir>/gallery-snapshot.json`
 without walking the library or checking individual images. The server starts even
 when that snapshot is missing or unusable, showing an empty gallery until the
-first background scan completes. Startup scans today's date folders and the
-previous four calendar days first, publishes those results, then immediately
-reconciles the full library. The gallery shows its startup status and automatically
-reloads the current folder, filters, and sort order after each startup phase.
+first background scan publishes results. Full-library reconciliation, recent-date
+scanning, folder discovery, and visits run on independent workers from startup.
+The recent-date worker scans today's date folders and the previous four calendar
+days. The gallery shows its startup status and refreshes the current folder,
+filters, and sort order as results arrive; visits do not wait for the full scan.
 Tagging and AVIF generation wait until the full reconciliation completes.
 Cached results can briefly include deleted images or omit new ones.
 
-After the startup scans, indexing uses three tasks:
+Alongside the one-time startup full scan, indexing uses three recurring tasks:
 
 - **Recent date-folder scanning** checks today's `YYYY-MM-DD` folders and the
   previous four local calendar days every five seconds by default, even without
@@ -64,7 +65,8 @@ After the startup scans, indexing uses three tasks:
   Duplicate requests share one queued scan; recursive requests expand a pending
   shallow scan. Requests inside the minimum interval remain queued until due,
   while other eligible folders can proceed. Content probing uses at most four
-  concurrent tasks on the index worker.
+  concurrent probes per visit scan. Shallow scans also replace the immediate
+  folder list, so deleted child folders disappear when their parent is visited.
 
 The open gallery requests a visit every 15 seconds, even when the index has not
 changed. These requests do not replace the loaded pages. Index updates trigger
@@ -79,8 +81,8 @@ or the browser tab is hidden. Unvisited contents outside the recent date window
 remain cached: global search and counts can omit new images or retain externally
 deleted images until their
 folders are scanned. Manual refresh still reconciles the complete library.
-A startup full reconciliation also remains necessary before tagging and encoding
-begin; this scheduling change reduces recurring work, not initial indexing.
+A startup full reconciliation remains necessary before tagging and encoding
+begin. It no longer blocks visited-folder or recurring recent-date scans.
 
 These settings reload without a restart and must be finite and at least one
 second. The date-scan interval also accepts `0` to disable recurring date scans:
@@ -99,10 +101,20 @@ request runs when that delay expires, even if the browser has since left; it doe
 not schedule further scans without another visit request. The former
 `image_index_full_refresh_interval_seconds` field
 remains readable for compatibility but no longer schedules recurring full scans.
-Disabling periodic date scans does not change startup: it still scans today and
-the previous four local calendar days first, then the full library.
-All discovery and content scans run serially on the dedicated index worker, so a
-large individual folder or slow discovery can delay other queued visits.
+Disabling periodic date scans still permits one recent-date pass at startup,
+independently of the full-library scan.
+Each worker runs one pass at a time and retries failures independently. Full scans
+use at most 32 concurrent probes; recent-date and visit scans each use at most
+four. Directory walks, hashing, and image inspection run outside the shared index
+lock. Publishing snapshots and updating SQLite remain serialized, and all workers
+still share disk and CPU capacity. A large visit can delay other queued visits,
+but a full scan, date scan, or discovery no longer occupies the visit worker.
+
+Overlapping scans merge into the latest snapshot. An older scan preserves scopes
+already published by a newer scan, including empty or deleted folders. UI
+deletions remain protected after storage cleanup, and results from obsolete root
+bindings are discarded. Shutdown stops scheduling and joins every scan worker
+before closing index storage.
 
 Tagging and AVIF generation wait for the first full pass.
 Unavailable roots retain their cached browsing entries, and

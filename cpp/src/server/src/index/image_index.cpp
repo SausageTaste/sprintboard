@@ -1642,10 +1642,14 @@ public:
     ImageIndexRefreshStats initialize(
         const std::shared_ptr<const ServerConfigs>& configs
     ) {
-        std::lock_guard refresh_lock{ refresh_mutex_ };
+        std::lock_guard refresh_lock{refresh_mutex_};
         snapshot_configs_ = configs;
         sung::MonotonicRealtimeTimer timer;
         auto cached = gallery_cache::load(*configs);
+        // Namespaces are available immediately even without a saved snapshot,
+        // so a cold-start visit can queue its root before discovery finishes.
+        for (const auto& [name, binding] : configs->dir_bindings_)
+            cached->namespaces_.insert(name);
         ImageIndexRefreshStats stats;
         stats.images_available_ = cached->files_.size();
         stats.folders_available_ = cached->folders_.size();
@@ -3400,8 +3404,13 @@ namespace sung {
     ImageIndex::~ImageIndex() {
         auto_refresh_stop_ = true;
         auto_tagging_stop_ = true;
-        if (auto_refresh_thread_.joinable())
-            auto_refresh_thread_.join();
+        for (auto* worker :
+             {&auto_refresh_thread_,
+              &auto_recent_thread_,
+              &auto_discovery_thread_,
+              &auto_visit_thread_})
+            if (worker->joinable())
+                worker->join();
         if (auto_tagging_thread_.joinable())
             auto_tagging_thread_.join();
         try {
@@ -3523,83 +3532,86 @@ namespace sung {
     void ImageIndex::start_auto_refresh(
         std::function<std::shared_ptr<const ServerConfigs>()> configs_provider
     ) {
-        auto_refresh_thread_ = std::thread([this,
-                                            configs_provider =
-                                                std::move(configs_provider)] {
-            using Clock = std::chrono::steady_clock;
-            std::optional<Clock::time_point> last_full;
-            std::optional<Clock::time_point> last_discovery;
-            std::optional<Clock::time_point> last_recent;
-            bool startup_recent_attempted = false;
-            while (!auto_refresh_stop_) {
-                if (!last_full)
-                    set_initial_refresh_state(InitialRefreshState::running);
-                bool full_attempted = false;
-                bool failed = false;
-                try {
-                    const auto configs = configs_provider();
-                    impl_->flush_pending_removals();
-                    const auto now = Clock::now();
-                    const auto due = [&](const auto& last, double seconds) {
-                        return !last ||
-                               std::chrono::duration<double>(now - *last)
-                                       .count() >= seconds;
-                    };
-                    if (!startup_recent_attempted) {
-                        // A failed fast scan must not prevent full recovery.
-                        startup_recent_attempted = true;
-                        this->refresh_recent(configs, local_date_folder());
-                        set_initial_refresh_state(
-                            InitialRefreshState::recent_ready
+        using Clock = std::chrono::steady_clock;
+        // Each worker owns its cadence and retries. Filesystem observations
+        // overlap; the index serializes only shared-state
+        // publication/storage.
+        const auto launch = [this](const char* name, auto work) {
+            return std::thread([this, name, work = std::move(work)]() mutable {
+                while (!auto_refresh_stop_) {
+                    bool failed = false;
+                    try {
+                        if (work())
+                            return;
+                    } catch (const std::exception& error) {
+                        failed = true;
+                        std::println(
+                            "ImageIndex: {} scan failed; will retry: {}",
+                            name,
+                            error.what()
                         );
-                    } else if (!last_full) {
-                        full_attempted = true;
-                        this->refresh(configs);
-                        last_discovery = Clock::now();
-                        last_recent = Clock::now();
-                    } else {
-                        if (due(
-                                last_discovery,
-                                configs
-                                    ->image_index_folder_discovery_interval_seconds_
-                            )) {
-                            this->discover_folders(configs);
-                            last_discovery = Clock::now();
-                        }
-                        // Refresh recent date-named folders even without a
-                        // visit. Measure from completion to avoid catch-up
-                        // loops, and recompute the local date for rollover.
-                        const auto interval =
-                            configs->image_index_date_refresh_interval_seconds_;
-                        if (interval > 0 && due(last_recent, interval)) {
-                            this->refresh_recent(configs, local_date_folder());
-                            last_recent = Clock::now();
-                        }
+                    } catch (...) {
+                        failed = true;
+                        std::println(
+                            "ImageIndex: {} scan failed; will retry.", name
+                        );
                     }
-                    if (ready_for_background_work())
-                        impl_->refresh_next_visit(configs);
-                } catch (const std::exception& error) {
-                    failed = true;
-                    set_initial_refresh_state(InitialRefreshState::failed);
-                    std::println(
-                        "ImageIndex: Background refresh failed; will retry: {}",
-                        error.what()
-                    );
-                } catch (...) {
-                    failed = true;
-                    set_initial_refresh_state(InitialRefreshState::failed);
-                    std::println(
-                        "ImageIndex: Background refresh failed; will retry."
-                    );
+                    for (double waited = 0;
+                         waited < (failed ? 1.0 : 0.1) && !auto_refresh_stop_;
+                         waited += 0.1)
+                        sung::sleep_naive(0.1);
                 }
-                if (full_attempted && !failed)
-                    last_full = Clock::now();
-                for (double waited = 0;
-                     waited < (failed ? 1.0 : 0.1) && !auto_refresh_stop_;
-                     waited += 0.1) {
-                    sung::sleep_naive(0.1);
+            });
+        };
+        auto_refresh_thread_ = launch("full", [this, configs_provider] {
+            return !this->refresh(configs_provider()).superseded_;
+        });
+        auto_recent_thread_ = launch(
+            "recent",
+            [this,
+             configs_provider,
+             last = std::optional<Clock::time_point>{}]() mutable {
+                const auto configs = configs_provider();
+                const auto interval =
+                    configs->image_index_date_refresh_interval_seconds_;
+                if (!last ||
+                    (interval > 0 &&
+                     std::chrono::duration<double>(Clock::now() - *last)
+                             .count() >= interval)) {
+                    const auto stats =
+                        this->refresh_recent(configs, local_date_folder());
+                    if (!stats.superseded_) {
+                        if (!last)
+                            set_initial_refresh_state(
+                                InitialRefreshState::recent_ready
+                            );
+                        last = Clock::now();
+                    }
                 }
+                return false;
             }
+        );
+        auto_discovery_thread_ = launch(
+            "discovery",
+            [this,
+             configs_provider,
+             last = std::optional<Clock::time_point>{}]() mutable {
+                const auto configs = configs_provider();
+                if (!last ||
+                    std::chrono::duration<double>(Clock::now() - *last)
+                            .count() >=
+                        configs
+                            ->image_index_folder_discovery_interval_seconds_) {
+                    this->discover_folders(configs);
+                    last = Clock::now();
+                }
+                return false;
+            }
+        );
+        auto_visit_thread_ = launch("visit", [this, configs_provider] {
+            impl_->flush_pending_removals();
+            impl_->refresh_next_visit(configs_provider());
+            return false;
         });
     }
 

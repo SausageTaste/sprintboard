@@ -17,7 +17,6 @@
 #include "sung/auxiliary/server_configs.hpp"
 #include "tag_analysis.hpp"
 
-
 namespace sung {
 
     namespace detail {
@@ -45,9 +44,7 @@ namespace sung {
         nlohmann::json make_json() const;
     };
 
-
     class ImageIndex {
-
     public:
         ImageIndex();
         ~ImageIndex();
@@ -95,9 +92,9 @@ namespace sung {
         std::string_view initial_refresh_state() const;
         bool ready_for_background_work() const;
 
-        // Publish the recent five days first, then reconcile the full library.
-        // Afterwards, discover folders periodically and reconcile visited
-        // folders on the dedicated worker. Full refresh remains explicit.
+        // Run startup full reconciliation, recent-date scans, directory
+        // discovery, and visits on independent workers. Later full refreshes
+        // remain explicit; visits never wait for startup reconciliation.
         void start_auto_refresh(
             std::function<std::shared_ptr<const ServerConfigs>()>
                 configs_provider
@@ -163,9 +160,12 @@ namespace sung {
         class Impl;
         std::unique_ptr<Impl> impl_;
         std::thread auto_refresh_thread_;
-        std::atomic_bool auto_refresh_stop_{ false };
+        std::thread auto_recent_thread_;
+        std::thread auto_discovery_thread_;
+        std::thread auto_visit_thread_;
+        std::atomic_bool auto_refresh_stop_{false};
         std::thread auto_tagging_thread_;
-        std::atomic_bool auto_tagging_stop_{ false };
+        std::atomic_bool auto_tagging_stop_{false};
     };
 
 }  // namespace sung
