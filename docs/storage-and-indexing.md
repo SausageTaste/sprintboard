@@ -102,6 +102,9 @@ Date folder names become visible before image inspection. A dedicated worker
 scans new `YYYY-MM-DD` folders, including older dates, one directory at a time
 with at most four concurrent image probes, then queues their descendants.
 Directory symlinks are listed but are not traversed by this discovery path.
+Failed priority scans stay queued with capped retry backoff; other eligible
+folders continue. A completed content scan cancels redundant queued work for its
+scope.
 
 The date-scan and discovery intervals are measured after each pass completes.
 The visit interval is a minimum delay after a folder scan attempt. A queued

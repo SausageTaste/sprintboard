@@ -2072,6 +2072,11 @@ public:
                             );
                             next->tag_analyses_ = tag_analyses_;
                             for (auto& file : next->files_) {
+                                // Restored browsing entries acquire logical
+                                // keys only when a content scan reconciles
+                                // them.
+                                if (file.logical_path_.empty())
+                                    continue;
                                 const auto found =
                                     tag_analyses_.find(file.logical_path_);
                                 file.tags_ =
@@ -2172,6 +2177,8 @@ public:
             priority_bindings_ = signature;
             priority_folders_.clear();
             priority_pending_.clear();
+            priority_retries_.clear();
+            ++priority_epoch_;
         }
         std::set<std::pair<std::string, std::string>> known;
         for (const auto& item : previous.folders_)
@@ -2205,6 +2212,7 @@ public:
                     ))
                     parents.insert(item.path_);
             for (const auto& parent : parents) {
+                sung::MonotonicRealtimeTimer timer;
                 detail::ScanJournal::Transaction transaction{
                     scan_journal_, refresh_mutex_, scan_bindings(*configs)
                 };
@@ -2271,8 +2279,17 @@ public:
                     return folders && make_path_key(path.parent_path()) ==
                                           make_path_key(physical);
                 });
-                if (before == after)
+                if (before == after) {
+                    transaction.unlock();
+                    if (timer.elapsed() >= 1)
+                        std::println(
+                            "ImageIndex: Folder poll of {} took {:.3f} "
+                            "seconds.",
+                            parent,
+                            timer.elapsed()
+                        );
                     continue;
+                }
                 next->namespaces_.insert(name);
                 queue_new_dates(*configs, *previous, *next);
                 {
@@ -2285,33 +2302,59 @@ public:
                             unscanned_folders_.erase(path);
                 }
                 store_snapshot(std::move(next));
+                transaction.unlock();
                 std::println(
-                    "ImageIndex: Folder poll updated {} ({} children).",
+                    "ImageIndex: Folder poll updated {} ({} children) in "
+                    "{:.3f} seconds.",
                     parent,
-                    after.size()
+                    after.size(),
+                    timer.elapsed()
                 );
             }
         }
+    }
+
+    void defer_priority_folder(const std::string& folder) {
+        auto& [due, failures] = priority_retries_[folder];
+        due = std::chrono::steady_clock::now() +
+              std::chrono::seconds{std::min(1 << std::min(failures++, 5), 30)};
+        priority_folders_.push_back(folder);
     }
 
     void refresh_new_folder(
         const std::shared_ptr<const ServerConfigs>& configs
     ) {
         std::string folder;
+        uint64_t epoch = 0;
         const auto signature = scan_bindings(*configs);
         {
             std::lock_guard lock{refresh_mutex_};
             if (priority_bindings_ != signature || priority_folders_.empty())
                 return;
-            folder = std::move(priority_folders_.front());
-            priority_folders_.pop_front();
+            epoch = priority_epoch_;
+            const auto now = std::chrono::steady_clock::now();
+            for (size_t remaining = priority_folders_.size(); remaining > 0;
+                 --remaining) {
+                auto candidate = std::move(priority_folders_.front());
+                priority_folders_.pop_front();
+                const auto retry = priority_retries_.find(candidate);
+                if (retry != priority_retries_.end() &&
+                    retry->second.first > now) {
+                    priority_folders_.push_back(std::move(candidate));
+                    continue;
+                }
+                folder = std::move(candidate);
+                break;
+            }
+            if (folder.empty())
+                return;
         }
         try {
             refresh_folder(configs, fromstr(folder), false, false);
         } catch (...) {
             std::lock_guard lock{refresh_mutex_};
-            if (priority_bindings_ == signature)
-                priority_folders_.push_back(folder);
+            if (priority_bindings_ == signature && priority_epoch_ == epoch)
+                defer_priority_folder(folder);
             throw;
         }
         // Check links outside the publication lock before queuing descendants.
@@ -2331,10 +2374,15 @@ public:
                 children.push_back(item.path_);
         }
         std::lock_guard lock{refresh_mutex_};
-        if (priority_bindings_ != signature)
+        if (priority_bindings_ != signature || priority_epoch_ != epoch)
             return;
-        priority_pending_.erase(folder);
         std::lock_guard visits_lock{visits_mutex_};
+        if (unscanned_folders_.contains(folder)) {
+            defer_priority_folder(folder);
+            return;
+        }
+        priority_pending_.erase(folder);
+        priority_retries_.erase(folder);
         for (const auto& child : children)
             if (unscanned_folders_.contains(child) &&
                 priority_pending_.insert(child).second)
@@ -3244,6 +3292,7 @@ public:
                     *relative.begin() != ".." &&
                     contents_scanned(result.root_ / relative, result.root_)) {
                     priority_pending_.erase(queued);
+                    priority_retries_.erase(queued);
                     return true;
                 }
             }
@@ -4009,7 +4058,10 @@ public:
             metadata_.erase(file.physical_path_);
             const auto logical_path =
                 file.logical_path_.empty()
-                    ? make_path_key(fromstr(file.physical_path_))
+                    ? make_path_key(sprintboard_proxy_source_path(
+                                        fromstr(file.physical_path_)
+                      )
+                                        .value_or(fromstr(file.physical_path_)))
                     : file.logical_path_;
             proxy_queue_.forget(fromstr(logical_path));
             tag_queue_.forget(logical_path);
@@ -4096,6 +4148,11 @@ private:
     mutable std::mutex refresh_mutex_;
     mutable std::mutex visits_mutex_;
     std::string priority_bindings_;
+    uint64_t priority_epoch_ = 0;
+    std::unordered_map<
+        std::string,
+        std::pair<std::chrono::steady_clock::time_point, int>>
+        priority_retries_;
     std::deque<std::string> priority_folders_;
     std::set<std::string> priority_pending_;
     std::set<std::string> unscanned_folders_;
@@ -4235,6 +4292,12 @@ namespace sung {
         std::shared_ptr<const ServerConfigs> configs
     ) {
         impl_->poll_folders(configs);
+    }
+
+    void ImageIndex::refresh_new_folder(
+        std::shared_ptr<const ServerConfigs> configs
+    ) {
+        impl_->refresh_new_folder(configs);
     }
 
     ImageIndexRefreshStats ImageIndex::refresh_folder(
@@ -4381,7 +4444,7 @@ namespace sung {
         );
         auto_new_folder_thread_ =
             launch("new-folder", [this, configs_provider] {
-                impl_->refresh_new_folder(configs_provider());
+                this->refresh_new_folder(configs_provider());
                 return false;
             });
         auto_visit_thread_ = launch("visit", [this, configs_provider] {
