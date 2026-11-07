@@ -527,6 +527,10 @@ public:
         scan_observer_ = std::move(observer);
     }
 
+    bool loading_cache() const {
+        return cache_loading_.load();
+    }
+
     struct Store {
         Path root_;
         Path path_;
@@ -548,22 +552,38 @@ public:
         }
     };
 
-    static Path canonical_path(const Path& path) {
+    using ResolvedPaths = std::unordered_map<std::string, Path>;
+
+    static Path canonical_path(
+        const Path& path, ResolvedPaths* resolved = nullptr
+    ) {
+        const auto key = make_path_key(path);
+        if (resolved) {
+            const auto found = resolved->find(key);
+            if (found != resolved->end())
+                return found->second;
+        }
         std::error_code ec;
         auto result = fs::weakly_canonical(fs::absolute(path, ec), ec);
         if (ec)
             result = path.lexically_normal();
         while (result.has_relative_path() && result.filename().empty())
             result = result.parent_path();
+        if (resolved) {
+            resolved->insert_or_assign(key, result);
+            resolved->try_emplace(make_path_key(result), result);
+        }
         return result;
     }
 
     static std::optional<std::string> relative_path(
-        const Store& store, const std::string& path
+        const Store& store,
+        const std::string& path,
+        ResolvedPaths* resolved = nullptr
     ) {
         if (path.empty())
             return std::string{};
-        const auto absolute = canonical_path(sung::fromstr(path));
+        const auto absolute = canonical_path(sung::fromstr(path), resolved);
         auto part = absolute.begin();
         for (const auto& root_part : store.root_) {
             if (part == absolute.end() ||
@@ -580,7 +600,11 @@ public:
         return sung::tostr(relative);
     }
 
-    static bool restore_path(const Store& store, std::string& value) {
+    static bool restore_path(
+        const Store& store,
+        std::string& value,
+        ResolvedPaths* resolved = nullptr
+    ) {
         if (value.empty())
             return true;
         const auto relative = sung::fromstr(value);
@@ -591,19 +615,21 @@ public:
         for (const auto& part : relative)
             if (part == "..")
                 return false;
-        const auto absolute = canonical_path(store.root_ / relative);
-        if (!relative_path(store, sung::tostr(absolute)))
+        const auto absolute = canonical_path(store.root_ / relative, resolved);
+        if (!relative_path(store, sung::tostr(absolute), resolved))
             return false;
         value = sung::tostr(absolute);
         return true;
     }
 
-    Store* owner(const std::string& path) const {
+    Store* owner(
+        const std::string& path, ResolvedPaths* resolved = nullptr
+    ) const {
         Store* result = nullptr;
         size_t depth = 0;
         for (const auto& [key, store] : stores_) {
             if (store->active_ && key.size() > depth &&
-                relative_path(*store, path)) {
+                relative_path(*store, path, resolved)) {
                 result = store.get();
                 depth = key.size();
             }
@@ -658,7 +684,7 @@ public:
         return version;
     }
 
-    bool inspect_database(Store& store, const Path& path, bool load) {
+    bool inspect_database(Store& store, const Path& path) {
         std::error_code ec;
         if (!fs::is_regular_file(path, ec))
             return true;
@@ -699,8 +725,6 @@ public:
         } else if (valid)
             valid = *version == 6 || *version == 7 ||
                     *version == DATABASE_SCHEMA_VERSION;
-        if (valid && *version != 0 && load)
-            load_tag_analyses(store, db, path != store.fallback_, false);
         sqlite3_close(db);
         if (!valid) {
             store.blocked_ = true;
@@ -715,7 +739,24 @@ public:
         return valid && !store.blocked_;
     }
 
+    void load_readonly_tags(
+        Store& store, const Path& path, ResolvedPaths* resolved
+    ) {
+        sqlite3* database = nullptr;
+        if (sqlite3_open_v2(
+                tostr(path).c_str(), &database, SQLITE_OPEN_READONLY, nullptr
+            ) == SQLITE_OK)
+            load_tag_analyses(
+                store, database, path != store.fallback_, false, resolved
+            );
+        if (database)
+            sqlite3_close(database);
+    }
+
     void reconcile_stores(const ServerConfigs& configs) {
+        // Resolutions are shared only within this preparation pass. Never
+        // retain them across scans: a symlink or mount may have changed.
+        ResolvedPaths resolved;
         std::set<std::string> roots;
         std::map<std::string, Path> root_paths;
         binding_roots_.clear();
@@ -743,21 +784,43 @@ public:
         for (auto& [key, store] : stores_) {
             if (!store->active_ || store->blocked_ || store->database_)
                 continue;
+
+            struct LoadingCache {
+                std::atomic_bool& flag_;
+
+                explicit LoadingCache(std::atomic_bool& flag) : flag_(flag) {
+                    flag_ = true;
+                }
+
+                ~LoadingCache() {
+                    flag_ = false;
+                }
+            } loading{cache_loading_};
             std::error_code ec;
             if (!fs::is_directory(store->root_, ec) || ec)
                 continue;
-            if (!store->loaded_) {
-                const auto primary = store->root_ / ".sprintboard" /
-                                     "image-index.sqlite3";
-                if (!inspect_database(*store, primary, true) ||
-                    !inspect_database(*store, store->fallback_, true))
+            const bool initial_load = !store->loaded_;
+            const auto primary =
+                store->root_ / ".sprintboard" / "image-index.sqlite3";
+            sung::MonotonicRealtimeTimer load_timer;
+            if (initial_load) {
+                std::println(
+                    "ImageIndex: Checking cached database for {}...",
+                    sung::tostr(store->root_)
+                );
+                if (!inspect_database(*store, primary))
                     continue;
+                if (!inspect_database(*store, store->fallback_)) {
+                    // A broken fallback must not hide readable primary tags.
+                    load_readonly_tags(*store, primary, &resolved);
+                    continue;
+                }
             }
-            open_database(*store);
+            open_database(*store, initial_load);
             if (!store->database_ && !store->blocked_ &&
                 store->path_ != store->fallback_) {
                 store->path_ = store->fallback_;
-                open_database(*store);
+                open_database(*store, initial_load);
             }
             store->healthy_ = store->database_ != nullptr;
             std::println(
@@ -766,21 +829,40 @@ public:
                 store->database_ ? sung::tostr(store->path_)
                                  : "unavailable (browsing only)"
             );
+            std::println(
+                "ImageIndex: Loading cached metadata and tags for {}...",
+                tostr(store->root_)
+            );
+            if (initial_load && store->database_)
+                load_metadata(*store, &resolved);
+            // Merge primary then fallback exactly once. Readable tags remain
+            // available even when neither database can be opened for writing.
+            for (const auto& path : {primary, store->fallback_}) {
+                if (path == store->path_ && store->database_) {
+                    load_tag_analyses(
+                        *store,
+                        store->database_,
+                        path != store->fallback_,
+                        true,
+                        &resolved
+                    );
+                } else if (initial_load) {
+                    load_readonly_tags(*store, path, &resolved);
+                }
+            }
+            std::println(
+                "ImageIndex: Loaded cached metadata and tags for {} in {:.3f} "
+                "seconds.",
+                tostr(store->root_),
+                load_timer.elapsed()
+            );
             if (store->database_) {
-                if (!store->loaded_)
-                    load_metadata(*store);
-                load_tag_analyses(
-                    *store,
-                    store->database_,
-                    store->path_ != store->fallback_,
-                    true
-                );
                 store->loaded_ = true;
                 store->dirty_ = true;
                 // Reconcile readable local/fallback records into the selected
                 // store.
                 for (const auto& [path, item] : tag_analyses_)
-                    if (owner(path) == store.get())
+                    if (owner(path, &resolved) == store.get())
                         store->pending_tags_.try_emplace(path, item);
             }
         }
@@ -790,7 +872,7 @@ public:
                     continue;
                 store->dirty_ = true;
                 for (const auto& [path, item] : tag_analyses_)
-                    if (owner(path) == store.get())
+                    if (owner(path, &resolved) == store.get())
                         store->pending_tags_.try_emplace(path, item);
             }
             // Move uncommitted results too; never publish them before
@@ -798,7 +880,7 @@ public:
             for (auto& [key, store] : stores_) {
                 for (auto it = store->pending_tags_.begin();
                      it != store->pending_tags_.end();) {
-                    auto* destination = owner(it->first);
+                    auto* destination = owner(it->first, &resolved);
                     if (destination && destination != store.get()) {
                         destination->pending_tags_.insert_or_assign(
                             it->first, it->second
@@ -809,7 +891,7 @@ public:
                 }
             }
             std::erase_if(tag_analyses_, [&](const auto& entry) {
-                return owner(entry.first) == nullptr;
+                return owner(entry.first, &resolved) == nullptr;
             });
             root_keys_ = std::move(roots);
         }
@@ -828,8 +910,8 @@ public:
         }
     }
 
-    void open_database(Store& store) {
-        if (!inspect_database(store, store.path_, false))
+    void open_database(Store& store, bool validated = false) {
+        if (!validated && !inspect_database(store, store.path_))
             return;
         auto*& database_ = store.database_;
         const auto& database_path_ = store.path_;
@@ -975,7 +1057,7 @@ public:
         }
     }
 
-    void load_metadata(Store& store) {
+    void load_metadata(Store& store, ResolvedPaths* resolved = nullptr) {
         auto* database_ = store.database_;
         if (!database_)
             return;
@@ -1024,8 +1106,8 @@ public:
                 metadata.prompts_.clear();
             }
             if (!metadata.physical_path_.empty() &&
-                restore_path(store, metadata.physical_path_) &&
-                owner(metadata.physical_path_) == &store)
+                restore_path(store, metadata.physical_path_, resolved) &&
+                owner(metadata.physical_path_, resolved) == &store)
                 metadata_.try_emplace(
                     metadata.physical_path_, std::move(metadata)
                 );
@@ -1103,10 +1185,16 @@ public:
     }
 
     void load_tag_analyses(
-        Store& store, sqlite3* database_, bool local, bool track
+        Store& store,
+        sqlite3* database_,
+        bool local,
+        bool track,
+        ResolvedPaths* resolved = nullptr
     ) {
         if (!database_)
             return;
+        if (scan_observer_)
+            scan_observer_("cache-tags");
 
         sqlite3_stmt* statement = nullptr;
         const char* query =
@@ -1210,11 +1298,14 @@ public:
                                 &analysis.input_path_,
                                 &analysis.attempt_input_path_,
                                 &analysis.proxy_path_ })
-                valid = restore_path(store, *path) && valid;
-            if (valid)
-                analysis.logical_path_ = sung::detail::logical_image_key(
-                    sung::fromstr(analysis.logical_path_)
+                valid = restore_path(store, *path, resolved) && valid;
+            if (valid) {
+                // restore_path already canonicalized and checked containment.
+                const auto physical = fromstr(analysis.logical_path_);
+                analysis.logical_path_ = make_path_key(
+                    sprintboard_proxy_source_path(physical).value_or(physical)
                 );
+            }
             if (valid && !sung::is_sprintboard_temporary_path(
                              sung::fromstr(analysis.logical_path_)
                          )) {
@@ -3365,6 +3456,7 @@ private:
 
     detail::ScanJournal scan_journal_;
     std::function<void(std::string_view)> scan_observer_;
+    std::atomic_bool cache_loading_{false};
     gallery_cache::SnapshotStore snapshots_;
     std::shared_ptr<const ServerConfigs> snapshot_configs_;
     mutable std::mutex refresh_mutex_;
@@ -3449,6 +3541,8 @@ namespace sung {
     }
 
     std::string_view ImageIndex::initial_refresh_state() const {
+        if (!ready_for_background_work() && impl_->loading_cache())
+            return "loading_cache";
         switch (initial_refresh_state_.load()) {
             case InitialRefreshState::pending:
                 return "pending";

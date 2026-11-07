@@ -15,6 +15,7 @@
 
 #include <sqlite3.h>
 
+#include "image_index_test_utils.hpp"
 #include "index/image_index.hpp"
 #include "tag_test_utils.hpp"
 
@@ -545,8 +546,27 @@ namespace {
         const auto proxy = sung::make_sprintboard_proxy_path(image);
         copy_image(fixture, proxy);
         {
-            sung::ImageIndex index;
+            size_t tag_loads = 0;
+            std::unique_ptr<sung::ImageIndex> instance;
+            instance = sung::ImageIndexTestAccess::make([&](auto phase) {
+                if (phase == "cache-tags") {
+                    ++tag_loads;
+                    require(
+                        instance->initial_refresh_state() == "loading_cache",
+                        "startup reports cache loading before content scanning"
+                    );
+                }
+            });
+            auto& index = *instance;
             index.refresh(configs_for(portable, fallback));
+            require(
+                tag_loads == 1,
+                "startup loads the active tag database only once"
+            );
+            require(
+                index.initial_refresh_state() == "ready",
+                "cache-loading status clears when reconciliation completes"
+            );
             require(
                 count(index, "a", "portable_tag") == 1,
                 "SQLite restores successful analysis"

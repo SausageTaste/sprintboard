@@ -124,10 +124,14 @@ tag databases or authorize tagging and encoding. Invalid snapshots or changed
 namespace-to-directory mappings cause an empty start and a background rebuild.
 Keep `cache_dir` on a fast local disk to avoid slow snapshot reads.
 
-`GET /api/images/index/status` returns a JSON `state` of `pending`, `running`,
-`recent_ready`, `ready`, or `failed` for initial reconciliation. Once ready, it
+`GET /api/images/index/status` returns a JSON `state` of `pending`, `loading_cache`,
+`running`, `recent_ready`, `ready`, or `failed` for initial reconciliation. Once ready, it
 stays ready through later periodic scans. `recent_ready` means the five-day startup
 results are available while the full reconciliation is still pending or running.
+`loading_cache` identifies database validation and restoration before content
+scanning. The server logs this phase separately. Each saved tag database is read
+once per load, with filesystem path resolutions reused within that preparation
+pass and discarded afterwards.
 The gallery polls every two seconds until ready (five seconds after failures).
 The status response also includes an index `generation`; the gallery checks it
 while open to pick up completed discovery and content scans. List requests use

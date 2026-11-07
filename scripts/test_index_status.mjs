@@ -3,30 +3,32 @@ import test from 'node:test';
 import { setImmediate } from 'node:timers/promises';
 import { watchInitialIndexStatus } from '../src/func/indexStatus.ts';
 
-test('startup polling retries failures, reports completion, and stops', async (t) => {
-    t.mock.timers.enable({ apis: ['setTimeout'] });
-    const responses = ['pending', 'running', 'failed', 'ready'];
-    const states = [];
-    const fetch = t.mock.method(globalThis, 'fetch', async () =>
-        new Response(JSON.stringify({ state: responses.shift() })));
-    const stop = watchInitialIndexStatus(state => states.push(state));
-    t.after(stop);
-    await setImmediate();
-    assert.deepEqual(states, ['pending']);
-    t.mock.timers.tick(2000);
-    await setImmediate();
-    assert.deepEqual(states, ['pending', 'running']);
-    t.mock.timers.tick(2000);
-    await setImmediate();
-    assert.equal(states.at(-1), 'failed');
-    t.mock.timers.tick(4999);
-    assert.equal(fetch.mock.callCount(), 3);
-    t.mock.timers.tick(1);
-    await setImmediate();
-    assert.equal(states.at(-1), 'ready');
-    t.mock.timers.tick(60000);
-    assert.equal(fetch.mock.callCount(), 4);
-});
+for (const initial of ['pending', 'loading_cache']) {
+    test(`startup polling from ${initial} retries failures, reports completion, and stops`, async (t) => {
+        t.mock.timers.enable({ apis: ['setTimeout'] });
+        const responses = [initial, 'running', 'failed', 'ready'];
+        const states = [];
+        const fetch = t.mock.method(globalThis, 'fetch', async () =>
+            new Response(JSON.stringify({ state: responses.shift() })));
+        const stop = watchInitialIndexStatus(state => states.push(state));
+        t.after(stop);
+        await setImmediate();
+        assert.deepEqual(states, [initial]);
+        t.mock.timers.tick(2000);
+        await setImmediate();
+        assert.deepEqual(states, [initial, 'running']);
+        t.mock.timers.tick(2000);
+        await setImmediate();
+        assert.equal(states.at(-1), 'failed');
+        t.mock.timers.tick(4999);
+        assert.equal(fetch.mock.callCount(), 3);
+        t.mock.timers.tick(1);
+        await setImmediate();
+        assert.equal(states.at(-1), 'ready');
+        t.mock.timers.tick(60000);
+        assert.equal(fetch.mock.callCount(), 4);
+    });
+}
 
 test('recent results are reported while polling continues until full completion', async (t) => {
     t.mock.timers.enable({ apis: ['setTimeout'] });

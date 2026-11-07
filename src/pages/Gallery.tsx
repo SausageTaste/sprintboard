@@ -1437,11 +1437,13 @@ export default function Gallery({ settings, onChangeSettings }: GalleryProps) {
                 <p role="status" aria-live="polite">
                     {initialIndexState === "failed"
                         ? "Library update interrupted. Retrying…"
-                        : initialIndexState === "recent_ready"
-                            ? "Recent folders scanned. Updating the rest of the library…"
-                            : imgItems.length > 0 || folders.length > 0
-                                ? "Updating library…"
-                                : "Scanning library…"}
+                        : initialIndexState === "loading_cache"
+                            ? "Loading saved image metadata…"
+                            : initialIndexState === "recent_ready"
+                                ? "Recent folders scanned. Updating the rest of the library…"
+                                : imgItems.length > 0 || folders.length > 0
+                                    ? "Updating library…"
+                                    : "Scanning library…"}
                 </p>
             )}
 
