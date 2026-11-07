@@ -250,3 +250,7 @@ add_executable(
 add_test(NAME ${PROJECT_NAME}_test_img_details COMMAND ${PROJECT_NAME}_test_img_details)
 target_include_directories(${PROJECT_NAME}_test_img_details PRIVATE ../src/server/src)
 target_link_libraries(${PROJECT_NAME}_test_img_details sprintboard_img Exiv2::exiv2lib)
+
+add_executable(${PROJECT_NAME}_test_generation_info generation_info.cpp)
+add_test(NAME ${PROJECT_NAME}_test_generation_info COMMAND ${PROJECT_NAME}_test_generation_info)
+target_link_libraries(${PROJECT_NAME}_test_generation_info sprintboard_aux)
