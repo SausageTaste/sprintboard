@@ -520,6 +520,10 @@ int main() {
                 index.unscanned_folders(batch) == 0,
                 "recursive visits clear all successfully scanned folders"
             );
+            // Windows cannot rename roots containing open SQLite databases.
+            // Offline restoration with a closed database is covered by the
+            // startup tests on every platform.
+#ifndef _WIN32
             const auto generation = index.generation();
             fs::rename(scheduled_root, temp / "offline-scheduled");
             index.discover_folders(faster);
@@ -531,6 +535,7 @@ int main() {
                 "discovery and visits"
             );
             fs::rename(temp / "offline-scheduled", scheduled_root);
+#endif
             bool rejected = false;
             try {
                 index.refresh_folder(faster, sung::fromstr("../outside"));
@@ -604,6 +609,7 @@ int main() {
                 index.unscanned_folders(sung::fromstr("test/undated")) == 2,
                 "discovery retains folders first found by a date scan"
             );
+#ifndef _WIN32
             fs::rename(scoped_root, temp / "scoped-offline");
             index.refresh_folder(scoped, scope, true);
             require(
@@ -613,6 +619,7 @@ int main() {
                 "folders"
             );
             fs::rename(temp / "scoped-offline", scoped_root);
+#endif
             fs::remove_all(selected);
             index.refresh_folder(scoped, scope, true);
             require(
