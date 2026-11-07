@@ -4,10 +4,12 @@
 #include "index/proxy_queue.hpp"
 
 namespace {
+
     void require(bool condition, const char* message) {
         if (!condition)
             throw std::runtime_error(message);
     }
+
 }  // namespace
 
 int main() {
@@ -70,6 +72,28 @@ int main() {
             "retry delay is capped at five minutes"
         );
         require(!queue.take(now + 24h), "completed work leaves the queue idle");
+
+        // Folder polling can run faster than a large conversion backlog drains.
+        // Rediscovery must not move waiting jobs behind already-checked files.
+        Queue backlog;
+        const auto first = sung::fromstr("images/first.png");
+        const auto second = sung::fromstr("images/second.png");
+        backlog.discover(first);
+        backlog.discover(second);
+        require(backlog.take()->path_ == first, "takes the first discovery");
+        backlog.discover(first);
+        backlog.discover(second);
+        require(
+            backlog.take()->path_ == second,
+            "repeated scans preserve progress through the pending backlog"
+        );
+
+        backlog.enqueue(second, false, true);
+        backlog.discover(second);
+        require(
+            backlog.take()->path_ == second,
+            "rediscovery preserves priority for committed tag analyses"
+        );
         return 0;
     } catch (const std::exception& error) {
         std::println(stderr, "FAILED: {}", error.what());

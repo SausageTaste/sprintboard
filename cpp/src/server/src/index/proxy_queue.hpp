@@ -35,7 +35,9 @@ namespace sung {
                 return value;
             }
 
-            const auto& sources() const { return sources_; }
+            const auto& sources() const {
+                return sources_;
+            }
 
             void discover(const Path& path) {
                 sources_.insert_or_assign(key(path), path);
@@ -49,22 +51,25 @@ namespace sung {
                 const auto source = sources_.find(name);
                 if (source == sources_.end())
                     return;
+                auto due = ready ? Clock::time_point{} : Clock::now();
                 if (const auto old = due_.find(name); old != due_.end()) {
-                    force = force || pending_.at({ old->second, name }).force_;
-                    pending_.erase({ old->second, name });
+                    force = force || pending_.at({old->second, name}).force_;
+                    // Rescans must not push waiting jobs behind completed
+                    // files rediscovered earlier in the same folder. Keep
+                    // their place (and tag-ready priority), but allow a fresh
+                    // scan to bring a delayed failure forward for repair.
+                    due = std::min(due, old->second);
+                    pending_.erase({old->second, name});
                 }
                 // Committed analyses should not wait behind a startup backlog
                 // of sources that are still waiting for the tagger.
-                insert(
-                    { source->second, {}, 0, force },
-                    ready ? Clock::time_point{} : Clock::now()
-                );
+                insert({source->second, {}, 0, force}, due);
             }
 
             void forget(const Path& path) {
                 const auto name = key(path);
                 if (const auto found = due_.find(name); found != due_.end()) {
-                    pending_.erase({ found->second, name });
+                    pending_.erase({found->second, name});
                     due_.erase(found);
                 }
                 sources_.erase(name);
@@ -93,7 +98,7 @@ namespace sung {
                 if (!sources_.contains(name))
                     return;
                 if (const auto newer = due_.find(name); newer != due_.end()) {
-                    pending_.at({ newer->second, name }).force_ |= item.force_;
+                    pending_.at({newer->second, name}).force_ |= item.force_;
                     return;
                 }
                 const auto delay = std::chrono::seconds{

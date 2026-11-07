@@ -12,7 +12,6 @@
 #include "task/img_walker.hpp"
 #include "util/wake.hpp"
 
-
 namespace {
 
     bool check(const bool condition, const std::string_view message) {
@@ -37,23 +36,20 @@ namespace {
         output.character_threshold_ = 0.75;
         output.analyzed_at_ = 789;
         output.analysis_ = {
-            { "ratings",
-              nlohmann::json::array(
-                  { { { "name", "safe" }, { "confidence", 0.99 } } }
-              ) },
-            { "generalTags",
-              nlohmann::json::array(
-                  { { { "name", "walker_tag" }, { "confidence", 0.88 } } }
-              ) },
-            { "characterTags", nlohmann::json::array() },
+            {"ratings",
+             nlohmann::json::array({{{"name", "safe"}, {"confidence", 0.99}}})},
+            {"generalTags",
+             nlohmann::json::array(
+                 {{{"name", "walker_tag"}, {"confidence", 0.88}}}
+             )},
+            {"characterTags", nlohmann::json::array()},
         };
-        output.searchable_tags_ = { "walker_tag" };
+        output.searchable_tags_ = {"walker_tag"};
         output.analysis_id_ = sung::make_analysis_id(output);
         return output;
     }
 
 }  // namespace
-
 
 int main() {
     const std::vector<uint8_t> fixture{
@@ -101,10 +97,9 @@ int main() {
         sung::fs::remove_all(temp, error);
         return 1;
     }
-    sung::ServerConfigManager manager{ config_path };
-    auto task = sung::create_img_walker_task(
-        manager, power_request, empty_index
-    );
+    sung::ServerConfigManager manager{config_path};
+    auto task =
+        sung::create_img_walker_task(manager, power_request, empty_index);
 
     task->run();
     if (!check(!sung::fs::exists(proxy), "blocks a proxy without analysis")) {
@@ -113,9 +108,8 @@ int main() {
     }
 
     const auto analysis = make_analysis(source);
-    const auto written = tag_test::seed(
-        tag_test::database_path(root), analysis
-    );
+    const auto written =
+        tag_test::seed(tag_test::database_path(root), analysis);
     sung::ImageIndex index;
     index.refresh(configs);
     task = sung::create_img_walker_task(manager, power_request, index);
@@ -127,32 +121,29 @@ int main() {
     }
 
     const auto bytes = sung::read_file(proxy);
-    const auto metadata = sung::read_avif_metadata_only(
-        bytes.data(), bytes.size()
-    );
-    const std::string xmp{ metadata.xmp_data_.begin(),
-                           metadata.xmp_data_.end() };
+    const auto metadata =
+        sung::read_avif_metadata_only(bytes.data(), bytes.size());
+    const std::string xmp{metadata.xmp_data_.begin(), metadata.xmp_data_.end()};
     const auto updated_analysis = index.current_tag_analysis(source);
-    auto success = check(
-                       xmp.contains("sprintboard:tagAnalysis") &&
-                           xmp.contains("walker_tag"),
-                       "embeds structured tag analysis in AVIF XMP"
-                   ) &&
-                   check(
-                       !xmp.contains(sung::tostr(source)),
-                       "does not embed the absolute source path"
-                   ) &&
-                   check(
-                       updated_analysis &&
-                           !updated_analysis->proxy_path_.empty() &&
-                           !updated_analysis->proxy_materialization_id_.empty(),
-                       "records proxy materialization in SQLite"
-                   );
+    auto success =
+        check(
+            xmp.contains("sprintboard:tagAnalysis") &&
+                xmp.contains("walker_tag"),
+            "embeds structured tag analysis in AVIF XMP"
+        ) &&
+        check(
+            !xmp.contains(sung::tostr(source)),
+            "does not embed the absolute source path"
+        ) &&
+        check(
+            updated_analysis && !updated_analysis->proxy_path_.empty() &&
+                !updated_analysis->proxy_materialization_id_.empty(),
+            "records proxy materialization in SQLite"
+        );
 
-    success = check(
-                  !sung::fs::exists(sidecar), "never creates a tag sidecar"
-              ) &&
-              success;
+    success =
+        check(!sung::fs::exists(sidecar), "never creates a tag sidecar") &&
+        success;
     success = check(
                   index.take_proxy_work(*configs, 2).empty(),
                   "recording a finished proxy does not requeue the same encode"
@@ -178,7 +169,7 @@ int main() {
         sung::fs::remove_all(temp, error);
         return 1;
     }
-    sung::ServerConfigManager plain_manager{ plain_config_path };
+    sung::ServerConfigManager plain_manager{plain_config_path};
     sung::ImageIndex pending_index;
     pending_index.initialize(plain_configs);
     auto pending_task = sung::create_img_walker_task(
@@ -192,9 +183,8 @@ int main() {
               ) &&
               success;
     index.refresh(plain_configs);
-    auto plain_task = sung::create_img_walker_task(
-        plain_manager, power_request, index
-    );
+    auto plain_task =
+        sung::create_img_walker_task(plain_manager, power_request, index);
     const auto hidden_source = root / ".sprintboard" / "hidden.png";
     if (!check(
             sung::write_file(hidden_source, fixture),
@@ -247,21 +237,30 @@ int main() {
         return count;
     };
     plain_task->run();
+    success =
+        check(proxy_count() == 2, "a worker pass encodes at most two images") &&
+        success;
+    index.refresh_folder(plain_configs, sung::fromstr("test/batch"));
+    plain_task->run();
+    index.refresh_folder(plain_configs, sung::fromstr("test/batch"));
+    plain_task->run();
     success = check(
-                  proxy_count() == 2, "a worker pass encodes at most two images"
+                  proxy_count() == 5,
+                  "every pending PNG converts while the folder is rescanned "
+                  "between worker passes"
               ) &&
               success;
-    plain_task->run();
-    plain_task->run();
+    // Rediscovered completed files may still need one cheap validation pass.
+    for (int i = 0; i < 3; ++i) plain_task->run();
     success = check(
                   proxy_count() == 5 &&
                       index.take_proxy_work(*plain_configs, 2).empty(),
-                  "queued work drains and leaves the worker idle"
+                  "queued work drains despite folder rescans and leaves the "
+                  "worker idle"
               ) &&
               success;
-    const auto removed_proxy = sung::make_sprintboard_proxy_path(
-        batch / "0.png"
-    );
+    const auto removed_proxy =
+        sung::make_sprintboard_proxy_path(batch / "0.png");
     sung::fs::remove(removed_proxy);
     plain_task->run();
     success = check(
@@ -278,7 +277,7 @@ int main() {
               success;
 
     const auto bad = batch / "bad.png";
-    sung::write_file(bad, std::string{ "invalid PNG" });
+    sung::write_file(bad, std::string{"invalid PNG"});
     index.refresh_folder(plain_configs, sung::fromstr("test/batch"));
     for (int i = 0; i < 3; ++i) plain_task->run();
     success =
