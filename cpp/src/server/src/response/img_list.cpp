@@ -269,14 +269,12 @@ namespace {
             return img_info.simple();
 
         if (!img_info.load_img_metadata() ||
-            !img_info.parse_comfyui_workflow()) {
+            !img_info.extract_generation_info()) {
             return query.matches_without_metadata()
                        ? std::optional{ img_info.simple() }
                        : std::nullopt;
         }
 
-        img_info.parse_stable_diffusion_model();
-        img_info.parse_stable_diffusion_prompt();
         return query.matches_metadata(
                    img_info.sd().model_name_, img_info.sd().prompt_
                )

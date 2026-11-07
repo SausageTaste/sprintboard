@@ -53,7 +53,7 @@ namespace {
         return result == SQLITE_OK;
     }
 
-    bool has_version_eight_tag_table(
+    bool has_version_nine_tag_table(
         const sung::Path& database_path, const size_t expected_count
     ) {
         sqlite3* database = nullptr;
@@ -116,7 +116,7 @@ namespace {
         }
         sqlite3_finalize(statement);
         sqlite3_close(database);
-        return schema_version == 8 && tag_table_exists && tag_count == 1 &&
+        return schema_version == 9 && tag_table_exists && tag_count == 1 &&
                timestamp_count == expected_count;
     }
 
@@ -465,8 +465,8 @@ int main() {
                 "retains tag details"
             ) ||
             !check(
-                has_version_eight_tag_table(database_path, 2),
-                "migrates the cache to schema eight"
+                has_version_nine_tag_table(database_path, 2),
+                "migrates the cache to schema nine"
             )) {
             sung::fs::remove_all(temp);
             return 1;
@@ -974,6 +974,100 @@ int main() {
             )) {
             sung::fs::remove_all(temp);
             return 1;
+        }
+    }
+
+    // A schema-eight cache must re-extract unchanged files and retain tags.
+    {
+        const auto root = temp / "extraction-migration";
+        sung::fs::create_directories(root);
+        const auto image = root / "legacy.png";
+        sung::fs::copy_file(source_png, image);
+        const auto cfg = make_configs(root);
+        cfg->cache_dir_ = sung::tostr(temp / "extraction-snapshot");
+        const auto db_path = root / ".sprintboard" / "image-index.sqlite3";
+        {
+            sung::ImageIndex index;
+            index.refresh(cfg);
+        }
+        if (!check(insert_tag_analysis(db_path, image), "seeds migration tags"))
+            return 1;
+        const auto sql = [&](const char* statement) {
+            sqlite3* db = nullptr;
+            if (sqlite3_open(sung::tostr(db_path).c_str(), &db) != SQLITE_OK) {
+                sqlite3_close(db);
+                return false;
+            }
+            const bool success =
+                sqlite3_exec(db, statement, nullptr, nullptr, nullptr) ==
+                SQLITE_OK;
+            sqlite3_close(db);
+            return success;
+        };
+        if (!check(
+                sql("ALTER TABLE image_metadata DROP COLUMN "
+                    "extraction_version; UPDATE image_metadata SET "
+                    "model='stale', prompts_json='[\"lowres\"]'; PRAGMA "
+                    "user_version=8;"),
+                "creates schema-eight cache"
+            ))
+            return 1;
+        {
+            sung::ImageIndex index;
+            const auto stats = index.refresh(cfg);
+            if (!check(
+                    stats.metadata_indexed_ == 1 && stats.metadata_reused_ == 0,
+                    "reindexes unchanged schema-eight metadata"
+                ) ||
+                !check(
+                    image_count(index, "lowres") == 0 &&
+                        image_count(index, "-lowres") == 1,
+                    "negative text does not affect search or exclusion"
+                ) ||
+                !check(
+                    image_count(index, "yuuka") == 1 &&
+                        image_count(index, "model:catTowerNoobaiXL") == 1,
+                    "indexes resolved positive text and model"
+                ) ||
+                !check(
+                    image_count(index, "blue_hair") == 1 &&
+                        index.tag_analysis(image).has_value(),
+                    "migration preserves saved searchable tags"
+                ))
+                return 1;
+            sung::ImageListResponse direct;
+            direct.fetch_directory(
+                sung::fromstr("test"), root, root, "lowres", true
+            );
+            if (!check(
+                    direct.make_json(0, 10)["totalImageCount"] == 0,
+                    "direct filtering also excludes negative prompts"
+                ))
+                return 1;
+        }
+        {
+            sung::ImageIndex index;
+            if (!check(
+                    index.refresh(cfg).metadata_reused_ == 1,
+                    "reuses current extraction after restart"
+                ))
+                return 1;
+        }
+        if (!check(
+                sql("UPDATE image_metadata SET extraction_version=0, "
+                    "modified_time=modified_time-1, model='stale', "
+                    "prompts_json='[\"lowres\"]';"),
+                "marks hash-compatible metadata stale"
+            ))
+            return 1;
+        {
+            sung::ImageIndex index;
+            if (!check(
+                    index.refresh(cfg).metadata_indexed_ == 1 &&
+                        image_count(index, "lowres") == 0,
+                    "hash reuse cannot bypass extraction version"
+                ))
+                return 1;
         }
     }
 

@@ -337,8 +337,8 @@ namespace {
                 "migration preserves successful analysis and retry state"
             );
             require(
-                scalar(root, "PRAGMA user_version;") == "8",
-                "schema eight committed"
+                scalar(root, "PRAGMA user_version;") == "9",
+                "schema nine committed"
             );
             require(
                 scalar(

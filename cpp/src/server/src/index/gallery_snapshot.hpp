@@ -9,6 +9,7 @@
 
 #include "response/img_list.hpp"
 #include "sung/auxiliary/filesys.hpp"
+#include "sung/auxiliary/generation_info.hpp"
 #include "sung/auxiliary/server_configs.hpp"
 #include "tag_analysis.hpp"
 
@@ -100,11 +101,14 @@ namespace sung::gallery_cache {
                   { "path", folder.path_ },
                   { "time", folder.sort_time_ns_ } }
             );
-        return { { "version", 1 },
-                 { "bindings", bindings(configs) },
-                 { "files", files },
-                 { "folders", folders },
-                 { "namespaceTimes", snapshot.namespace_sort_times_ } };
+        return {
+            {"version", 1},
+            {"extractionVersion", GENERATION_EXTRACTION_VERSION},
+            {"bindings", bindings(configs)},
+            {"files", files},
+            {"folders", folders},
+            {"namespaceTimes", snapshot.namespace_sort_times_}
+        };
     }
 
     inline std::shared_ptr<IndexSnapshot> decode(
@@ -168,6 +172,11 @@ namespace sung::gallery_cache {
             file.model_ = item.at("model").get<std::string>();
             file.prompts_ = item.at("prompts").get<std::vector<std::string>>();
             file.tags_ = item.at("tags").get<std::vector<std::string>>();
+            if (json.value("extractionVersion", 0) !=
+                GENERATION_EXTRACTION_VERSION) {
+                file.model_.clear();
+                file.prompts_.clear();
+            }
             // Work fields intentionally stay empty until filesystem validation.
             result->files_.push_back(std::move(file));
         }

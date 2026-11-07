@@ -133,7 +133,7 @@ namespace {
                 return literal(value.is_null() ? "false" : "true", id, name);
             if (role == "boolean" && value.is_boolean())
                 return literal(value.get<bool>() ? "true" : "false", id, name);
-            if ((role == "text" || role == "model") && value.is_string())
+            if (role == "text" && value.is_string())
                 return literal(value.get<std::string>(), id, name);
             return failure(
                 id, name, "Expected a compatible literal or connection"
@@ -279,9 +279,9 @@ namespace {
             }
             if (role == "model" && slot == 0) {
                 if (adapter == Adapter::checkpoint)
-                    return input(id, "ckpt_name", "model");
+                    return input(id, "ckpt_name", "text");
                 if (adapter == Adapter::unet)
-                    return input(id, "unet_name", "model");
+                    return input(id, "unet_name", "text");
             }
             if (role == "boolean" && adapter == Adapter::boolean)
                 return input(id, "value", "boolean");

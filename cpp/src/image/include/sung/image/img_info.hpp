@@ -8,24 +8,33 @@
 #include <refimg/image/simple_img_info.hpp>
 
 #include "sung/auxiliary/comfyui_workflow.hpp"
+#include "sung/auxiliary/generation_info.hpp"
 #include "sung/image/avif.hpp"
 #include "sung/image/png.hpp"
-
 
 namespace sung {
 
     class ImageInfo {
-
     public:
         struct ComfyUiInfo {
-
         public:
             void set_workflow(const uint8_t* data, size_t size);
 
-            const WorkflowData& workflow() const { return workflow_; }
-            const sung::WorkflowNodes& nodes() const { return nodes_; }
-            const sung::WorkflowLinks& links() const { return links_; }
-            const std::string& workflow_src() const { return workflow_src_; }
+            const WorkflowData& workflow() const {
+                return workflow_;
+            }
+
+            const sung::WorkflowNodes& nodes() const {
+                return nodes_;
+            }
+
+            const sung::WorkflowLinks& links() const {
+                return links_;
+            }
+
+            const std::string& workflow_src() const {
+                return workflow_src_;
+            }
 
         private:
             WorkflowData workflow_;
@@ -54,24 +63,48 @@ namespace sung {
         bool load_simple_info();
         bool load_img_metadata();
         bool parse_comfyui_workflow();
+        bool extract_generation_info();
         bool parse_stable_diffusion_model();
         bool parse_stable_diffusion_prompt();
 
-        const refimg::SimpleImageInfo& simple() const { return simple_; }
-        int64_t width() const { return simple_.width_; }
-        int64_t height() const { return simple_.height_; }
+        const refimg::SimpleImageInfo& simple() const {
+            return simple_;
+        }
 
-        const StableDiffusionInfo& sd() const { return sd_; }
+        int64_t width() const {
+            return simple_.width_;
+        }
 
-        const std::optional<PngInfo>& png() const { return png_; }
-        const std::optional<AvifInfo>& avif() const { return avif_; }
-        const std::optional<ComfyUiInfo>& comfyui() const { return comfyui_; }
+        int64_t height() const {
+            return simple_.height_;
+        }
+
+        const std::optional<GenerationInfo>& generation() const {
+            return generation_;
+        }
+
+        const StableDiffusionInfo& sd() const {
+            return sd_;
+        }
+
+        const std::optional<PngInfo>& png() const {
+            return png_;
+        }
+
+        const std::optional<AvifInfo>& avif() const {
+            return avif_;
+        }
+
+        const std::optional<ComfyUiInfo>& comfyui() const {
+            return comfyui_;
+        }
 
     private:
         sung::Path file_path_;
         refimg::SimpleImageInfo simple_;
         StableDiffusionInfo sd_;
 
+        std::optional<GenerationInfo> generation_;
         std::optional<PngInfo> png_;
         std::optional<AvifInfo> avif_;
         std::optional<ComfyUiInfo> comfyui_;

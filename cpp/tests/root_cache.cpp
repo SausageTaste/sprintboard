@@ -221,7 +221,7 @@ namespace {
             );
         }
         require(
-            scalar(destination, "PRAGMA user_version;") == "8",
+            scalar(destination, "PRAGMA user_version;") == "9",
             "portable metadata schema committed"
         );
         {
@@ -609,8 +609,8 @@ namespace {
                 "all stored filesystem fields are relative"
             );
             require(
-                db.scalar("PRAGMA user_version;") == "8",
-                "durable database uses schema eight"
+                db.scalar("PRAGMA user_version;") == "9",
+                "durable database uses schema nine"
             );
         }
         const auto moved = temp / "moved";

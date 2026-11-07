@@ -199,6 +199,56 @@ namespace {
         );
     }
 
+    void limits_and_literals() {
+        auto g = graph();
+        g["filename"] = {
+            {"class_type", "PrimitiveString"},
+            {"inputs", {{"value", "linked.safetensors"}}}
+        };
+        g["model"]["inputs"]["unet_name"] = Json::array({"filename", 0});
+        require(
+            resolve(g).searchable_models() ==
+                std::vector<std::string>{"linked.safetensors"},
+            "loader filenames may come from string constants"
+        );
+        g["sample"]["class_type"] = "KSamplerAdvanced";
+        require(resolve(g).status == "resolved", "supports advanced samplers");
+        g["choice"] = {
+            {"class_type", "PrimitiveBoolean"}, {"inputs", {{"value", false}}}
+        };
+        g["choose"] = {
+            {"class_type", "ComfySwitchNode"},
+            {"inputs",
+             {{"switch", Json::array({"choice", 0})},
+              {"on_false", Json::array({"pos", 0})},
+              {"on_true", Json::array({"neg", 0})}}}
+        };
+        g["sample"]["inputs"]["positive"] = Json::array({"choose", 0});
+        require(
+            resolve(g).searchable_prompts() ==
+                std::vector<std::string>{"positive"},
+            "resolves linked boolean selector"
+        );
+        for (int i = 0; i < 150; ++i)
+            g["chain" + std::to_string(i)] = {
+                {"class_type", "PreviewAny"},
+                {"inputs",
+                 {{"source",
+                   Json::array({"chain" + std::to_string(i + 1), 0})}}}
+            };
+        g["pos"]["inputs"]["text"] = Json::array({"chain0", 0});
+        require(
+            resolve(g).searchable_prompts().empty(),
+            "bounded traversal rejects deep chains"
+        );
+        g = graph();
+        g["sample"]["inputs"]["model"] = "not a MODEL connection";
+        require(
+            resolve(g).searchable_models().empty(),
+            "does not guess model from arbitrary sampler literals"
+        );
+    }
+
     void parsing() {
         require(
             !sung::parse_execution_graph("broken"), "rejects malformed JSON"
@@ -248,6 +298,7 @@ int main() {
         switches();
         contexts();
         parsing();
+        limits_and_literals();
     } catch (const std::exception& error) {
         std::println(stderr, "{}", error.what());
         return 1;

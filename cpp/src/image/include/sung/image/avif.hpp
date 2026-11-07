@@ -36,6 +36,7 @@ namespace sung {
 
     struct AvifMeta {
         std::vector<uint8_t> find_workflow_data() const;
+        std::vector<uint8_t> find_prompt_data() const;
         std::map<std::string, std::string> read_exif_text() const;
 
         std::vector<uint8_t> xmp_data_;

@@ -109,19 +109,19 @@ namespace sung {
 
 namespace {
 
-    const pugi::xml_node* find_node_by_name(
+    pugi::xml_node find_node_by_name(
         const pugi::xml_node& node, const std::string_view criterion
     ) {
         const auto name = std::string_view{node.name()};
         if (name == criterion)
-            return &node;
+            return node;
 
         for (const auto& child : node.children()) {
             if (auto found = ::find_node_by_name(child, criterion))
                 return found;
         }
 
-        return nullptr;
+        return {};
     };
 
     std::vector<uint8_t> conv_str_data(const std::string_view& sv) {
@@ -193,7 +193,7 @@ namespace sung {
                 xmp_doc.root(), "sprintboard:pngText_workflow"
             );
             if (found) {
-                return collect_text(*found);
+                return collect_text(found);
             }
         }
 
@@ -202,10 +202,22 @@ namespace sung {
             const auto found =
                 ::find_node_by_name(xmp_doc.root(), "sprintboard:workflow");
             if (found) {
-                return collect_text(*found);
+                return collect_text(found);
             }
         }
 
+        return {};
+    }
+
+    std::vector<uint8_t> AvifMeta::find_prompt_data() const {
+        pugi::xml_document document;
+        if (!document.load_buffer(xmp_data_.data(), xmp_data_.size()))
+            return {};
+        for (const auto name :
+             {"sprintboard:pngText_prompt", "sprintboard:prompt"}) {
+            if (const auto node = find_node_by_name(document, name))
+                return collect_text(node);
+        }
         return {};
     }
 

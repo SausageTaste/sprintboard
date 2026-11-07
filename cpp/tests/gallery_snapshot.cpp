@@ -148,6 +148,24 @@ int main() {
             "restored entries cannot become work candidates"
         );
         const auto encoded = cache::encode(configs, snapshot);
+        for (const bool missing : {true, false}) {
+            auto stale = encoded;
+            if (missing)
+                stale.erase("extractionVersion");
+            else
+                stale["extractionVersion"] = 0;
+            const auto restored_stale = cache::decode(configs, stale);
+            const auto& item = restored_stale->files_.front();
+            require(
+                item.model_.empty() && item.prompts_.empty(),
+                "clears stale extraction fields"
+            );
+            require(
+                item.tags_ == file.tags_ &&
+                    item.info_.name_ == file.info_.name_,
+                "retains tags and browsing data from stale snapshots"
+            );
+        }
         for (int test = 0; test < 5; ++test) {
             auto bad = encoded;
             if (test == 0)

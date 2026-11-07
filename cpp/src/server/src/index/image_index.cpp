@@ -86,7 +86,7 @@ namespace sung::detail {
 
 namespace {
 
-    constexpr int DATABASE_SCHEMA_VERSION = 8;
+    constexpr int DATABASE_SCHEMA_VERSION = 9;
     constexpr int64_t NANOSECONDS_PER_SECOND = 1'000'000'000;
 
     std::optional<std::chrono::year_month_day> parse_date_folder(
@@ -286,6 +286,7 @@ namespace {
 
 
     struct CachedMetadata {
+        int extraction_version_ = 0;
         std::string physical_path_;
         int64_t file_size_ = 0;
         int64_t modified_time_ = 0;
@@ -359,6 +360,7 @@ namespace {
         const int64_t sort_time_ns
     ) {
         CachedMetadata output;
+        output.extraction_version_ = sung::GENERATION_EXTRACTION_VERSION;
         output.physical_path_ = sung::tostr(path);
         output.file_size_ = size;
         output.modified_time_ = modified;
@@ -372,9 +374,7 @@ namespace {
         output.width_ = static_cast<int>(info.width());
         output.height_ = static_cast<int>(info.height());
 
-        if (info.load_img_metadata() && info.parse_comfyui_workflow()) {
-            info.parse_stable_diffusion_model();
-            info.parse_stable_diffusion_prompt();
+        if (info.load_img_metadata() && info.extract_generation_info()) {
             output.model_ = info.sd().model_name_;
             output.prompts_ = info.sd().prompt_;
         }
@@ -425,9 +425,12 @@ namespace {
         // Only hash when the portable size/time fast path cannot establish
         // reuse.
         std::optional<sung::FileFingerprint> hashed;
-        bool reusable = existing && existing->file_size_ == size &&
+        const bool current_extraction =
+            existing && existing->extraction_version_ ==
+                            sung::GENERATION_EXTRACTION_VERSION;
+        bool reusable = current_extraction && existing->file_size_ == size &&
                         existing->modified_time_ == modified;
-        if (!reusable && existing && existing->file_size_ == size &&
+        if (!reusable && current_extraction && existing->file_size_ == size &&
             !existing->sha256_.empty()) {
             const auto result = sung::fingerprint_file_with_sha256(
                 physical_path
@@ -729,7 +732,7 @@ public:
                         sqlite3_column_int(check, 0) == 0;
             sqlite3_finalize(check);
         } else if (valid)
-            valid = *version == 6 || *version == 7 ||
+            valid = *version == 6 || *version == 7 || *version == 8 ||
                     *version == DATABASE_SCHEMA_VERSION;
         sqlite3_close(db);
         if (!valid) {
@@ -1068,10 +1071,37 @@ public:
                           "INTEGER "
                           "NOT NULL,model TEXT NOT NULL,prompts_json TEXT "
                           "NOT NULL,"
-                          "sha256 TEXT NOT NULL DEFAULT '');"
+                          "sha256 TEXT NOT NULL DEFAULT '', extraction_version "
+                          "INTEGER NOT NULL DEFAULT 0);"
                       ) &&
-                      execute_sql(database_, create_tag_table) &&
-                      execute_sql(database_, "PRAGMA user_version=8;") &&
+                      execute_sql(database_, create_tag_table);
+        if (success) {
+            sqlite3_stmt* columns = nullptr;
+            bool has_version = false;
+            success = sqlite3_prepare_v2(
+                          database_,
+                          "PRAGMA table_info(image_metadata);",
+                          -1,
+                          &columns,
+                          nullptr
+                      ) == SQLITE_OK;
+            while (success && sqlite3_step(columns) == SQLITE_ROW) {
+                const auto name = reinterpret_cast<const char*>(
+                    sqlite3_column_text(columns, 1)
+                );
+                if (name && std::string_view{name} == "extraction_version")
+                    has_version = true;
+            }
+            sqlite3_finalize(columns);
+            if (success && !has_version)
+                success = execute_sql(
+                    database_,
+                    "ALTER TABLE image_metadata ADD COLUMN extraction_version "
+                    "INTEGER NOT NULL DEFAULT 0;"
+                );
+        }
+        if (success)
+            success = execute_sql(database_, "PRAGMA user_version=9;") &&
                       execute_sql(database_, "COMMIT;");
         if (!success) {
             execute_sql(database_, "ROLLBACK;");
@@ -1090,7 +1120,8 @@ public:
                 database_,
                 "SELECT physical_path, file_size, modified_time, "
                 "sort_time_ns, "
-                "eligible, width, height, model, prompts_json, sha256 FROM "
+                "eligible, width, height, model, prompts_json, sha256, "
+                "extraction_version FROM "
                 "image_metadata;",
                 -1,
                 &statement,
@@ -1104,6 +1135,7 @@ public:
 
         while (sqlite3_step(statement) == SQLITE_ROW) {
             CachedMetadata metadata;
+            metadata.extraction_version_ = sqlite3_column_int(statement, 10);
             metadata.physical_path_ = reinterpret_cast<const char*>(
                 sqlite3_column_text(statement, 0)
             );
@@ -1127,6 +1159,11 @@ public:
                 metadata.prompts_ = nlohmann::json::parse(prompts_text)
                                         .get<std::vector<std::string>>();
             } catch (const std::exception&) {
+                metadata.prompts_.clear();
+            }
+            if (metadata.extraction_version_ !=
+                sung::GENERATION_EXTRACTION_VERSION) {
+                metadata.model_.clear();
                 metadata.prompts_.clear();
             }
             if (!metadata.physical_path_.empty() &&
@@ -1382,17 +1419,19 @@ public:
             "INSERT INTO image_metadata "
             "(physical_path, file_size, modified_time, sort_time_ns, "
             "eligible, "
-            "width, height, model, prompts_json, sha256) VALUES (?, ?, ?, "
+            "width, height, model, prompts_json, sha256, extraction_version) "
+            "VALUES (?, ?, ?, "
             "?, "
             "?, ?, ?, "
-            "?, ?, ?) "
+            "?, ?, ?, ?) "
             "ON CONFLICT(physical_path) DO UPDATE SET "
             "file_size=excluded.file_size, "
             "modified_time=excluded.modified_time, "
             "sort_time_ns=excluded.sort_time_ns, "
             "eligible=excluded.eligible, width=excluded.width, "
             "height=excluded.height, model=excluded.model, "
-            "prompts_json=excluded.prompts_json, sha256=excluded.sha256;";
+            "prompts_json=excluded.prompts_json, sha256=excluded.sha256, "
+            "extraction_version=excluded.extraction_version;";
 
         bool success =
             sqlite3_prepare_v2(database_, upsert_sql, -1, &upsert, nullptr) ==
@@ -1428,6 +1467,7 @@ public:
             sqlite3_bind_text(
                 upsert, 10, item.sha256_.c_str(), -1, SQLITE_TRANSIENT
             );
+            sqlite3_bind_int(upsert, 11, item.extraction_version_);
             success = sqlite3_step(upsert) == SQLITE_DONE;
             sqlite3_reset(upsert);
             sqlite3_clear_bindings(upsert);

@@ -45,13 +45,8 @@ namespace {
             if (!this->load_img_metadata())
                 return {};
 
-            // A PNG or AVIF can have metadata without containing a ComfyUI
-            // workflow. Preserve that metadata and leave the SD fields empty.
-            if (!this->parse_comfyui_workflow())
-                return {};
-
-            this->parse_stable_diffusion_model();
-            this->parse_stable_diffusion_prompt();
+            this->extract_generation_info();
+            this->parse_comfyui_workflow();
 
             return {};
         }
@@ -62,6 +57,9 @@ namespace {
             j["sdPrompt"] = this->sd().prompt_;
             j["width"] = this->width();
             j["height"] = this->height();
+
+            if (this->generation())
+                j["generationInfo"] = this->generation()->make_json();
 
             if (this->comfyui()) {
                 auto& j_comfyui = j["comfyuiInfo"];

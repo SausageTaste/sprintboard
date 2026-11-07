@@ -224,6 +224,158 @@ namespace {
         );
     }
 
+    void test_generation(const sung::Path& directory) {
+        const auto fixtures =
+            sung::Path(std::source_location::current().file_name())
+                .parent_path()
+                .parent_path()
+                .parent_path() /
+            "fixtures" / "images";
+        const auto png = sung::read_png_metadata_only(
+            fixtures / sung::fromstr("유우카.png")
+        );
+        require(png.has_value(), "reads execution fixture");
+        const auto prompt = png->find_text_chunk("prompt");
+        require(prompt != nullptr, "fixture has execution metadata");
+        const auto original = details(fixtures / sung::fromstr("유우카.png"));
+        require(
+            original["sdModelName"] == "catTowerNoobaiXL_chenkinnoobV11",
+            "selects PNG active checkpoint"
+        );
+        require(
+            original["generationInfo"]["status"] == "resolved",
+            "resolves rgthree fixture"
+        );
+        require(
+            details(fixtures / sung::fromstr("Émilie.avif"))["sdModelName"] ==
+                "perfectdeliberate_v60",
+            "selects AVIF active checkpoint"
+        );
+
+        Exiv2::ExifData exif;
+        exif["Exif.Image.Model"] = "prompt:" + prompt->value;
+        Exiv2::Blob blob;
+        Exiv2::ExifParser::encode(blob, Exiv2::bigEndian, exif);
+        const auto path = directory / "generation.avif";
+        require(
+            sung::write_file(path, encode_avif(blob)),
+            "writes EXIF execution graph"
+        );
+        const auto extracted = details(path);
+        require(
+            extracted["generationInfo"]["source"] == "avif.exif.Model",
+            "identifies EXIF provenance"
+        );
+        require(
+            extracted["generationInfo"]["stages"] ==
+                original["generationInfo"]["stages"],
+            "PNG and EXIF resolve identically"
+        );
+        require(
+            !extracted.contains("comfyuiInfo"),
+            "execution graph does not require editor workflow"
+        );
+        require(
+            extracted["sdPrompt"] == original["sdPrompt"],
+            "projects only positive text"
+        );
+
+        sung::PngMeta carrier;
+        carrier.text.push_back({"prompt", prompt->value});
+        require(
+            sung::write_file(
+                path, encode_avif({}, sung::make_xmp_packet(carrier))
+            ),
+            "writes XMP execution graph"
+        );
+        require(
+            details(path)["generationInfo"]["stages"] ==
+                original["generationInfo"]["stages"],
+            "XMP and PNG resolve identically"
+        );
+        auto legacy = sung::make_xmp_packet(carrier);
+        for (size_t pos = 0;
+             (pos = legacy.find("pngText_prompt", pos)) != std::string::npos;)
+            legacy.replace(pos, 14, "prompt");
+        require(
+            sung::write_file(path, encode_avif({}, legacy)),
+            "writes legacy XMP graph"
+        );
+        require(
+            details(path)["sdPrompt"] == original["sdPrompt"],
+            "reads legacy prompt property"
+        );
+
+        auto conflicting = nlohmann::ordered_json::parse(prompt->value);
+        conflicting["6"]["inputs"]["text"] = "EXIF alternative";
+        exif["Exif.Image.Model"] = "prompt:" + conflicting.dump();
+        blob.clear();
+        Exiv2::ExifParser::encode(blob, Exiv2::bigEndian, exif);
+        require(
+            sung::write_file(
+                path, encode_avif(blob, sung::make_xmp_packet(carrier))
+            ),
+            "writes conflicting sources"
+        );
+        const auto conflict = details(path);
+        require(
+            conflict["generationInfo"]["source"] == "avif.xmp.prompt" &&
+                conflict["sdPrompt"] == original["sdPrompt"],
+            "prefers valid XMP over EXIF"
+        );
+        require(
+            !conflict["generationInfo"]["issues"].empty(),
+            "reports source conflict"
+        );
+        carrier.text[0].value = "broken";
+        require(
+            sung::write_file(
+                path, encode_avif(blob, sung::make_xmp_packet(carrier))
+            ),
+            "writes malformed XMP execution"
+        );
+        require(
+            details(path)["generationInfo"]["source"] == "avif.exif.Model",
+            "falls through malformed XMP"
+        );
+
+        carrier.text = {
+            {"workflow",
+             R"({"nodes":[{"id":1,"type":"CLIPTextEncode","widgets_values":["unclassified"]}],"links":[]})"}
+        };
+        require(
+            sung::write_file(
+                path, encode_avif({}, sung::make_xmp_packet(carrier))
+            ),
+            "writes editor-only metadata"
+        );
+        const auto fallback = details(path);
+        require(
+            fallback["generationInfo"]["source"] == "avif.xmp.workflow" &&
+                fallback["sdPrompt"].empty(),
+            "fallback does not index unclassified text"
+        );
+        require(
+            fallback["generationInfo"]["unclassified"][0]["value"] ==
+                "unclassified",
+            "retains unclassified fallback text"
+        );
+        const std::string unsupported =
+            R"({"save":{"class_type":"SaveImage","inputs":{"images":["custom",0]}},"custom":{"class_type":"CustomImageGenerator","inputs":{"text":"guess"}}})";
+        carrier.text.push_back({"prompt", unsupported});
+        require(
+            sung::write_file(
+                path, encode_avif({}, sung::make_xmp_packet(carrier))
+            ),
+            "writes unresolved execution with fallback"
+        );
+        require(
+            details(path)["generationInfo"]["source"] == "avif.xmp.prompt" &&
+                details(path)["sdPrompt"].empty(),
+            "valid unresolved execution does not fall back"
+        );
+    }
+
     void test_png() {
         const auto path =
             sung::Path(std::source_location::current().file_name())
@@ -263,6 +415,7 @@ int main() {
         const TempDirectory directory;
         test_exif(directory.path);
         test_png();
+        test_generation(directory.path);
         return 0;
     } catch (const std::exception& error) {
         std::println(stderr, "Image details test failed: {}", error.what());
