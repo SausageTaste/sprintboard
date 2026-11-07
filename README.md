@@ -57,6 +57,11 @@ Separate terms with commas. For example:
 
 Commas always separate terms, including inside parentheses.
 
+Image details also display ComfyUI JSON stored in AVIF EXIF: `workflow:` in
+`Make` and `prompt:` in `Model`. These appear as Workflow and Execution Graph
+panels. This EXIF support is display-only; prompt and model search still uses
+the existing PNG/XMP workflow metadata.
+
 ## Optional features
 
 **AI tags:** with [uv](https://docs.astral.sh/uv/) installed, run from the repository

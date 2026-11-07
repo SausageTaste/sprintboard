@@ -1,6 +1,7 @@
 import React from "react";
 import { useSearchParams } from "react-router-dom";
 import { downloadImage, downloadSourceImage } from "../func/downloadImage";
+import AvifMetadata, { type AvifInfo } from "../widgets/AvifMetadata";
 
 
 interface ComfyuiInfo {
@@ -9,10 +10,6 @@ interface ComfyuiInfo {
 
 interface PngInfo {
     text_chunks: Record<string, string>;
-};
-
-interface AvifInfo {
-    xmp: string;
 };
 
 interface ScoredTag {
@@ -301,31 +298,7 @@ export default function ImageDetails() {
                     )}
 
                     {imageDetails.avifInfo && (
-                        <>
-                            <h2>AVIF Info</h2>
-                            <h3>XMP Data</h3>
-                            <div style={{ marginBottom: 16 }}>
-                                <div style={{ fontWeight: 600, marginBottom: 6 }}>
-                                    XMP
-                                </div>
-
-                                <pre
-                                    style={{
-                                        maxHeight: 220,
-                                        overflow: "auto",
-                                        whiteSpace: "pre-wrap",
-                                        padding: "10px 12px",
-                                        borderRadius: 8,
-                                        background: "rgba(255,255,255,0.05)",
-                                        border: "1px solid rgba(255,255,255,0.1)",
-                                        fontSize: 12,
-                                        lineHeight: 1.5,
-                                    }}
-                                >
-                                    {imageDetails.avifInfo.xmp}
-                                </pre>
-                            </div>
-                        </>
+                        <AvifMetadata metadata={imageDetails.avifInfo} />
                     )}
                 </>
             )}
