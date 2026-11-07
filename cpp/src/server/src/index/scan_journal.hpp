@@ -1,9 +1,11 @@
 #pragma once
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <mutex>
+#include <print>
 #include <set>
 #include <string>
 #include <vector>
@@ -26,6 +28,8 @@ namespace sung::detail {
                 const std::string& bindings
             )
                 : journal_(journal), lock_(mutex), id_(++journal.sequence_) {
+                waited_ = seconds_since(lock_started_);
+                lock_started_ = Clock::now();
                 if (journal.bindings_ != bindings) {
                     journal.bindings_ = bindings;
                     ++journal.epoch_;
@@ -36,12 +40,20 @@ namespace sung::detail {
 
             ~Transaction() {
                 if (!lock_.owns_lock())
-                    lock_.lock();
+                    lock();
                 journal_.active_.erase(id_);
                 std::erase_if(journal_.commits_, [&](const auto& item) {
                     return journal_.active_.empty() ||
                            item.id_ <= *journal_.active_.begin();
                 });
+                unlock();
+                if (waited_ >= 0.25 || held_ >= 0.1)
+                    std::println(
+                        "ImageIndex: Publication lock waited {:.3f}s, held "
+                        "{:.3f}s.",
+                        waited_,
+                        held_
+                    );
             }
 
             Transaction(const Transaction&) = delete;
@@ -54,15 +66,19 @@ namespace sung::detail {
                 journal_.active_.erase(id_);
                 id_ = ++journal_.sequence_;
                 journal_.active_.insert(id_);
-                lock_.unlock();
+                unlock();
             }
 
             void unlock() {
+                held_ += seconds_since(lock_started_);
                 lock_.unlock();
             }
 
             void lock() {
+                const auto started = Clock::now();
                 lock_.lock();
+                waited_ += seconds_since(started);
+                lock_started_ = Clock::now();
             }
 
             bool current() const {
@@ -84,8 +100,17 @@ namespace sung::detail {
             }
 
         private:
+            using Clock = std::chrono::steady_clock;
+
+            static double seconds_since(Clock::time_point started) {
+                return std::chrono::duration<double>(Clock::now() - started)
+                    .count();
+            }
+
             ScanJournal& journal_;
+            Clock::time_point lock_started_ = Clock::now();
             std::unique_lock<std::mutex> lock_;
+            double waited_ = 0, held_ = 0;
             uint64_t id_;
             uint64_t epoch_;
         };

@@ -144,6 +144,7 @@ namespace sung {
 
     private:
         friend struct ImageIndexTestAccess;
+        void refresh_new_folder(std::shared_ptr<const ServerConfigs> configs);
         explicit ImageIndex(
             std::function<void(std::string_view)> scan_observer
         );

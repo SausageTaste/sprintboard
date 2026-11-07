@@ -7,6 +7,7 @@
 
 #include "image_index_test_utils.hpp"
 #include "index/gallery_snapshot.hpp"
+#include "tag_test_utils.hpp"
 
 namespace {
 
@@ -312,6 +313,234 @@ int main() {
                 "independently"
             );
             paused.finish();
+        }
+        {
+            const auto root = temp / "snapshot-contention";
+            fs::create_directories(root);
+            auto configs = std::make_shared<sung::ServerConfigs>();
+            configs->fill_default();
+            configs->dir_bindings_.clear();
+            configs->dir_bindings_["test"].local_dir_ = root;
+            configs->cache_dir_ =
+                sung::tostr(temp / "snapshot-contention-cache");
+            std::unique_ptr<sung::ImageIndex> index;
+            PausedScan paused{"snapshot-write"};
+            index = sung::ImageIndexTestAccess::make([&](auto kind) {
+                paused.observe(kind);
+            });
+            paused.shutdown_ = [&] { index.reset(); };
+            index->refresh(configs);
+            fs::copy_file(fixture, root / "first.avif");
+            paused.start([&] { index->refresh(configs); });
+            fs::create_directories(root / "2001-01-01");
+            independently(paused, [&] { index->poll_folders(configs); });
+            require(
+                folder_exists(*index, "test", "2001-01-01"),
+                "snapshot writes do not block folder publication"
+            );
+            fs::copy_file(fixture, root / "second.avif");
+            // An explicit refresh may wait for saving, but publishes first.
+            auto content = std::async(std::launch::async, [&] {
+                index->refresh_folder(configs, sung::fromstr("test"));
+            });
+            const auto deadline = std::chrono::steady_clock::now() + 5s;
+            while (!contains(*index, "second.avif") &&
+                   std::chrono::steady_clock::now() < deadline)
+                std::this_thread::sleep_for(10ms);
+            const bool published = contains(*index, "second.avif");
+            paused.finish();
+            content.get();
+            require(
+                published,
+                "content publication proceeds while snapshot saving is paused"
+            );
+            const auto saved = sung::gallery_cache::load(*configs);
+            require(
+                saved->files_.size() == 2 &&
+                    std::any_of(
+                        saved->files_.begin(),
+                        saved->files_.end(),
+                        [](const auto& file) {
+                            return file.browser_path_ == "test/second.avif";
+                        }
+                    ),
+                "latest snapshot contents win after concurrent publications"
+            );
+        }
+        {
+            const auto root = temp / "priority-recovery";
+            fs::create_directories(root);
+            auto configs = std::make_shared<sung::ServerConfigs>();
+            configs->fill_default();
+            configs->dir_bindings_.clear();
+            configs->dir_bindings_["test"].local_dir_ = root;
+            configs->cache_dir_ = sung::tostr(temp / "priority-recovery-cache");
+            sung::ImageIndex index;
+            index.refresh(configs);
+            const auto date = root / "2000-03-01";
+            fs::create_directories(date);
+            fs::copy_file(fixture, date / "recovered.avif");
+            index.poll_folders(configs);
+            // No SQLite connection is inside this directory. Replace it with a
+            // file to produce a portable enumeration failure without
+            // permissions.
+            const auto parked = root / "parked";
+            fs::rename(date, parked);
+            require(
+                sung::write_file(date, std::string{"temporarily unavailable"}),
+                "block directory enumeration"
+            );
+            sung::ImageIndexTestAccess::refresh_new_folder(index, configs);
+            require(
+                index.unscanned_folders(sung::fromstr("test")) == 1,
+                "failed priority scan retains its unscanned folder"
+            );
+            fs::remove(date);
+            fs::rename(parked, date);
+            const auto deadline = std::chrono::steady_clock::now() + 4s;
+            while (!contains(index, "recovered.avif") &&
+                   std::chrono::steady_clock::now() < deadline) {
+                sung::ImageIndexTestAccess::refresh_new_folder(index, configs);
+                std::this_thread::sleep_for(10ms);
+            }
+            require(
+                contains(index, "recovered.avif") &&
+                    index.unscanned_folders(sung::fromstr("test")) == 0,
+                "priority scan retries after recovery without rediscovery or a "
+                "visit"
+            );
+        }
+        for (const bool remove_proxy : {false, true}) {
+            const auto root = temp / (remove_proxy ? "hydrated-proxy-deletion"
+                                                   : "hydrated-browsing-tags");
+            fs::create_directories(root);
+            const auto source = root / "tagged.avif";
+            fs::copy_file(fixture, source);
+            const auto proxy = sung::make_sprintboard_proxy_path(source);
+            if (remove_proxy) {
+                fs::copy_file(fixture, proxy);
+                fs::last_write_time(proxy, fs::last_write_time(source));
+            }
+            auto configs = std::make_shared<sung::ServerConfigs>();
+            configs->fill_default();
+            configs->dir_bindings_.clear();
+            configs->dir_bindings_["test"].local_dir_ = root;
+            configs->cache_dir_ = sung::tostr(temp / "hydrated-browsing-cache");
+            {
+                sung::ImageIndex initial;
+                initial.refresh(configs);
+            }
+            require(
+                tag_test::seed(
+                    tag_test::database_path(root), tag_test::analysis(source)
+                ),
+                "seed browsing tags"
+            );
+            {
+                sung::ImageIndex tagged;
+                tagged.refresh(configs);
+            }
+            std::unique_ptr<sung::ImageIndex> index;
+            PausedScan paused{"full"};
+            index = sung::ImageIndexTestAccess::make([&](auto kind) {
+                paused.observe(kind);
+            });
+            paused.shutdown_ = [&] { index.reset(); };
+            index->initialize(configs);
+            if (remove_proxy) {
+                require(
+                    contains(*index, "tagged.avif"),
+                    "cached proxy is available before deletion"
+                );
+                fs::remove(source);
+                fs::remove(proxy);
+                index->remove_api_path("/img/test/tagged.avif");
+                index->remove_api_path(
+                    sung::tostr(sung::Path{"/img/test"} / proxy.filename())
+                );
+            }
+            paused.start([&] { index->refresh(configs); });
+            require(
+                index->query(sung::fromstr("test"), "sqlite_tag", true)
+                        .make_json(0, 100)["imageFiles"]
+                        .size() == (remove_proxy ? 0 : 1),
+                "hydration preserves cached browsing tags before content "
+                "reconciliation publishes logical keys"
+            );
+            if (remove_proxy)
+                require(
+                    !index->tag_analysis(source).has_value(),
+                    "hydration cannot restore tags deleted through a cached "
+                    "proxy path"
+                );
+            paused.finish();
+        }
+        for (const auto* phase :
+             {"cache-tags", "storage-write", "tag-validation", "proxy-hash"}) {
+            const auto root = temp / phase;
+            fs::create_directories(root);
+            const auto source = root / "source.avif";
+            const auto proxy = sung::make_sprintboard_proxy_path(source);
+            fs::copy_file(fixture, source);
+            fs::copy_file(fixture, proxy);
+            auto configs = std::make_shared<sung::ServerConfigs>();
+            configs->fill_default();
+            configs->dir_bindings_.clear();
+            configs->dir_bindings_["test"].local_dir_ = root;
+            configs->cache_dir_ =
+                sung::tostr(temp / (std::string(phase) + "-cache"));
+            {
+                sung::ImageIndex initial;
+                initial.refresh(configs);
+            }
+            require(
+                tag_test::seed(
+                    tag_test::database_path(root), tag_test::analysis(source)
+                ),
+                "seed validation record"
+            );
+            std::unique_ptr<sung::ImageIndex> index;
+            PausedScan paused{phase};
+            index = sung::ImageIndexTestAccess::make([&](auto kind) {
+                paused.observe(kind);
+            });
+            paused.shutdown_ = [&] { index.reset(); };
+            const bool hydrate = std::string_view(phase) == "cache-tags";
+            if (!hydrate)
+                index->refresh(configs);
+            paused.start([&] {
+                if (hydrate)
+                    index->refresh(configs);
+                else if (std::string_view(phase) == "tag-validation")
+                    index->current_tag_analysis(source);
+                else
+                    index->mark_proxy_materialized(
+                        source, proxy, "paused-materialization"
+                    );
+            });
+            fs::create_directories(root / "2000-02-01");
+            independently(paused, [&] { index->poll_folders(configs); });
+            require(
+                folder_exists(*index, "test", "2000-02-01"),
+                "folder publication proceeds during storage loading, writes "
+                "and fingerprinting"
+            );
+            if (!hydrate) {
+                fs::remove(source);
+                fs::remove(proxy);
+                index->remove_api_path("/img/test/source.avif");
+                index->remove_api_path(
+                    sung::tostr(sung::Path{"/img/test"} / proxy.filename())
+                );
+            }
+            paused.finish();
+            index->refresh(configs);
+            if (!hydrate)
+                require(
+                    !index->tag_analysis(source).has_value(),
+                    "late validation and commit completions cannot revive "
+                    "deleted tags"
+                );
         }
         for (const bool change_binding : {false, true}) {
             const auto root = temp / (change_binding ? "binding" : "deletion");

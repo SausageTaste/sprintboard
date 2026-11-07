@@ -4,8 +4,11 @@
 #include <stdexcept>
 #include <thread>
 
+#include <atomic>
+#include <future>
 #include "index/gallery_snapshot.hpp"
 #include "index/snapshot_store.hpp"
+#include "index/snapshot_writer.hpp"
 
 namespace {
     void require(bool condition, const char* message) {
@@ -183,6 +186,44 @@ int main() {
             cache::load(configs)->files_.empty(),
             "atomically replaces previous snapshot"
         );
+        {
+            auto settings = std::make_shared<sung::ServerConfigs>(configs);
+            std::atomic<int> attempts{0};
+            std::promise<void> entered, release;
+            auto released = release.get_future().share();
+            // Fail the first attempt after newer snapshots have been queued.
+            cache::SnapshotWriter writer{[&](auto) {
+                if (++attempts == 1) {
+                    entered.set_value();
+                    released.wait();
+                    throw std::runtime_error("injected snapshot write failure");
+                }
+            }};
+            auto first = std::make_shared<cache::IndexSnapshot>(snapshot);
+            first->generation_ = 10;
+            first->namespace_sort_times_["test"] = 10;
+            writer.submit(settings, first);
+            entered.get_future().wait();
+            auto next = std::make_shared<cache::IndexSnapshot>(*first);
+            next->generation_ = 11;
+            next->namespace_sort_times_["test"] = 11;
+            writer.submit(settings, next);
+            auto latest = std::make_shared<cache::IndexSnapshot>(*next);
+            latest->generation_ = 12;
+            latest->namespace_sort_times_["test"] = 12;
+            const auto ticket = writer.submit(settings, latest);
+            writer.submit(
+                settings, first
+            );  // stale submissions cannot rewind disk.
+            release.set_value();
+            writer.wait(ticket);
+            require(
+                cache::load(configs)->namespace_sort_times_.at("test") == 12 &&
+                    attempts == 2,
+                "failed saves retry the newest snapshot and coalesce "
+                "intermediate generations"
+            );
+        }
         fs::remove_all(temp);
         std::println("Gallery snapshot tests passed.");
         return 0;

@@ -102,6 +102,9 @@ Date folder names become visible before image inspection. A dedicated worker
 scans new `YYYY-MM-DD` folders, including older dates, one directory at a time
 with at most four concurrent image probes, then queues their descendants.
 Directory symlinks are listed but are not traversed by this discovery path.
+Failed priority scans stay queued with capped retry backoff; other eligible
+folders continue. A completed content scan cancels redundant queued work for its
+scope.
 
 The date-scan and discovery intervals are measured after each pass completes.
 The visit interval is a minimum delay after a folder scan attempt. A queued
@@ -114,15 +117,30 @@ independently of the full-library scan.
 Each worker runs one pass at a time and retries failures independently. Full scans
 use at most 32 concurrent probes; recent-date and visit scans each use at most
 four. Directory walks, hashing, and image inspection run outside the shared index
-lock. Publishing snapshots and updating SQLite remain serialized, and all workers
-still share disk and CPU capacity. A large visit can delay other queued visits,
+lock. SQLite connections belong to a dedicated storage worker. Scans publish their
+in-memory results and enqueue versioned metadata/tag changes without waiting for
+SQLite. Adjacent batches for the same configuration coalesce changes by path;
+deletions supersede older pending updates. Storage retries failed writes with
+backoff, while successful commits update the index only if the record is still
+current. Explicit refresh calls wait outside the index lock for their persistence
+attempt. All workers still share disk and CPU capacity. A large visit can delay other queued visits,
 but a full scan, date scan, or discovery no longer occupies the visit worker.
+
+Gallery snapshot encoding and atomic file replacement run on another worker,
+with one save in flight and only the newest pending generation retained. Failed
+saves retry with capped backoff; an older generation cannot overwrite a newer
+one. Explicit refresh waits outside the publication lock for a save attempt.
+Neither SQLite writes nor snapshot-file writes hold the index lock. Logs include
+slow storage/snapshot timings and publication lock waits of at least 250 ms or
+aggregate hold times of at least 100 ms.
 
 Overlapping scans merge into the latest snapshot. An older scan preserves scopes
 already published by a newer scan, including empty or deleted folders. UI
 deletions remain protected after storage cleanup, and results from obsolete root
-bindings are discarded. Shutdown stops scheduling and joins every scan worker
-before closing index storage.
+bindings are discarded. Shutdown stops scheduling and joins every scan worker, then drains storage with
+a final persistence attempt before closing SQLite connections. Failed final writes
+are logged. Tag/proxy fingerprint validation copies records and checks their
+versions after unlocked filesystem work.
 
 Tagging and AVIF generation wait for the first full pass.
 Unavailable roots retain their cached browsing entries, and
