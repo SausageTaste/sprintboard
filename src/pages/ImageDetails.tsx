@@ -2,6 +2,7 @@ import React from "react";
 import { useSearchParams } from "react-router-dom";
 import { downloadImage, downloadSourceImage } from "../func/downloadImage";
 import AvifMetadata, { type AvifInfo } from "../widgets/AvifMetadata";
+import GenerationMetadata, { type GenerationInfo } from "../widgets/GenerationMetadata";
 
 
 interface ComfyuiInfo {
@@ -36,6 +37,7 @@ interface ImageDetailsResponse {
     width: number;
     height: number;
 
+    generationInfo?: GenerationInfo;
     comfyuiInfo?: ComfyuiInfo;
     pngInfo?: PngInfo;
     avifInfo?: AvifInfo;
@@ -209,15 +211,11 @@ export default function ImageDetails() {
                 <>
                     <p>Dimensions: {imageDetails.width} x {imageDetails.height}</p>
 
-                    <h2>Stable Diffusion</h2>
-
-                    <h3>Model Name</h3>
-                    <p>{imageDetails.sdModelName}</p>
-
-                    <h3>SD Prompt</h3>
-                    {imageDetails.sdPrompt.map((s, i) => (
-                        <p key={i}>{s}</p>
-                    ))}
+                    <GenerationMetadata
+                        info={imageDetails.generationInfo}
+                        legacyModel={imageDetails.sdModelName}
+                        legacyPrompts={imageDetails.sdPrompt}
+                    />
 
                     {imageDetails.comfyuiInfo && (
                         <>

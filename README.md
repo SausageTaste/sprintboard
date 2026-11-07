@@ -50,17 +50,27 @@ Separate terms with commas. For example:
 
 | Filter | Meaning |
 | --- | --- |
-| `text` | Include images whose prompts or AI tags contain the text |
-| `-text` | Exclude images whose prompts or AI tags contain the text |
+| `text` | Include images whose resolved positive prompts or AI tags contain the text |
+| `-text` | Exclude images whose resolved positive prompts or AI tags contain the text |
 | `model:text` | Match part of a model name |
 | `dim:ver` / `dim:hor` | Show portrait / landscape images |
 
 Commas always separate terms, including inside parentheses.
 
-Image details also display ComfyUI JSON stored in AVIF EXIF: `workflow:` in
-`Make` and `prompt:` in `Model`. These appear as Workflow and Execution Graph
-panels. This EXIF support is display-only; prompt and model search still uses
-the existing PNG/XMP workflow metadata.
+Sprintboard resolves models and prompt contributions from ComfyUI execution
+metadata in PNG, AVIF XMP, and AVIF EXIF (`prompt:` in `Model`). Image details
+show positive and negative prompts separately, along with source nodes and any
+unresolved values. Negative prompts and unclassified text do not participate in
+text search or exclusions; AI tags remain searchable.
+
+Extraction follows supported node connections and selected switches rather than
+workflow layouts or node IDs. Unsupported transformations and generated text stay
+unresolved. Multiple saved outputs are shown separately and excluded from search
+when their association with the image is unknown. Raw workflow and execution
+JSON remain available, including AVIF EXIF `workflow:` in `Make`.
+See [generation metadata](docs/generation-metadata.md) for supported nodes and
+fallback behavior. Existing images are reindexed once after upgrading, while
+saved AI tags are preserved.
 
 ## Optional features
 

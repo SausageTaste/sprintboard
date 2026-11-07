@@ -8,13 +8,19 @@ Reference notes for backups, scan behavior, cloud sync, and migrations.
 
 Tag analysis and proxy state are stored exclusively in SQLite at
 `<local_dir>/.sprintboard/image-index.sqlite3`. Tags are durable data, not a
-disposable cache. Schema version 8 migrates versions 6 and 7 transactionally,
-preserving successful analyses, retry state, and proxy records. Image metadata
-from those versions is rebuilt once because its timestamps used platform-specific
-clock formats. The upgrade logs this rebuild; let the initial scan finish so its
-results are saved. Rebuilding image metadata does not erase tags. Unsupported
-schemas and corrupt databases are left untouched; automatic tagging for that
-root stays disabled until the database is repaired and Sprintboard is restarted,
+disposable cache. Schema version 9 migrates versions 6–8 transactionally,
+preserving successful analyses, retry state, and proxy records. Versions 6 and 7
+also require a rebuild because their timestamps used platform-specific clocks.
+
+Each image metadata row records its generation-extraction version. An older
+version forces extraction again even when size, timestamp, or SHA-256 match, so
+existing images gain resolved models and positive-only prompt search. This occurs
+once during normal scans; let the initial scan finish so results are saved.
+Rebuilding image metadata does not erase tags. Old gallery snapshots retain
+browsing information and AI tags, but their obsolete model and prompt search
+fields are cleared until reconciliation. Unsupported schemas and corrupt
+databases are left untouched; automatic tagging for that root stays disabled
+until the database is repaired and Sprintboard is restarted,
 or it is opened with a compatible version of Sprintboard.
 
 Existing `*.sprintboard.tags.json` sidecars are ignored and never imported,
@@ -170,7 +176,8 @@ API remains available.
 ## Portable files and cloud sync
 
 Image metadata stores file size, modification time as Unix nanoseconds, and
-SHA-256. Unchanged size and time reuse metadata without reading image contents.
+SHA-256. With a current extraction version, unchanged size and time reuse
+metadata without reading image contents.
 When only the timestamp changes (including sync-related precision changes), a
 matching content hash reuses metadata and saves the new timestamp. New or changed
 files are inspected and hashed. Relative paths and these portable fingerprints
@@ -179,7 +186,7 @@ Tag and proxy validation also saves timestamp-only changes after a matching hash
 so subsequent checks can reuse the size-and-time fast path.
 
 For a Dropbox-synced collection, update Sprintboard on both computers before
-opening a schema-eight database. Keep images and the hidden `.sprintboard` folder
+opening a schema-nine database. Keep images and the hidden `.sprintboard` folder
 available locally. Close Sprintboard on the current computer, let Dropbox finish
 uploading, then wait for syncing to finish on the other computer before starting
 Sprintboard there. Only run one copy against the collection at a time. Dropbox
