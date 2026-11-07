@@ -45,4 +45,6 @@ target_link_libraries(${target_name}
         PNG::PNG
         refimg::image
         sprintboard_aux
+    PRIVATE
+        Exiv2::exiv2lib
 )

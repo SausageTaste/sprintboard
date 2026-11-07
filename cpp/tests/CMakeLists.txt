@@ -241,3 +241,12 @@ target_link_libraries(
     TBB::tbb
     unofficial::sqlite3::sqlite3
 )
+
+add_executable(
+    ${PROJECT_NAME}_test_img_details
+    img_details.cpp
+    ../src/server/src/response/img_details.cpp
+)
+add_test(NAME ${PROJECT_NAME}_test_img_details COMMAND ${PROJECT_NAME}_test_img_details)
+target_include_directories(${PROJECT_NAME}_test_img_details PRIVATE ../src/server/src)
+target_link_libraries(${PROJECT_NAME}_test_img_details sprintboard_img Exiv2::exiv2lib)

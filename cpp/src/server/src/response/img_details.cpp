@@ -9,7 +9,6 @@
 #include "sung/auxiliary/filesys.hpp"
 #include "sung/image/img_info.hpp"
 
-
 namespace {
 
     std::optional<std::string> beautify_json(const std::string& src) {
@@ -35,9 +34,7 @@ namespace {
         return oss.str();
     }
 
-
     class ResponseData : public sung::ImageInfo {
-
     public:
         sung::ErrStr fetch_all() {
             if (!this->load_simple_info())
@@ -88,29 +85,31 @@ namespace {
                     this->avif()->metadata_.xmp_data_.end()
                 };
                 j_avif["xmp"] = ::beautify_xml(xml_str).value_or(xml_str);
+                const auto exif = this->avif()->metadata_.read_exif_text();
+                if (!exif.empty())
+                    j_avif["exif"] = exif;
             }
 
             return j;
         }
     };
 
-
     class ImageDetailResponse : public sung::IImageDetailResponse {
-
     public:
         sung::ErrStr fetch_img(const sung::Path& file_path) override {
-            data_ = ResponseData{ file_path };
+            data_ = ResponseData{file_path};
             return data_.fetch_all();
         }
 
-        nlohmann::json make_json() const override { return data_.make_json(); }
+        nlohmann::json make_json() const override {
+            return data_.make_json();
+        }
 
     private:
         ResponseData data_;
     };
 
 }  // namespace
-
 
 namespace sung {
 

@@ -1,15 +1,14 @@
 #pragma once
 
+#include <map>
 #include <string>
 #include <vector>
 
 #include <avif/avif.h>
 
-
 namespace sung {
 
     struct AvifEncodeParams {
-
     public:
         AvifEncodeParams();
 
@@ -35,11 +34,12 @@ namespace sung {
         int speed_;
     };
 
-
     struct AvifMeta {
         std::vector<uint8_t> find_workflow_data() const;
+        std::map<std::string, std::string> read_exif_text() const;
 
         std::vector<uint8_t> xmp_data_;
+        std::vector<uint8_t> exif_data_;
     };
 
     AvifMeta read_avif_metadata_only(const uint8_t* data, size_t size);
