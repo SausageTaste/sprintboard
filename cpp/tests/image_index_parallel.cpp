@@ -258,6 +258,61 @@ int main() {
                 "gallery"
             );
         }
+        {
+            const auto root = temp / "fast-folders";
+            fs::create_directories(root);
+            auto configs = std::make_shared<sung::ServerConfigs>();
+            configs->fill_default();
+            configs->dir_bindings_.clear();
+            configs->dir_bindings_["test"].local_dir_ = root;
+            configs->cache_dir_ = sung::tostr(temp / "fast-cache");
+            configs->image_index_date_refresh_interval_seconds_ = 0;
+            configs->image_index_folder_poll_interval_seconds_ = 1;
+            configs->image_index_folder_discovery_interval_seconds_ = 3600;
+            std::unique_ptr<sung::ImageIndex> index;
+            std::atomic_bool hold{false};
+            PausedScan paused{"full"};
+            index = sung::ImageIndexTestAccess::make([&](auto kind) {
+                if (kind == "full" && hold) {
+                    paused.observe(kind);
+                    paused.resumed_.wait();
+                }
+            });
+            paused.shutdown_ = [&] { index.reset(); };
+            index->refresh(configs);
+            hold = true;
+            paused.start([&] { index->refresh(configs); });
+            const auto date = root / "container" / "2000-01-01";
+            fs::create_directories(date / "nested");
+            fs::copy_file(fixture, date / "priority.avif");
+            fs::copy_file(fixture, date / "nested" / "nested.avif");
+            independently(paused, [&] { index->poll_folders(configs); });
+            require(
+                folder_exists(*index, "test", "container"),
+                "poll discovers a new container"
+            );
+            independently(paused, [&] { index->poll_folders(configs); });
+            require(
+                folder_exists(*index, "test/container", "2000-01-01"),
+                "poll publishes an old date without probing its images"
+            );
+            require(
+                !contains(*index, "priority.avif"),
+                "folder publication precedes image loading"
+            );
+            index->start_auto_refresh([configs] { return configs; });
+            const auto deadline = std::chrono::steady_clock::now() + 5s;
+            while (!contains(*index, "nested.avif") &&
+                   std::chrono::steady_clock::now() < deadline)
+                std::this_thread::sleep_for(10ms);
+            require(
+                contains(*index, "priority.avif") &&
+                    contains(*index, "nested.avif"),
+                "new-folder worker scans old dates and descendants "
+                "independently"
+            );
+            paused.finish();
+        }
         for (const bool change_binding : {false, true}) {
             const auto root = temp / (change_binding ? "binding" : "deletion");
             fs::create_directories(root);

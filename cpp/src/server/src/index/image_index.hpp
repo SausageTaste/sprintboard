@@ -74,6 +74,8 @@ namespace sung {
 
         // Discover directory structure without inspecting image contents.
         void discover_folders(std::shared_ptr<const ServerConfigs> configs);
+        // Shallow directory observations; never probe image contents.
+        void poll_folders(std::shared_ptr<const ServerConfigs> configs);
         ImageIndexRefreshStats refresh_folder(
             std::shared_ptr<const ServerConfigs> configs,
             const Path& directory,
@@ -163,6 +165,8 @@ namespace sung {
         std::thread auto_recent_thread_;
         std::thread auto_discovery_thread_;
         std::thread auto_visit_thread_;
+        std::thread auto_folder_poll_thread_;
+        std::thread auto_new_folder_thread_;
         std::atomic_bool auto_refresh_stop_{false};
         std::thread auto_tagging_thread_;
         std::atomic_bool auto_tagging_stop_{false};

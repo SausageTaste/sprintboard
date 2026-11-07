@@ -63,6 +63,7 @@ These settings reload automatically.
 |`tagger_poll_interval_seconds` |Interval between service/model checks. New or changed images are queued by content scans without waiting for this interval. |
 |`cache_dir` |External fallback cache directory, used when an image root cannot host a writable database. Defaults to `.sprintboard/cache`; relative paths resolve against the server working directory. Must be a nonempty string. |
 |`dir_bindings` |Add folder entries here. Each key will appear as a folder in the root directory, and all contents in `local_dir` will be placed inside it. You can use both absolute and relative paths for `local_dir`. Each binding maps to exactly one local directory. |
+|`image_index_folder_poll_interval_seconds` |Seconds between shallow folder polls (default: `5`). Set `0` to disable recurring polls. New date folders receive priority content scans. |
 |`image_index_folder_discovery_interval_seconds` |Seconds between folder discovery passes (default: `300`). |
 |`image_index_visit_refresh_interval_seconds` |Minimum seconds between scans of a visited folder (default: `60`). |
 |`image_index_date_refresh_interval_seconds` |Seconds between scans of today's date folders and the previous four days (default: `5`). Set `0` to disable periodic date scans. |

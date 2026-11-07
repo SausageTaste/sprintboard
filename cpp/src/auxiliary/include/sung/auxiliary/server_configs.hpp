@@ -83,6 +83,7 @@ namespace sung {
         double image_index_date_refresh_interval_seconds_ = 5;
         // Folder discovery cadence and minimum delay between content visits.
         double image_index_folder_discovery_interval_seconds_ = 300;
+        double image_index_folder_poll_interval_seconds_ = 5;
         double image_index_visit_refresh_interval_seconds_ = 60;
 
         // AVIF encoding settings

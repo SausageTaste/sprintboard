@@ -138,6 +138,7 @@ namespace sung {
         image_index_full_refresh_interval_seconds_ = 30;
         image_index_date_refresh_interval_seconds_ = 5;
         image_index_folder_discovery_interval_seconds_ = 300;
+        image_index_folder_poll_interval_seconds_ = 5;
         image_index_visit_refresh_interval_seconds_ = 60;
 
         avif_pix_format_ = ServerConfigs::AvifPixelFormat::yuv444;
@@ -273,6 +274,16 @@ namespace sung {
         image_index_folder_discovery_interval_seconds_ = try_get(
             json_data, "image_index_folder_discovery_interval_seconds", 300.0
         );
+        image_index_folder_poll_interval_seconds_ =
+            try_get(json_data, "image_index_folder_poll_interval_seconds", 5.0);
+        if (!std::isfinite(image_index_folder_poll_interval_seconds_) ||
+            image_index_folder_poll_interval_seconds_ < 0 ||
+            (image_index_folder_poll_interval_seconds_ > 0 &&
+             image_index_folder_poll_interval_seconds_ < 1))
+            throw std::runtime_error(
+                "image_index_folder_poll_interval_seconds must be 0 or finite "
+                "and at least 1"
+            );
         image_index_visit_refresh_interval_seconds_ = try_get(
             json_data, "image_index_visit_refresh_interval_seconds", 60.0
         );
@@ -379,6 +390,8 @@ namespace sung {
             image_index_date_refresh_interval_seconds_;
         output["image_index_folder_discovery_interval_seconds"] =
             image_index_folder_discovery_interval_seconds_;
+        output["image_index_folder_poll_interval_seconds"] =
+            image_index_folder_poll_interval_seconds_;
         output["image_index_visit_refresh_interval_seconds"] =
             image_index_visit_refresh_interval_seconds_;
 

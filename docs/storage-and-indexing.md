@@ -95,6 +95,14 @@ second. The date-scan interval also accepts `0` to disable recurring date scans:
 }
 ```
 
+A separate fast folder worker shallow-lists roots and known non-date containers
+at startup and every `image_index_folder_poll_interval_seconds` seconds (default
+`5`; `0` disables recurring polls). Newly discovered containers join the next pass.
+Date folder names become visible before image inspection. A dedicated worker
+scans new `YYYY-MM-DD` folders, including older dates, one directory at a time
+with at most four concurrent image probes, then queues their descendants.
+Directory symlinks are listed but are not traversed by this discovery path.
+
 The date-scan and discovery intervals are measured after each pass completes.
 The visit interval is a minimum delay after a folder scan attempt. A queued
 request runs when that delay expires, even if the browser has since left; it does

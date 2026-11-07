@@ -1756,6 +1756,181 @@ public:
         return stats;
     }
 
+    void queue_new_dates(
+        const ServerConfigs& configs,
+        const IndexSnapshot& previous,
+        const IndexSnapshot& next
+    ) {
+        const auto signature = scan_bindings(configs);
+        if (priority_bindings_ != signature) {
+            priority_bindings_ = signature;
+            priority_folders_.clear();
+            priority_pending_.clear();
+        }
+        std::set<std::pair<std::string, std::string>> known;
+        for (const auto& item : previous.folders_)
+            known.emplace(item.root_key_, item.path_);
+        for (const auto& item : next.folders_)
+            if (parse_date_folder(item.name_) &&
+                !known.contains({item.root_key_, item.path_}) &&
+                priority_pending_.insert(item.path_).second)
+                priority_folders_.push_back(item.path_);
+    }
+
+    void poll_folders(const std::shared_ptr<const ServerConfigs>& configs) {
+        const auto input = load_snapshot();
+        for (const auto& [name, binding] : configs->dir_bindings_) {
+            const auto root = canonical_path(binding.local_dir_);
+            const auto key = make_root_key(name, root);
+            std::set<std::string> parents{name};
+            const auto is_container = [&](const Path& relative) {
+                for (const auto& part : root.filename() / relative)
+                    if (parse_date_folder(tostr(part)))
+                        return false;
+                return true;
+            };
+            if (!is_container({}))
+                continue;
+            for (const auto& item : input->folders_)
+                if (item.root_key_ == key &&
+                    is_container(
+                        fromstr(item.path_).lexically_relative(fromstr(name))
+                    ))
+                    parents.insert(item.path_);
+            for (const auto& parent : parents) {
+                detail::ScanJournal::Transaction transaction{
+                    scan_journal_, refresh_mutex_, scan_bindings(*configs)
+                };
+                transaction.begin_observations();
+                const auto physical =
+                    root / fromstr(parent).lexically_relative(fromstr(name));
+                std::error_code error;
+                // Directory symlinks are listed, but never followed by
+                // discovery.
+                if (physical != root && fs::is_symlink(physical, error))
+                    continue;
+                error.clear();
+                std::vector<IndexedFolder> children;
+                fs::directory_iterator it{physical, error}, end;
+                while (!error && it != end) {
+                    const auto& entry = *it;
+                    if (entry.path().filename() != ".sprintboard" &&
+                        !is_sprintboard_temporary_path(entry.path()) &&
+                        !is_sprintboard_tag_sidecar_path(entry.path()) &&
+                        entry.is_directory(error) && !error) {
+                        const auto path =
+                            fromstr(parent) / entry.path().filename();
+                        children.push_back(
+                            {key,
+                             tostr(entry.path().filename()),
+                             tostr(path),
+                             parent,
+                             get_image_sort_time(entry.path())}
+                        );
+                    }
+                    if (!error)
+                        it.increment(error);
+                }
+                if (error)
+                    continue;
+                if (scan_observer_)
+                    scan_observer_("folder-poll");
+                transaction.lock();
+                if (!transaction.current())
+                    continue;
+                const auto previous = load_snapshot();
+                auto next = std::make_shared<IndexSnapshot>(*previous);
+                const auto selected = [&](const IndexedFolder& item) {
+                    return item.root_key_ == key &&
+                           item.parent_path_ == parent &&
+                           !transaction.superseded(
+                               root / fromstr(item.path_)
+                                          .lexically_relative(fromstr(name)),
+                               true
+                           );
+                };
+                std::map<std::string, int64_t> before, after;
+                for (const auto& item : next->folders_)
+                    if (selected(item))
+                        before[item.path_] = item.sort_time_ns_;
+                std::erase_if(next->folders_, selected);
+                for (const auto& item : children)
+                    if (selected(item)) {
+                        next->folders_.push_back(item);
+                        after[item.path_] = item.sort_time_ns_;
+                    }
+                transaction.publish([physical](const Path& path, bool folders) {
+                    return folders && make_path_key(path.parent_path()) ==
+                                          make_path_key(physical);
+                });
+                if (before == after)
+                    continue;
+                next->namespaces_.insert(name);
+                queue_new_dates(*configs, *previous, *next);
+                {
+                    std::lock_guard lock{visits_mutex_};
+                    for (const auto& [path, time] : after)
+                        if (!before.contains(path))
+                            unscanned_folders_.insert(path);
+                    for (const auto& [path, time] : before)
+                        if (!after.contains(path))
+                            unscanned_folders_.erase(path);
+                }
+                store_snapshot(std::move(next));
+                std::println(
+                    "ImageIndex: Folder poll updated {} ({} children).",
+                    parent,
+                    after.size()
+                );
+            }
+        }
+    }
+
+    void refresh_new_folder(
+        const std::shared_ptr<const ServerConfigs>& configs
+    ) {
+        std::string folder;
+        const auto signature = scan_bindings(*configs);
+        {
+            std::lock_guard lock{refresh_mutex_};
+            if (priority_bindings_ != signature || priority_folders_.empty())
+                return;
+            folder = std::move(priority_folders_.front());
+            priority_folders_.pop_front();
+        }
+        try {
+            refresh_folder(configs, fromstr(folder), false);
+        } catch (...) {
+            std::lock_guard lock{refresh_mutex_};
+            if (priority_bindings_ == signature)
+                priority_folders_.push_back(folder);
+            throw;
+        }
+        // Check links outside the publication lock before queuing descendants.
+        std::vector<std::string> children;
+        for (const auto& item : load_snapshot()->folders_) {
+            if (item.parent_path_ != folder)
+                continue;
+            const auto split = item.root_key_.find('\n');
+            const auto physical =
+                fromstr(item.root_key_.substr(split + 1)) /
+                fromstr(item.path_)
+                    .lexically_relative(
+                        fromstr(item.root_key_.substr(0, split))
+                    );
+            std::error_code error;
+            if (!fs::is_symlink(physical, error) && !error)
+                children.push_back(item.path_);
+        }
+        std::lock_guard lock{refresh_mutex_};
+        if (priority_bindings_ != signature)
+            return;
+        priority_pending_.erase(folder);
+        for (const auto& child : children)
+            if (priority_pending_.insert(child).second)
+                priority_folders_.push_back(child);
+    }
+
     void discover_folders(const std::shared_ptr<const ServerConfigs>& configs) {
         detail::ScanJournal::Transaction transaction{
             scan_journal_, refresh_mutex_, scan_bindings(*configs)
@@ -1900,6 +2075,7 @@ public:
             next->files_.size() == previous->files_.size() &&
             folder_times(next->folders_) == folder_times(previous->folders_))
             return;
+        queue_new_dates(*configs, *previous, *next);
         ++next->generation_;
         store_snapshot(std::move(next));
         gallery_cache::save(*configs, *load_snapshot());
@@ -3461,6 +3637,9 @@ private:
     std::shared_ptr<const ServerConfigs> snapshot_configs_;
     mutable std::mutex refresh_mutex_;
     mutable std::mutex visits_mutex_;
+    std::string priority_bindings_;
+    std::deque<std::string> priority_folders_;
+    std::set<std::string> priority_pending_;
     std::set<std::string> unscanned_folders_;
     std::deque<std::string> visits_;
     std::unordered_map<std::string, bool> pending_visits_;
@@ -3500,7 +3679,9 @@ namespace sung {
              {&auto_refresh_thread_,
               &auto_recent_thread_,
               &auto_discovery_thread_,
-              &auto_visit_thread_})
+              &auto_visit_thread_,
+              &auto_folder_poll_thread_,
+              &auto_new_folder_thread_})
             if (worker->joinable())
                 worker->join();
         if (auto_tagging_thread_.joinable())
@@ -3591,6 +3772,12 @@ namespace sung {
         std::shared_ptr<const ServerConfigs> configs
     ) {
         impl_->discover_folders(configs);
+    }
+
+    void ImageIndex::poll_folders(
+        std::shared_ptr<const ServerConfigs> configs
+    ) {
+        impl_->poll_folders(configs);
     }
 
     ImageIndexRefreshStats ImageIndex::refresh_folder(
@@ -3702,6 +3889,29 @@ namespace sung {
                 return false;
             }
         );
+        auto_folder_poll_thread_ = launch(
+            "folder-poll",
+            [this,
+             configs_provider,
+             last = std::optional<Clock::time_point>{}]() mutable {
+                const auto configs = configs_provider();
+                const auto interval =
+                    configs->image_index_folder_poll_interval_seconds_;
+                if (!last ||
+                    (interval > 0 &&
+                     std::chrono::duration<double>(Clock::now() - *last)
+                             .count() >= interval)) {
+                    impl_->poll_folders(configs);
+                    last = Clock::now();
+                }
+                return false;
+            }
+        );
+        auto_new_folder_thread_ =
+            launch("new-folder", [this, configs_provider] {
+                impl_->refresh_new_folder(configs_provider());
+                return false;
+            });
         auto_visit_thread_ = launch("visit", [this, configs_provider] {
             impl_->flush_pending_removals();
             impl_->refresh_next_visit(configs_provider());

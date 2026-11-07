@@ -24,6 +24,7 @@ int main() {
         if (!check(
                 defaults.image_index_full_refresh_interval_seconds_ == 30 &&
                     defaults.image_index_date_refresh_interval_seconds_ == 5 &&
+                    defaults.image_index_folder_poll_interval_seconds_ == 5 &&
                     defaults.image_index_folder_discovery_interval_seconds_ ==
                         300 &&
                     defaults.image_index_visit_refresh_interval_seconds_ == 60,
@@ -35,6 +36,7 @@ int main() {
         if (!check(
                 defaults.image_index_full_refresh_interval_seconds_ == 30 &&
                     defaults.image_index_date_refresh_interval_seconds_ == 5 &&
+                    defaults.image_index_folder_poll_interval_seconds_ == 5 &&
                     defaults.image_index_folder_discovery_interval_seconds_ ==
                         300 &&
                     defaults.image_index_visit_refresh_interval_seconds_ == 60,
@@ -42,10 +44,11 @@ int main() {
             ))
             return 1;
         for (const auto* key :
-             { "image_index_full_refresh_interval_seconds",
-               "image_index_date_refresh_interval_seconds",
-               "image_index_folder_discovery_interval_seconds",
-               "image_index_visit_refresh_interval_seconds" }) {
+             {"image_index_full_refresh_interval_seconds",
+              "image_index_date_refresh_interval_seconds",
+              "image_index_folder_poll_interval_seconds",
+              "image_index_folder_discovery_interval_seconds",
+              "image_index_visit_refresh_interval_seconds"}) {
             for (const double value : { -1.0, 0.5 }) {
                 bool rejected = false;
                 try {
@@ -65,6 +68,23 @@ int main() {
                 "legacy date interval remains readable"
             ))
             return 1;
+    }
+    {
+        sung::ServerConfigs configs;
+        for (const double value : {0.0, 1.0, 7.5}) {
+            configs.import_json(
+                {{"image_index_folder_poll_interval_seconds", value}}
+            );
+            if (!check(
+                    configs.image_index_folder_poll_interval_seconds_ ==
+                            value &&
+                        configs.export_json().at(
+                            "image_index_folder_poll_interval_seconds"
+                        ) == value,
+                    "folder polling supports disabling, reload and export"
+                ))
+                return 1;
+        }
     }
     const auto source = nlohmann::json::parse(R"({
         "dir_bindings": {
