@@ -59,8 +59,14 @@ Commas always separate terms, including inside parentheses.
 
 ## Optional features
 
-**AI tags:** start a [local tagging service](docs/tagging.md), then set
-`tagger_enabled` to `true`.
+**AI tags:** with [uv](https://docs.astral.sh/uv/) installed, run from the repository
+root, then set `tagger_enabled` to `true` in `server_configs.json`:
+
+```sh
+uv run --project python sprintboard-tagger --host 127.0.0.1 --port 8790
+```
+
+See [local tagging](docs/tagging.md) for options and CL Tagger v2 setup.
 
 **AVIF copies:** set `avif_gen` to `true`. A source such as `image.png` produces
 `image.png.sprintboard.avif`, preserving its ComfyUI metadata. Originals are not
