@@ -1,6 +1,6 @@
 import React from "react";
 import { useSearchParams } from "react-router-dom";
-import { downloadImage, downloadSourceImage } from "../func/downloadImage";
+import { downloadImage } from "../func/downloadImage";
 import AvifMetadata, { type AvifInfo } from "../widgets/AvifMetadata";
 import GenerationMetadata, { type GenerationInfo } from "../widgets/GenerationMetadata";
 
@@ -177,14 +177,6 @@ export default function ImageDetails() {
                     disabled={!imgSrc}
                 >
                     Download image
-                </button>
-                <button
-                    type="button"
-                    onClick={() => downloadSourceImage(imgSrc)}
-                    disabled={!imgSrc}
-                    style={{ marginLeft: 8 }}
-                >
-                    Download source image
                 </button>
             </div>
 

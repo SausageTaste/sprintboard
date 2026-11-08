@@ -8,14 +8,9 @@ function triggerDownload(href: string) {
     link.remove();
 }
 
+// The server serves the original source image when one exists and falls back
+// to the displayed file (e.g. an AVIF proxy) otherwise.
 export function downloadImage(src: string) {
-    if (!src)
-        return;
-
-    triggerDownload(src);
-}
-
-export function downloadSourceImage(src: string) {
     if (!src)
         return;
 
