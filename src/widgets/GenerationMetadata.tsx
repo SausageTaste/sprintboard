@@ -20,12 +20,12 @@ export interface GenerationInfo {
     unclassified: GenerationValue[];
 }
 
-function Values({ title, entries }: { title: string; entries: GenerationValue[] }) {
+function Values({ title, entries, prompt = false }: { title: string; entries: GenerationValue[]; prompt?: boolean }) {
     return (
         <>
             <h4>{title}</h4>
             {entries.length === 0 ? <p>Not resolved</p> : entries.map((entry, index) => (
-                <p key={index} style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+                <p key={index} className={prompt ? "generation-value prompt-box" : "generation-value"}>
                     {entry.value || "(empty)"}
                 </p>
             ))}
@@ -45,7 +45,7 @@ export default function GenerationMetadata({ info, legacyModel, legacyPrompts }:
                 <h3>Model Name</h3>
                 <p>{legacyModel}</p>
                 <h3>SD Prompt</h3>
-                {legacyPrompts.map((text, index) => <p key={index}>{text}</p>)}
+                {legacyPrompts.map((text, index) => <p key={index} className="generation-value prompt-box">{text}</p>)}
             </>
         );
     }
@@ -69,8 +69,8 @@ export default function GenerationMetadata({ info, legacyModel, legacyPrompts }:
                         <section key={stage.sampler}>
                             {stages.length > 1 && <h3>Sampling stage {index + 1}</h3>}
                             <Values title="Models" entries={stage.models} />
-                            <Values title="Positive Prompt" entries={stage.positive} />
-                            <Values title="Negative Prompt" entries={stage.negative} />
+                            <Values title="Positive Prompt" entries={stage.positive} prompt />
+                            <Values title="Negative Prompt" entries={stage.negative} prompt />
                             <details>
                                 <summary>Source nodes</summary>
                                 <p>Output: {stage.output}; sampler: {stage.sampler}</p>

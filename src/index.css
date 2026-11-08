@@ -775,3 +775,15 @@ img,
   opacity: 1;
   pointer-events: auto;
 }
+
+.generation-value {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.prompt-box {
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+}
